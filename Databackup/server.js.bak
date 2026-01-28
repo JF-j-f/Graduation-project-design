@@ -1,0 +1,333 @@
+/**
+ * MusicWeb 统一音乐 API 服务
+ * 整合网易云音乐 + QQ音乐接口
+ * 
+ * 启动命令: node server.js
+ * 默认端口: 3000
+ */
+
+const path = require('path');
+// 修正模块查找路径 (因为 node_modules 在 ../music 下)
+module.paths.push(path.join(__dirname, '../music/node_modules'));
+
+const express = require('express');
+const NeteaseCloudMusicApi = require('NeteaseCloudMusicApi');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// 启用 CORS（允许跨域请求）
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+    next();
+});
+
+// JSON 解析中间件
+app.use(express.json());
+
+// ============================================
+//    网易云音乐 API
+// ============================================
+
+/**
+ * 网易云音乐搜索
+ * GET /netease/search?keywords=周杰伦&limit=30
+ */
+app.get('/netease/search', async (req, res) => {
+    try {
+        const { keywords, limit = 30, offset = 0 } = req.query;
+        if (!keywords) {
+            return res.status(400).json({ code: 400, message: '缺少搜索关键词' });
+        }
+
+        const result = await NeteaseCloudMusicApi.search({
+            keywords,
+            limit: parseInt(limit),
+            offset: parseInt(offset)
+        });
+
+        res.json(result.body);
+    } catch (error) {
+        console.error('网易云搜索错误:', error.message);
+        res.status(500).json({ code: 500, message: error.message });
+    }
+});
+
+/**
+ * 网易云音乐获取歌曲播放链接
+ * GET /netease/song/url?id=123456
+ */
+app.get('/netease/song/url', async (req, res) => {
+    try {
+        const { id, br = 320000 } = req.query;
+        if (!id) {
+            return res.status(400).json({ code: 400, message: '缺少歌曲ID' });
+        }
+
+        const result = await NeteaseCloudMusicApi.song_url({
+            id,
+            br: parseInt(br)
+        });
+
+        res.json(result.body);
+    } catch (error) {
+        console.error('获取播放链接错误:', error.message);
+        res.status(500).json({ code: 500, message: error.message });
+    }
+});
+
+/**
+ * 网易云音乐获取歌曲详情
+ * GET /netease/song/detail?ids=123456,789012
+ */
+app.get('/netease/song/detail', async (req, res) => {
+    try {
+        const { ids } = req.query;
+        if (!ids) {
+            return res.status(400).json({ code: 400, message: '缺少歌曲ID' });
+        }
+
+        const result = await NeteaseCloudMusicApi.song_detail({
+            ids
+        });
+
+        res.json(result.body);
+    } catch (error) {
+        console.error('获取歌曲详情错误:', error.message);
+        res.status(500).json({ code: 500, message: error.message });
+    }
+});
+
+/**
+ * 网易云音乐获取歌词
+ * GET /netease/lyric?id=123456
+ */
+app.get('/netease/lyric', async (req, res) => {
+    try {
+        const { id } = req.query;
+        if (!id) {
+            return res.status(400).json({ code: 400, message: '缺少歌曲ID' });
+        }
+
+        const result = await NeteaseCloudMusicApi.lyric({
+            id
+        });
+
+        res.json(result.body);
+    } catch (error) {
+        console.error('获取歌词错误:', error.message);
+        res.status(500).json({ code: 500, message: error.message });
+    }
+});
+
+// ============================================
+//    QQ音乐 API (Python 代理)
+// ============================================
+
+const axios = require('axios');
+const PY_API_BASE = 'http://127.0.0.1:8000';
+
+/**
+ * 通用代理函数
+ */
+async function proxyToPython(method, endpoint, params, res) {
+    try {
+        console.log(`[Proxy] Forwarding to Python: ${endpoint}`, params);
+        const response = await axios({
+            method: method,
+            url: `${PY_API_BASE}${endpoint}`,
+            params: method === 'GET' ? params : undefined,
+            data: method === 'POST' ? params : undefined,
+            validateStatus: () => true // 允许所有状态码
+        });
+
+        res.status(response.status).json(response.data);
+    } catch (error) {
+        console.error(`[Proxy] Error forwarding to ${endpoint}:`, error.message);
+        if (error.code === 'ECONNREFUSED') {
+            return res.status(503).json({ code: 503, message: 'QQ音乐服务未启动 (Python Service Unavailable)' });
+        }
+        res.status(500).json({ code: 500, message: '代理请求失败: ' + error.message });
+    }
+}
+
+/**
+ * QQ音乐搜索
+ * GET /qq/search?keywords=周杰伦&limit=30
+ */
+app.get('/qq/search', async (req, res) => {
+    const { keywords, limit = 30, page = 1 } = req.query;
+    if (!keywords) {
+        return res.status(400).json({ code: 400, message: '缺少搜索关键词' });
+    }
+    await proxyToPython('GET', '/search', { keywords, limit, page }, res);
+});
+
+/**
+ * QQ音乐获取歌曲播放链接
+ * GET /qq/song/url?id=001xxx
+ */
+app.get('/qq/song/url', async (req, res) => {
+    const { id } = req.query;
+    if (!id) {
+        return res.status(400).json({ code: 400, message: '缺少歌曲ID' });
+    }
+    await proxyToPython('GET', '/song/url', { mid: id }, res);
+});
+
+/**
+ * QQ音乐获取二维码
+ * GET /qq/login/qr?type=qq|wx|mobile
+ */
+app.get('/qq/login/qr', async (req, res) => {
+    const { type = 'qq' } = req.query;
+    await proxyToPython('GET', '/login/qr', { login_type: type }, res);
+});
+
+/**
+ * QQ音乐检查二维码状态
+ * POST /qq/login/qr/check
+ */
+app.post('/qq/login/qr/check', async (req, res) => {
+    await proxyToPython('POST', '/login/qr/check', {}, res);
+});
+
+/**
+ * QQ音乐发送手机验证码
+ * POST /qq/login/phone/send
+ */
+app.post('/qq/login/phone/send', async (req, res) => {
+    await proxyToPython('POST', '/login/phone/send', req.body, res);
+});
+
+/**
+ * QQ音乐验证手机验证码
+ * POST /qq/login/phone/verify
+ */
+app.post('/qq/login/phone/verify', async (req, res) => {
+    await proxyToPython('POST', '/login/phone/verify', req.body, res);
+});
+
+/**
+ * QQ音乐获取凭证状态
+ * GET /qq/credential
+ */
+app.get('/qq/credential', async (req, res) => {
+    await proxyToPython('GET', '/credential', {}, res);
+});
+
+/**
+ * QQ音乐登出
+ * POST /qq/credential/logout
+ */
+app.post('/qq/credential/logout', async (req, res) => {
+    await proxyToPython('POST', '/credential/logout', {}, res);
+});
+
+
+/**
+ * 统一搜索接口
+ * GET /search?keywords=周杰伦&source=netease|qq|all
+ */
+app.get('/search', async (req, res) => {
+    try {
+        const { keywords, source = 'netease', limit = 30 } = req.query;
+        if (!keywords) {
+            return res.status(400).json({ code: 400, message: '缺少搜索关键词' });
+        }
+
+        let results = { netease: null, qq: null };
+
+        // 1. 网易云搜索
+        if (source === 'netease' || source === 'all') {
+            try {
+                const neteaseResult = await NeteaseCloudMusicApi.search({
+                    keywords,
+                    limit: parseInt(limit)
+                });
+                results.netease = neteaseResult.body;
+            } catch (e) {
+                console.error('网易云搜索失败:', e.message);
+            }
+        }
+
+        // 2. QQ音乐搜索 (通过 Python 代理)
+        if (source === 'qq' || source === 'all') {
+            try {
+                const response = await axios.get(`${PY_API_BASE}/search`, {
+                    params: { keywords, limit, page: 1 },
+                    validateStatus: () => true
+                });
+                if (response.status === 200 && response.data.code === 0) {
+                    results.qq = response.data.data;
+                } else {
+                    console.error('QQ音乐搜索失败:', response.data);
+                }
+            } catch (e) {
+                console.error('QQ音乐搜索服务连接失败:', e.message);
+            }
+        }
+
+        res.json({
+            code: 200,
+            source,
+            results
+        });
+    } catch (error) {
+        console.error('统一搜索错误:', error.message);
+        res.status(500).json({ code: 500, message: error.message });
+    }
+});
+
+/**
+ * 健康检查
+ * GET /health
+ */
+app.get('/health', async (req, res) => {
+    let qqStatus = false;
+    try {
+        const pyRes = await axios.get(`${PY_API_BASE}/health`, { timeout: 1000 });
+        if (pyRes.status === 200) qqStatus = true;
+    } catch (e) { }
+
+    res.json({
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        services: {
+            netease: true,
+            qq: qqStatus
+        }
+    });
+});
+
+/**
+ * API 文档首页
+ * GET /
+ */
+app.get('/', (req, res) => {
+    res.json({
+        name: 'MusicWeb API Server',
+        version: '2.0.0',
+        description: '统一音乐 API 服务（网易云 + QQ音乐 Python 微服务）',
+        endpoints: {
+            '健康检查': 'GET /health',
+            '统一搜索': 'GET /search?keywords=xxx&source=netease|qq|all',
+            'QQ音乐': {
+                '搜索': 'GET /qq/search?keywords=xxx',
+                '播放链接': 'GET /qq/song/url?id=xxx',
+                '二维码': 'GET /qq/login/qr',
+                '状态检查': 'POST /qq/login/qr/check'
+            }
+        }
+    });
+});
+
+app.listen(PORT, () => {
+    console.log('========================================');
+    console.log('  MusicWeb API Server (Node.js Proxy)');
+    console.log('========================================');
+    console.log(`  🚀 服务已启动: http://localhost:${PORT}`);
+    console.log(`  🔗 Python 服务: ${PY_API_BASE}`);
+    console.log('========================================');
+});

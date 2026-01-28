@@ -1,0 +1,75 @@
+/* 注册页面特定样式 */
+.register-container {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    padding: 2rem;
+}
+
+.register-card {
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(10px);
+    padding: 3rem;
+    border-radius: 20px;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+    width: 100%;
+    max-width: 450px;
+    animation: slideUp 0.6s ease-out;
+}
+
+.register-header {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+.register-title {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--text-dark);
+    margin-bottom: 0.5rem;
+}
+
+.register-subtitle {
+    color: var(--text-light);
+}
+
+.password-strength {
+    margin-top: 0.5rem;
+}
+
+.strength-bar {
+    height: 4px;
+    background: #e2e8f0;
+    border-radius: 2px;
+    margin-top: 0.25rem;
+    overflow: hidden;
+}
+
+.strength-fill {
+    height: 100%;
+    width: 0%;
+    background: #e53e3e;
+    transition: all 0.3s ease;
+}
+
+.strength-fill.weak { width: 33%; background: #e53e3e; }
+.strength-fill.medium { width: 66%; background: #dd6b20; }
+.strength-fill.strong { width: 100%; background: #38a169; }
+
+.register-footer {
+    text-align: center;
+    margin-top: 2rem;
+    color: var(--text-light);
+}
+
+.register-footer a {
+    color: var(--primary-color);
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.register-footer a:hover {
+    text-decoration: underline;
+}

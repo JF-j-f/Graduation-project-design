@@ -1,0 +1,611 @@
+/* 设置页面样式 */
+.settings-container {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 2rem;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 2rem;
+}
+
+/* 页面标题 */
+.page-header {
+    text-align: center;
+    margin-bottom: 3rem;
+}
+
+.page-header h1 {
+    font-size: 2.5rem;
+    color: white;
+    margin-bottom: 0.5rem;
+}
+
+.page-header p {
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 1.1rem;
+}
+
+/* 消息提示 */
+.alert {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1rem 1.5rem;
+    border-radius: 8px;
+    margin-bottom: 2rem;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    animation: slideInDown 0.3s ease;
+}
+
+.alert-success {
+    background: linear-gradient(135deg, #d4edda, #c3e6cb);
+    color: #155724;
+    border-left: 4px solid #28a745;
+}
+
+.alert-error {
+    background: linear-gradient(135deg, #f8d7da, #f5c6cb);
+    color: #721c24;
+    border-left: 4px solid #dc3545;
+}
+
+.alert-icon {
+    font-size: 1.2rem;
+}
+
+.alert-close {
+    margin-left: auto;
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    opacity: 0.7;
+    transition: opacity 0.3s ease;
+}
+
+.alert-close:hover {
+    opacity: 1;
+}
+
+/* 左侧导航 */
+.settings-sidebar {
+    background: white;
+    border-radius: 12px;
+    padding: 1rem;
+    box-shadow: var(--shadow);
+    height: fit-content;
+    position: sticky;
+    top: 2rem;
+}
+
+.sidebar-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    margin-bottom: 0.5rem;
+}
+
+.sidebar-item:hover {
+    background: #f8f9fa;
+    transform: translateX(4px);
+}
+
+.sidebar-item.active {
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: white;
+    font-weight: 500;
+}
+
+.sidebar-icon {
+    font-size: 1.2rem;
+    width: 24px;
+    text-align: center;
+}
+
+.sidebar-text {
+    font-size: 0.95rem;
+}
+
+/* 右侧内容 */
+.settings-content {
+    background: white;
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+}
+
+.content-header {
+    padding: 2rem;
+    border-bottom: 1px solid #e9ecef;
+    background: #f8f9fa;
+}
+
+.content-header h2 {
+    margin: 0 0 0.5rem 0;
+    color: var(--text-dark);
+    font-size: 1.5rem;
+}
+
+.content-header p {
+    margin: 0;
+    color: var(--text-light);
+}
+
+/* 标签页 */
+.tab-content {
+    display: none;
+    padding: 2rem;
+}
+
+.tab-content.active {
+    display: block;
+    animation: fadeIn 0.3s ease;
+}
+
+/* 表单样式 */
+.settings-form {
+    max-width: 800px;
+}
+
+.form-section {
+    margin-bottom: 2rem;
+}
+
+.form-section h3 {
+    color: var(--text-dark);
+    margin-bottom: 1.5rem;
+    font-size: 1.2rem;
+    border-left: 4px solid var(--primary-color);
+    padding-left: 1rem;
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    margin-bottom: 1rem;
+}
+
+.form-group {
+    margin-bottom: 1.5rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    color: var(--text-dark);
+}
+
+.form-input {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    border: 2px solid #e9ecef;
+    border-radius: 8px;
+    font-size: 1rem;
+    transition: all 0.3s ease;
+    background: white;
+}
+
+.form-input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.form-input.readonly {
+    background: #f8f9fa;
+    color: #6c757d;
+    cursor: not-allowed;
+}
+
+.form-help {
+    color: var(--text-light);
+    font-size: 0.85rem;
+    margin-top: 0.25rem;
+    display: block;
+}
+
+/* 密码强度检测 */
+.password-strength {
+    margin-top: 0.5rem;
+}
+
+.strength-bar {
+    width: 100%;
+    height: 4px;
+    background: #e9ecef;
+    border-radius: 2px;
+    overflow: hidden;
+    margin-bottom: 0.25rem;
+}
+
+.strength-fill {
+    height: 100%;
+    width: 0;
+    background: #dc3545;
+    transition: all 0.3s ease;
+}
+
+.strength-fill.weak {
+    width: 33%;
+    background: #dc3545;
+}
+
+.strength-fill.medium {
+    width: 66%;
+    background: #ffc107;
+}
+
+.strength-fill.strong {
+    width: 100%;
+    background: #28a745;
+}
+
+.strength-text {
+    font-size: 0.8rem;
+    color: var(--text-light);
+}
+
+/* 表单操作按钮 */
+.form-actions {
+    display: flex;
+    gap: 1rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid #e9ecef;
+}
+
+/* 账户信息 */
+.account-info {
+    background: #f8f9fa;
+    padding: 1.5rem;
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+}
+
+.info-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.info-item:last-child {
+    border-bottom: none;
+}
+
+.info-label {
+    font-weight: 500;
+    color: var(--text-dark);
+}
+
+.info-value {
+    color: var(--text-light);
+}
+
+/* 危险区域 */
+.danger-zone {
+    border: 2px solid #f8d7da;
+    border-radius: 8px;
+    padding: 1.5rem;
+    background: #fff5f5;
+}
+
+.danger-zone h3 {
+    color: #721c24;
+    border-left-color: #dc3545;
+}
+
+.danger-zone p {
+    color: #721c24;
+    margin-bottom: 1rem;
+}
+
+/* 模态框 */
+.modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 1000;
+    animation: fadeIn 0.3s ease;
+}
+
+.modal-content {
+    position: relative;
+    background: white;
+    max-width: 600px;
+    margin: 5% auto;
+    border-radius: 12px;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+    animation: slideInUp 0.3s ease;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1.5rem 2rem;
+    border-bottom: 1px solid #e9ecef;
+    background: #f8f9fa;
+    border-radius: 12px 12px 0 0;
+}
+
+.modal-header h3 {
+    margin: 0;
+    color: var(--text-dark);
+    font-size: 1.3rem;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: var(--text-light);
+    transition: color 0.3s ease;
+}
+
+.modal-close:hover {
+    color: var(--text-dark);
+}
+
+.modal-body {
+    padding: 2rem;
+}
+
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 1rem;
+    padding: 1.5rem 2rem;
+    border-top: 1px solid #e9ecef;
+    background: #f8f9fa;
+    border-radius: 0 0 12px 12px;
+}
+
+/* 警告内容 */
+.warning-content {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+.warning-icon {
+    font-size: 3rem;
+    color: #ffc107;
+    flex-shrink: 0;
+}
+
+.warning-text h4 {
+    color: var(--text-dark);
+    margin-bottom: 1rem;
+}
+
+.warning-text p {
+    color: var(--text-light);
+    margin-bottom: 1rem;
+}
+
+.warning-text ul {
+    margin: 1rem 0;
+    padding-left: 1.5rem;
+}
+
+.warning-text li {
+    color: var(--text-light);
+    margin-bottom: 0.5rem;
+}
+
+.final-warning {
+    color: #dc3545;
+    font-weight: 500;
+}
+
+/* 确认部分 */
+.confirmation-section {
+    margin-bottom: 1.5rem;
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    cursor: pointer;
+    color: var(--text-dark);
+    font-weight: 500;
+}
+
+.checkbox-label input[type="checkbox"] {
+    display: none;
+}
+
+.checkmark {
+    width: 20px;
+    height: 20px;
+    border: 2px solid #dee2e6;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+}
+
+.checkbox-label input[type="checkbox"]:checked + .checkmark {
+    background: var(--primary-color);
+    border-color: var(--primary-color);
+}
+
+.checkbox-label input[type="checkbox"]:checked + .checkmark::after {
+    content: '✓';
+    color: white;
+    font-size: 12px;
+}
+
+.password-confirmation {
+    margin-bottom: 1rem;
+}
+
+.password-confirmation label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    color: var(--text-dark);
+}
+
+.error-message {
+    color: #dc3545;
+    font-size: 0.85rem;
+    margin-top: 0.25rem;
+    display: block;
+}
+
+/* 加载遮罩 */
+.loading-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 2000;
+}
+
+.loading-overlay.show {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
+
+.spinner {
+    width: 50px;
+    height: 50px;
+    border: 4px solid rgba(255, 255, 255, 0.3);
+    border-top: 4px solid white;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 1rem;
+}
+
+.loading-overlay p {
+    color: white;
+    font-size: 1.1rem;
+}
+
+/* 动画 */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes slideInDown {
+    from {
+        transform: translateY(-20px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+@keyframes slideInUp {
+    from {
+        transform: translateY(50px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+@keyframes spin {
+    0% {
+        transform: rotate(0deg);
+    }
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+    .settings-container {
+        grid-template-columns: 1fr;
+        gap: 1rem;
+        padding: 0 1rem;
+    }
+
+    .settings-sidebar {
+        position: static;
+        display: flex;
+        gap: 0.5rem;
+        padding: 0.5rem;
+        overflow-x: auto;
+    }
+
+    .sidebar-item {
+        flex-shrink: 0;
+        margin-bottom: 0;
+    }
+
+    .sidebar-text {
+        display: none;
+    }
+
+    .form-row {
+        grid-template-columns: 1fr;
+    }
+
+    .modal-content {
+        margin: 10% 1rem;
+        max-width: none;
+    }
+
+    .warning-content {
+        flex-direction: column;
+        text-align: center;
+    }
+
+    .modal-footer {
+        flex-direction: column-reverse;
+    }
+
+    .modal-footer .btn {
+        width: 100%;
+    }
+}
+
+@media (max-width: 480px) {
+    .page-header h1 {
+        font-size: 2rem;
+    }
+
+    .content-header,
+    .tab-content {
+        padding: 1rem;
+    }
+
+    .form-actions {
+        flex-direction: column;
+    }
+
+    .form-actions .btn {
+        width: 100%;
+    }
+}

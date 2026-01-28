@@ -1,0 +1,317 @@
+/**
+ * 搜索模块样式 - Google 风格
+ * 独立管理搜索框和搜索历史相关样式
+ */
+
+/* ============================================ */
+/* 1. 搜索区域布局 */
+/* ============================================ */
+
+.search-section {
+    width: 100%;
+    padding: 1rem 0 2rem 0;
+    display: flex;
+    justify-content: center;
+}
+
+.search-wrapper {
+    position: relative;
+    width: 100%;
+    max-width: 680px;
+}
+
+/* ============================================ */
+/* 2. Google 风格搜索框 */
+/* ============================================ */
+
+.google-search-bar {
+    display: flex;
+    align-items: center;
+    background: #ffffff;
+    border: 1px solid #dfe1e5;
+    border-radius: 24px;
+    padding: 5px 15px;
+    box-shadow: 0 1px 6px rgba(32, 33, 36, 0.1);
+    transition: all 0.2s ease;
+    height: 48px;
+    box-sizing: border-box;
+    width: 100%;
+}
+
+.google-search-bar:hover {
+    box-shadow: 0 1px 6px rgba(32, 33, 36, 0.28);
+    border-color: rgba(223, 225, 229, 0);
+    background: #fff;
+}
+
+.google-search-bar:focus-within {
+    box-shadow: 0 1px 6px rgba(32, 33, 36, 0.28);
+    border-color: rgba(223, 225, 229, 0);
+    background: #fff;
+    outline: none;
+}
+
+/* ============================================ */
+/* 3. 搜索图标（左侧）*/
+/* ============================================ */
+
+.search-icon-wrapper {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-right: 12px;
+    color: #9aa0a6;
+    flex-shrink: 0;
+}
+
+.search-icon-wrapper svg {
+    width: 20px;
+    height: 20px;
+    display: block;
+}
+
+/* ============================================ */
+/* 4. 搜索输入框（中间）*/
+/* ============================================ */
+
+.google-search-input {
+    flex: 1;
+    border: none !important;
+    outline: none !important;
+    background: transparent;
+    font-size: 16px;
+    color: #202124;
+    height: 100%;
+    padding: 0;
+    margin: 0;
+    line-height: normal;
+    box-shadow: none !important;
+}
+
+.google-search-input::placeholder {
+    color: #9aa0a6;
+}
+
+.google-search-input:focus {
+    outline: none !important;
+    box-shadow: none !important;
+}
+
+/* ============================================ */
+/* 5. 搜索按钮（右侧）*/
+/* ============================================ */
+
+.google-search-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 8px;
+    color: var(--primary-color, #667eea);
+    border-radius: 50%;
+    margin-left: 8px;
+    transition: background-color 0.2s ease;
+    flex-shrink: 0;
+}
+
+.google-search-btn:hover {
+    background: rgba(102, 126, 234, 0.1);
+}
+
+.google-search-btn svg {
+    width: 24px;
+    height: 24px;
+    display: block;
+}
+
+/* ============================================ */
+/* 6. 搜索历史下拉框 */
+/* ============================================ */
+
+.search-dropdown {
+    position: absolute;
+    top: 55px;
+    left: 0;
+    right: 0;
+    background: white;
+    border-radius: 10px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    z-index: 999;
+    overflow: hidden;
+    display: none;
+    border: 1px solid #eee;
+    animation: dropdownFadeIn 0.2s ease;
+}
+
+@keyframes dropdownFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-5px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* 下拉框头部 */
+.search-dropdown-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.8rem 1.2rem;
+    border-bottom: 1px solid #f1f1f1;
+    background-color: #f8f9fa;
+}
+
+.dropdown-title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #5f6368;
+}
+
+/* 清空按钮 */
+.clear-history-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: none;
+    border: none;
+    color: #70757a;
+    font-size: 0.85rem;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+.clear-history-btn svg {
+    width: 14px;
+    height: 14px;
+}
+
+.clear-history-btn:hover {
+    background-color: #fee2e2;
+    color: #dc2626;
+}
+
+/* 历史列表 */
+.search-dropdown-list {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.search-dropdown-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.search-dropdown-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.search-dropdown-list::-webkit-scrollbar-thumb {
+    background: #e2e8f0;
+    border-radius: 3px;
+}
+
+.search-dropdown-list::-webkit-scrollbar-thumb:hover {
+    background: #cbd5e1;
+}
+
+/* 历史项 */
+.history-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0.75rem 1.2rem;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+    border-bottom: 1px solid #f8f9fa;
+}
+
+.history-item:last-child {
+    border-bottom: none;
+}
+
+.history-item:hover {
+    background-color: #f8f9fa;
+}
+
+.history-icon {
+    font-size: 1rem;
+    opacity: 0.5;
+    flex-shrink: 0;
+}
+
+.history-text {
+    flex: 1;
+    color: #202124;
+    font-size: 0.95rem;
+}
+
+.history-empty {
+    padding: 2rem 1.5rem;
+    text-align: center;
+    color: #9aa0a6;
+    font-size: 0.9rem;
+}
+
+/* ============================================ */
+/* 7. 响应式设计 */
+/* ============================================ */
+
+@media (max-width: 768px) {
+    .search-section {
+        padding: 0.5rem 0 1.5rem 0;
+    }
+
+    .search-wrapper {
+        padding: 0 1rem;
+    }
+
+    .google-search-bar {
+        height: 44px;
+        padding: 5px 10px;
+    }
+
+    .search-icon-wrapper {
+        padding-right: 8px;
+    }
+
+    .google-search-input {
+        font-size: 14px;
+    }
+
+    .google-search-btn {
+        padding: 6px;
+        margin-left: 4px;
+    }
+
+    .google-search-btn svg {
+        width: 20px;
+        height: 20px;
+    }
+
+    .search-dropdown {
+        left: 1rem;
+        right: 1rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .google-search-bar {
+        height: 42px;
+        padding: 4px 8px;
+    }
+
+    .search-icon-wrapper svg {
+        width: 18px;
+        height: 18px;
+    }
+
+    .google-search-input {
+        font-size: 14px;
+    }
+}

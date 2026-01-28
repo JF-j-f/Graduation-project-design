@@ -1,0 +1,1205 @@
+[2026-01-22T16:28:47.410Z] ID: 001OyHbk2MSIi4
+Response: {
+  "code": 0,
+  "ts": 1769099327492,
+  "start_ts": 1769099327455,
+  "traceid": "4add5586197ab289",
+  "req_0": {
+    "code": 1000,
+    "data": {
+      "uin": "",
+      "retcode": 104009,
+      "verify_type": 0,
+      "login_key": "",
+      "msg": "23.247.137.216;invalidq;",
+      "sip": [],
+      "thirdip": [
+        "",
+        ""
+      ],
+      "testfile2g": "",
+      "testfilewifi": "",
+      "midurlinfo": [
+        {
+          "songmid": "001OyHbk2MSIi4",
+          "filename": "C400002AIxAT3HZwiA.m4a",
+          "purl": "",
+          "errtype": "",
+          "p2pfromtag": 0,
+          "qmdlfromtag": 0,
+          "common_downfromtag": 0,
+          "vip_downfromtag": 0,
+          "pdl": 0,
+          "premain": 0,
+          "hisdown": 0,
+          "hisbuy": 0,
+          "uiAlert": 0,
+          "isbuy": 0,
+          "pneedbuy": 0,
+          "pneed": 0,
+          "isonly": 0,
+          "onecan": 0,
+          "result": 0,
+          "tips": "",
+          "opi48kurl": "",
+          "opi96kurl": "",
+          "opi192kurl": "",
+          "opiflackurl": "",
+          "opi128kurl": "",
+          "opi192koggurl": "",
+          "wififromtag": "",
+          "flowfromtag": "",
+          "wifiurl": "",
+          "flowurl": "",
+          "vkey": "",
+          "opi30surl": "",
+          "ekey": "",
+          "auth_switch": 1,
+          "subcode": 0,
+          "opi96koggurl": "",
+          "auth_switch2": 0,
+          "xcdnurl": ""
+        }
+      ],
+      "servercheck": "",
+      "expiration": 0,
+      "deviceResult": ""
+    }
+  }
+}
+
+[2026-01-22T16:28:47.849Z] ID: 003UFd7t2u1UPI
+Response: {
+  "code": 0,
+  "ts": 1769099327896,
+  "start_ts": 1769099327863,
+  "traceid": "489860ba85c2e159",
+  "req_0": {
+    "code": 1000,
+    "data": {
+      "uin": "",
+      "retcode": 104009,
+      "verify_type": 0,
+      "login_key": "",
+      "msg": "23.247.137.216;invalidq;",
+      "sip": [],
+      "thirdip": [
+        "",
+        ""
+      ],
+      "testfile2g": "",
+      "testfilewifi": "",
+      "midurlinfo": [
+        {
+          "songmid": "003UFd7t2u1UPI",
+          "filename": "C400004EBwNj42VH7x.m4a",
+          "purl": "",
+          "errtype": "",
+          "p2pfromtag": 0,
+          "qmdlfromtag": 0,
+          "common_downfromtag": 0,
+          "vip_downfromtag": 0,
+          "pdl": 0,
+          "premain": 0,
+          "hisdown": 0,
+          "hisbuy": 0,
+          "uiAlert": 0,
+          "isbuy": 0,
+          "pneedbuy": 0,
+          "pneed": 0,
+          "isonly": 0,
+          "onecan": 0,
+          "result": 0,
+          "tips": "",
+          "opi48kurl": "",
+          "opi96kurl": "",
+          "opi192kurl": "",
+          "opiflackurl": "",
+          "opi128kurl": "",
+          "opi192koggurl": "",
+          "wififromtag": "",
+          "flowfromtag": "",
+          "wifiurl": "",
+          "flowurl": "",
+          "vkey": "",
+          "opi30surl": "",
+          "ekey": "",
+          "auth_switch": 769,
+          "subcode": 0,
+          "opi96koggurl": "",
+          "auth_switch2": 0,
+          "xcdnurl": ""
+        }
+      ],
+      "servercheck": "",
+      "expiration": 0,
+      "deviceResult": ""
+    }
+  }
+}
+
+[2026-01-22T16:28:48.300Z] ID: 000xg5lw0AoTVP
+Response: {
+  "code": 0,
+  "ts": 1769099328362,
+  "start_ts": 1769099328335,
+  "traceid": "417ed88697a5d021",
+  "req_0": {
+    "code": 1000,
+    "data": {
+      "uin": "",
+      "retcode": 104009,
+      "verify_type": 0,
+      "login_key": "",
+      "msg": "23.247.137.216;invalidq;",
+      "sip": [],
+      "thirdip": [
+        "",
+        ""
+      ],
+      "testfile2g": "",
+      "testfilewifi": "",
+      "midurlinfo": [
+        {
+          "songmid": "000xg5lw0AoTVP",
+          "filename": "C400003sQ9z53XOO3Q.m4a",
+          "purl": "",
+          "errtype": "",
+          "p2pfromtag": 0,
+          "qmdlfromtag": 0,
+          "common_downfromtag": 0,
+          "vip_downfromtag": 0,
+          "pdl": 0,
+          "premain": 0,
+          "hisdown": 0,
+          "hisbuy": 0,
+          "uiAlert": 0,
+          "isbuy": 0,
+          "pneedbuy": 0,
+          "pneed": 0,
+          "isonly": 0,
+          "onecan": 0,
+          "result": 0,
+          "tips": "",
+          "opi48kurl": "",
+          "opi96kurl": "",
+          "opi192kurl": "",
+          "opiflackurl": "",
+          "opi128kurl": "",
+          "opi192koggurl": "",
+          "wififromtag": "",
+          "flowfromtag": "",
+          "wifiurl": "",
+          "flowurl": "",
+          "vkey": "",
+          "opi30surl": "",
+          "ekey": "",
+          "auth_switch": 1,
+          "subcode": 0,
+          "opi96koggurl": "",
+          "auth_switch2": 0,
+          "xcdnurl": ""
+        }
+      ],
+      "servercheck": "",
+      "expiration": 0,
+      "deviceResult": ""
+    }
+  }
+}
+
+[2026-01-22T16:28:48.727Z] ID: 003e4b5o0jOMXV
+Response: {
+  "code": 0,
+  "ts": 1769099328772,
+  "start_ts": 1769099328738,
+  "traceid": "3568e98d0b66363e",
+  "req_0": {
+    "code": 1000,
+    "data": {
+      "uin": "",
+      "retcode": 104009,
+      "verify_type": 0,
+      "login_key": "",
+      "msg": "23.247.137.216;invalidq;",
+      "sip": [],
+      "thirdip": [
+        "",
+        ""
+      ],
+      "testfile2g": "",
+      "testfilewifi": "",
+      "midurlinfo": [
+        {
+          "songmid": "003e4b5o0jOMXV",
+          "filename": "C400004fjBR23Qi7YU.m4a",
+          "purl": "",
+          "errtype": "",
+          "p2pfromtag": 0,
+          "qmdlfromtag": 0,
+          "common_downfromtag": 0,
+          "vip_downfromtag": 0,
+          "pdl": 0,
+          "premain": 0,
+          "hisdown": 0,
+          "hisbuy": 0,
+          "uiAlert": 0,
+          "isbuy": 0,
+          "pneedbuy": 0,
+          "pneed": 0,
+          "isonly": 0,
+          "onecan": 0,
+          "result": 0,
+          "tips": "",
+          "opi48kurl": "",
+          "opi96kurl": "",
+          "opi192kurl": "",
+          "opiflackurl": "",
+          "opi128kurl": "",
+          "opi192koggurl": "",
+          "wififromtag": "",
+          "flowfromtag": "",
+          "wifiurl": "",
+          "flowurl": "",
+          "vkey": "",
+          "opi30surl": "",
+          "ekey": "",
+          "auth_switch": 1,
+          "subcode": 0,
+          "opi96koggurl": "",
+          "auth_switch2": 0,
+          "xcdnurl": ""
+        }
+      ],
+      "servercheck": "",
+      "expiration": 0,
+      "deviceResult": ""
+    }
+  }
+}
+
+[2026-01-22T16:28:49.219Z] ID: 0004b6420Upf0k
+Response: {
+  "code": 0,
+  "ts": 1769099329263,
+  "start_ts": 1769099329223,
+  "traceid": "47f5134556508ae2",
+  "req_0": {
+    "code": 1000,
+    "data": {
+      "uin": "",
+      "retcode": 104009,
+      "verify_type": 0,
+      "login_key": "",
+      "msg": "23.247.137.216;invalidq;",
+      "sip": [],
+      "thirdip": [
+        "",
+        ""
+      ],
+      "testfile2g": "",
+      "testfilewifi": "",
+      "midurlinfo": [
+        {
+          "songmid": "0004b6420Upf0k",
+          "filename": "C4000004b6420Upf0k.m4a",
+          "purl": "",
+          "errtype": "",
+          "p2pfromtag": 0,
+          "qmdlfromtag": 0,
+          "common_downfromtag": 0,
+          "vip_downfromtag": 0,
+          "pdl": 0,
+          "premain": 0,
+          "hisdown": 0,
+          "hisbuy": 0,
+          "uiAlert": 0,
+          "isbuy": 0,
+          "pneedbuy": 0,
+          "pneed": 0,
+          "isonly": 0,
+          "onecan": 0,
+          "result": 0,
+          "tips": "",
+          "opi48kurl": "",
+          "opi96kurl": "",
+          "opi192kurl": "",
+          "opiflackurl": "",
+          "opi128kurl": "",
+          "opi192koggurl": "",
+          "wififromtag": "",
+          "flowfromtag": "",
+          "wifiurl": "",
+          "flowurl": "",
+          "vkey": "",
+          "opi30surl": "",
+          "ekey": "",
+          "auth_switch": 16881409,
+          "subcode": 0,
+          "opi96koggurl": "",
+          "auth_switch2": 0,
+          "xcdnurl": ""
+        }
+      ],
+      "servercheck": "",
+      "expiration": 0,
+      "deviceResult": ""
+    }
+  }
+}
+
+[2026-01-22T16:37:06.964Z] ID: 001OyHbk2MSIi4
+Response: {
+  "code": 0,
+  "ts": 1769099827059,
+  "start_ts": 1769099827006,
+  "traceid": "00303e89fef4ca8a",
+  "req_0": {
+    "code": 0,
+    "data": {
+      "uin": "",
+      "retcode": 0,
+      "verify_type": 0,
+      "login_key": "",
+      "msg": "23.247.137.216;fnameHitCache_200",
+      "sip": [
+        "http://aqqmusic.tc.qq.com/",
+        "http://sjy6.stream.qqmusic.qq.com/"
+      ],
+      "thirdip": [
+        "",
+        ""
+      ],
+      "testfile2g": "C400003mAan70zUy5O.m4a?guid=1964956436&vkey=E527FCC8CF7FFB40731C7574F24D0077FB892B76D70A034A1CC5409B7C7B65C3DBF2B1631BB7C6613B3CDD48A521C5373420D1310498500C__v2b9aacbe&uin=&fromtag=3",
+      "testfilewifi": "C400003mAan70zUy5O.m4a?guid=1964956436&vkey=E527FCC8CF7FFB40731C7574F24D0077FB892B76D70A034A1CC5409B7C7B65C3DBF2B1631BB7C6613B3CDD48A521C5373420D1310498500C__v2b9aacbe&uin=&fromtag=3",
+      "midurlinfo": [
+        {
+          "songmid": "001OyHbk2MSIi4",
+          "filename": "C400002AIxAT3HZwiA.m4a",
+          "purl": "",
+          "errtype": "",
+          "p2pfromtag": 0,
+          "qmdlfromtag": 0,
+          "common_downfromtag": 0,
+          "vip_downfromtag": 0,
+          "pdl": 0,
+          "premain": 0,
+          "hisdown": 0,
+          "hisbuy": 0,
+          "uiAlert": 0,
+          "isbuy": 0,
+          "pneedbuy": 0,
+          "pneed": 0,
+          "isonly": 0,
+          "onecan": 0,
+          "result": 104003,
+          "tips": "",
+          "opi48kurl": "",
+          "opi96kurl": "",
+          "opi192kurl": "",
+          "opiflackurl": "",
+          "opi128kurl": "",
+          "opi192koggurl": "",
+          "wififromtag": "",
+          "flowfromtag": "",
+          "wifiurl": "",
+          "flowurl": "",
+          "vkey": "",
+          "opi30surl": "",
+          "ekey": "",
+          "auth_switch": 1,
+          "subcode": 0,
+          "opi96koggurl": "",
+          "auth_switch2": 0,
+          "xcdnurl": ""
+        }
+      ],
+      "servercheck": "c08d4750232f8c4b90e6067c7c5afd9a",
+      "expiration": 80400,
+      "deviceResult": ""
+    }
+  }
+}
+
+[2026-01-22T16:37:07.405Z] ID: 003UFd7t2u1UPI
+Response: {
+  "code": 0,
+  "ts": 1769099827497,
+  "start_ts": 1769099827450,
+  "traceid": "5e464d2ec82bf0b1",
+  "req_0": {
+    "code": 0,
+    "data": {
+      "uin": "",
+      "retcode": 0,
+      "verify_type": 0,
+      "login_key": "",
+      "msg": "23.247.137.216;fnameHitCache_200",
+      "sip": [
+        "http://aqqmusic.tc.qq.com/",
+        "http://sjy6.stream.qqmusic.qq.com/"
+      ],
+      "thirdip": [
+        "",
+        ""
+      ],
+      "testfile2g": "C400003mAan70zUy5O.m4a?guid=1964956436&vkey=C9E99B4404084CBCD5ABE5131FB0A99355EA3641C3CC0AEA2815AD2D9EAA00D3B63A6954AC65148B38A5341B43DA5377541A5D83F9AD5468__v2b94c702&uin=&fromtag=3",
+      "testfilewifi": "C400003mAan70zUy5O.m4a?guid=1964956436&vkey=C9E99B4404084CBCD5ABE5131FB0A99355EA3641C3CC0AEA2815AD2D9EAA00D3B63A6954AC65148B38A5341B43DA5377541A5D83F9AD5468__v2b94c702&uin=&fromtag=3",
+      "midurlinfo": [
+        {
+          "songmid": "003UFd7t2u1UPI",
+          "filename": "C400004EBwNj42VH7x.m4a",
+          "purl": "",
+          "errtype": "",
+          "p2pfromtag": 0,
+          "qmdlfromtag": 0,
+          "common_downfromtag": 0,
+          "vip_downfromtag": 0,
+          "pdl": 0,
+          "premain": 0,
+          "hisdown": 0,
+          "hisbuy": 0,
+          "uiAlert": 0,
+          "isbuy": 0,
+          "pneedbuy": 0,
+          "pneed": 0,
+          "isonly": 0,
+          "onecan": 0,
+          "result": 104003,
+          "tips": "",
+          "opi48kurl": "",
+          "opi96kurl": "",
+          "opi192kurl": "",
+          "opiflackurl": "",
+          "opi128kurl": "",
+          "opi192koggurl": "",
+          "wififromtag": "",
+          "flowfromtag": "",
+          "wifiurl": "",
+          "flowurl": "",
+          "vkey": "",
+          "opi30surl": "",
+          "ekey": "",
+          "auth_switch": 769,
+          "subcode": 0,
+          "opi96koggurl": "",
+          "auth_switch2": 0,
+          "xcdnurl": ""
+        }
+      ],
+      "servercheck": "c08d4750232f8c4b90e6067c7c5afd9a",
+      "expiration": 80400,
+      "deviceResult": ""
+    }
+  }
+}
+
+[2026-01-22T16:37:07.878Z] ID: 000xg5lw0AoTVP
+Response: {
+  "code": 0,
+  "ts": 1769099827968,
+  "start_ts": 1769099827905,
+  "traceid": "6605f3870d6b7e78",
+  "req_0": {
+    "code": 0,
+    "data": {
+      "uin": "",
+      "retcode": 0,
+      "verify_type": 0,
+      "login_key": "",
+      "msg": "23.247.137.216;fnameHitCache_200",
+      "sip": [
+        "http://aqqmusic.tc.qq.com/",
+        "http://sjy6.stream.qqmusic.qq.com/"
+      ],
+      "thirdip": [
+        "",
+        ""
+      ],
+      "testfile2g": "C400003mAan70zUy5O.m4a?guid=1964956436&vkey=AF1300710FC348A013C0BD7A2B86B5DBFEE743F5E8A0B562548054630B4C16ED7C641460C0CC5A4254FC17E31F9DB675E8DBA55C197E27BB__v2b9aacbe&uin=&fromtag=3",
+      "testfilewifi": "C400003mAan70zUy5O.m4a?guid=1964956436&vkey=AF1300710FC348A013C0BD7A2B86B5DBFEE743F5E8A0B562548054630B4C16ED7C641460C0CC5A4254FC17E31F9DB675E8DBA55C197E27BB__v2b9aacbe&uin=&fromtag=3",
+      "midurlinfo": [
+        {
+          "songmid": "000xg5lw0AoTVP",
+          "filename": "C400003sQ9z53XOO3Q.m4a",
+          "purl": "",
+          "errtype": "",
+          "p2pfromtag": 0,
+          "qmdlfromtag": 0,
+          "common_downfromtag": 0,
+          "vip_downfromtag": 0,
+          "pdl": 0,
+          "premain": 0,
+          "hisdown": 0,
+          "hisbuy": 0,
+          "uiAlert": 0,
+          "isbuy": 0,
+          "pneedbuy": 0,
+          "pneed": 0,
+          "isonly": 0,
+          "onecan": 0,
+          "result": 104003,
+          "tips": "",
+          "opi48kurl": "",
+          "opi96kurl": "",
+          "opi192kurl": "",
+          "opiflackurl": "",
+          "opi128kurl": "",
+          "opi192koggurl": "",
+          "wififromtag": "",
+          "flowfromtag": "",
+          "wifiurl": "",
+          "flowurl": "",
+          "vkey": "",
+          "opi30surl": "",
+          "ekey": "",
+          "auth_switch": 1,
+          "subcode": 0,
+          "opi96koggurl": "",
+          "auth_switch2": 0,
+          "xcdnurl": ""
+        }
+      ],
+      "servercheck": "c08d4750232f8c4b90e6067c7c5afd9a",
+      "expiration": 80400,
+      "deviceResult": ""
+    }
+  }
+}
+
+[2026-01-22T16:37:08.319Z] ID: 003e4b5o0jOMXV
+Response: {
+  "code": 0,
+  "ts": 1769099828413,
+  "start_ts": 1769099828359,
+  "traceid": "389e98b76126b36f",
+  "req_0": {
+    "code": 0,
+    "data": {
+      "uin": "",
+      "retcode": 0,
+      "verify_type": 0,
+      "login_key": "",
+      "msg": "23.247.137.216;fnameHitCache_200",
+      "sip": [
+        "http://aqqmusic.tc.qq.com/",
+        "http://sjy6.stream.qqmusic.qq.com/"
+      ],
+      "thirdip": [
+        "",
+        ""
+      ],
+      "testfile2g": "C400003mAan70zUy5O.m4a?guid=1964956436&vkey=5313CD4963707D7ECAB04039CC74B1B960832323331CDE5B7244DE05F59EADC2A4547BE82EAA8AE9F027F641192364BE42B78BC4C73F2C72__v2b94c702&uin=&fromtag=3",
+      "testfilewifi": "C400003mAan70zUy5O.m4a?guid=1964956436&vkey=5313CD4963707D7ECAB04039CC74B1B960832323331CDE5B7244DE05F59EADC2A4547BE82EAA8AE9F027F641192364BE42B78BC4C73F2C72__v2b94c702&uin=&fromtag=3",
+      "midurlinfo": [
+        {
+          "songmid": "003e4b5o0jOMXV",
+          "filename": "C400004fjBR23Qi7YU.m4a",
+          "purl": "",
+          "errtype": "",
+          "p2pfromtag": 0,
+          "qmdlfromtag": 0,
+          "common_downfromtag": 0,
+          "vip_downfromtag": 0,
+          "pdl": 0,
+          "premain": 0,
+          "hisdown": 0,
+          "hisbuy": 0,
+          "uiAlert": 0,
+          "isbuy": 0,
+          "pneedbuy": 0,
+          "pneed": 0,
+          "isonly": 0,
+          "onecan": 0,
+          "result": 104003,
+          "tips": "",
+          "opi48kurl": "",
+          "opi96kurl": "",
+          "opi192kurl": "",
+          "opiflackurl": "",
+          "opi128kurl": "",
+          "opi192koggurl": "",
+          "wififromtag": "",
+          "flowfromtag": "",
+          "wifiurl": "",
+          "flowurl": "",
+          "vkey": "",
+          "opi30surl": "",
+          "ekey": "",
+          "auth_switch": 1,
+          "subcode": 0,
+          "opi96koggurl": "",
+          "auth_switch2": 0,
+          "xcdnurl": ""
+        }
+      ],
+      "servercheck": "c08d4750232f8c4b90e6067c7c5afd9a",
+      "expiration": 80400,
+      "deviceResult": ""
+    }
+  }
+}
+
+[2026-01-22T16:37:08.752Z] ID: 0004b6420Upf0k
+Response: {
+  "code": 0,
+  "ts": 1769099828859,
+  "start_ts": 1769099828813,
+  "traceid": "78033b2b3a56e094",
+  "req_0": {
+    "code": 0,
+    "data": {
+      "uin": "",
+      "retcode": 0,
+      "verify_type": 0,
+      "login_key": "",
+      "msg": "23.247.137.216;fnameHitCache_200",
+      "sip": [
+        "http://aqqmusic.tc.qq.com/",
+        "http://sjy6.stream.qqmusic.qq.com/"
+      ],
+      "thirdip": [
+        "",
+        ""
+      ],
+      "testfile2g": "C400003mAan70zUy5O.m4a?guid=1964956436&vkey=06223E74E07E72A74CB18DE755E1E30B3D62687351DDD8CF125140F5054CBA9E705D4B6CD399F90D6E07B945978E77E50D30A3F73D151C27__v2b94c373&uin=&fromtag=3",
+      "testfilewifi": "C400003mAan70zUy5O.m4a?guid=1964956436&vkey=06223E74E07E72A74CB18DE755E1E30B3D62687351DDD8CF125140F5054CBA9E705D4B6CD399F90D6E07B945978E77E50D30A3F73D151C27__v2b94c373&uin=&fromtag=3",
+      "midurlinfo": [
+        {
+          "songmid": "0004b6420Upf0k",
+          "filename": "C4000004b6420Upf0k.m4a",
+          "purl": "",
+          "errtype": "",
+          "p2pfromtag": 0,
+          "qmdlfromtag": 0,
+          "common_downfromtag": 0,
+          "vip_downfromtag": 0,
+          "pdl": 0,
+          "premain": 0,
+          "hisdown": 0,
+          "hisbuy": 0,
+          "uiAlert": 0,
+          "isbuy": 0,
+          "pneedbuy": 0,
+          "pneed": 0,
+          "isonly": 0,
+          "onecan": 0,
+          "result": 104003,
+          "tips": "",
+          "opi48kurl": "",
+          "opi96kurl": "",
+          "opi192kurl": "",
+          "opiflackurl": "",
+          "opi128kurl": "",
+          "opi192koggurl": "",
+          "wififromtag": "",
+          "flowfromtag": "",
+          "wifiurl": "",
+          "flowurl": "",
+          "vkey": "",
+          "opi30surl": "",
+          "ekey": "",
+          "auth_switch": 16881409,
+          "subcode": 0,
+          "opi96koggurl": "",
+          "auth_switch2": 0,
+          "xcdnurl": ""
+        }
+      ],
+      "servercheck": "c08d4750232f8c4b90e6067c7c5afd9a",
+      "expiration": 80400,
+      "deviceResult": ""
+    }
+  }
+}
+
+[2026-01-22T16:45:20.347Z] ID: 001OyHbk2MSIi4
+Response: {
+  "code": 0,
+  "ts": 1769100320435,
+  "start_ts": 1769100320393,
+  "traceid": "7e9ac54554f425a1",
+  "req_0": {
+    "code": 1000,
+    "data": {
+      "uin": "",
+      "retcode": 104009,
+      "verify_type": 0,
+      "login_key": "",
+      "msg": "23.247.137.216;invalidq;",
+      "sip": [],
+      "thirdip": [
+        "",
+        ""
+      ],
+      "testfile2g": "",
+      "testfilewifi": "",
+      "midurlinfo": [
+        {
+          "songmid": "001OyHbk2MSIi4",
+          "filename": "C400002AIxAT3HZwiA.m4a",
+          "purl": "",
+          "errtype": "",
+          "p2pfromtag": 0,
+          "qmdlfromtag": 0,
+          "common_downfromtag": 0,
+          "vip_downfromtag": 0,
+          "pdl": 0,
+          "premain": 0,
+          "hisdown": 0,
+          "hisbuy": 0,
+          "uiAlert": 0,
+          "isbuy": 0,
+          "pneedbuy": 0,
+          "pneed": 0,
+          "isonly": 0,
+          "onecan": 0,
+          "result": 0,
+          "tips": "",
+          "opi48kurl": "",
+          "opi96kurl": "",
+          "opi192kurl": "",
+          "opiflackurl": "",
+          "opi128kurl": "",
+          "opi192koggurl": "",
+          "wififromtag": "",
+          "flowfromtag": "",
+          "wifiurl": "",
+          "flowurl": "",
+          "vkey": "",
+          "opi30surl": "",
+          "ekey": "",
+          "auth_switch": 1,
+          "subcode": 0,
+          "opi96koggurl": "",
+          "auth_switch2": 0,
+          "xcdnurl": ""
+        }
+      ],
+      "servercheck": "",
+      "expiration": 0,
+      "deviceResult": ""
+    }
+  }
+}
+
+[2026-01-22T16:45:20.777Z] ID: 003UFd7t2u1UPI
+Response: {
+  "code": 0,
+  "ts": 1769100320855,
+  "start_ts": 1769100320824,
+  "traceid": "4e6e89c5362550ce",
+  "req_0": {
+    "code": 1000,
+    "data": {
+      "uin": "",
+      "retcode": 104009,
+      "verify_type": 0,
+      "login_key": "",
+      "msg": "23.247.137.216;invalidq;",
+      "sip": [],
+      "thirdip": [
+        "",
+        ""
+      ],
+      "testfile2g": "",
+      "testfilewifi": "",
+      "midurlinfo": [
+        {
+          "songmid": "003UFd7t2u1UPI",
+          "filename": "C400004EBwNj42VH7x.m4a",
+          "purl": "",
+          "errtype": "",
+          "p2pfromtag": 0,
+          "qmdlfromtag": 0,
+          "common_downfromtag": 0,
+          "vip_downfromtag": 0,
+          "pdl": 0,
+          "premain": 0,
+          "hisdown": 0,
+          "hisbuy": 0,
+          "uiAlert": 0,
+          "isbuy": 0,
+          "pneedbuy": 0,
+          "pneed": 0,
+          "isonly": 0,
+          "onecan": 0,
+          "result": 0,
+          "tips": "",
+          "opi48kurl": "",
+          "opi96kurl": "",
+          "opi192kurl": "",
+          "opiflackurl": "",
+          "opi128kurl": "",
+          "opi192koggurl": "",
+          "wififromtag": "",
+          "flowfromtag": "",
+          "wifiurl": "",
+          "flowurl": "",
+          "vkey": "",
+          "opi30surl": "",
+          "ekey": "",
+          "auth_switch": 769,
+          "subcode": 0,
+          "opi96koggurl": "",
+          "auth_switch2": 0,
+          "xcdnurl": ""
+        }
+      ],
+      "servercheck": "",
+      "expiration": 0,
+      "deviceResult": ""
+    }
+  }
+}
+
+[2026-01-22T16:45:21.228Z] ID: 000xg5lw0AoTVP
+Response: {
+  "code": 0,
+  "ts": 1769100321290,
+  "start_ts": 1769100321260,
+  "traceid": "1f46c116775db86b",
+  "req_0": {
+    "code": 1000,
+    "data": {
+      "uin": "",
+      "retcode": 104009,
+      "verify_type": 0,
+      "login_key": "",
+      "msg": "23.247.137.216;invalidq;",
+      "sip": [],
+      "thirdip": [
+        "",
+        ""
+      ],
+      "testfile2g": "",
+      "testfilewifi": "",
+      "midurlinfo": [
+        {
+          "songmid": "000xg5lw0AoTVP",
+          "filename": "C400003sQ9z53XOO3Q.m4a",
+          "purl": "",
+          "errtype": "",
+          "p2pfromtag": 0,
+          "qmdlfromtag": 0,
+          "common_downfromtag": 0,
+          "vip_downfromtag": 0,
+          "pdl": 0,
+          "premain": 0,
+          "hisdown": 0,
+          "hisbuy": 0,
+          "uiAlert": 0,
+          "isbuy": 0,
+          "pneedbuy": 0,
+          "pneed": 0,
+          "isonly": 0,
+          "onecan": 0,
+          "result": 0,
+          "tips": "",
+          "opi48kurl": "",
+          "opi96kurl": "",
+          "opi192kurl": "",
+          "opiflackurl": "",
+          "opi128kurl": "",
+          "opi192koggurl": "",
+          "wififromtag": "",
+          "flowfromtag": "",
+          "wifiurl": "",
+          "flowurl": "",
+          "vkey": "",
+          "opi30surl": "",
+          "ekey": "",
+          "auth_switch": 1,
+          "subcode": 0,
+          "opi96koggurl": "",
+          "auth_switch2": 0,
+          "xcdnurl": ""
+        }
+      ],
+      "servercheck": "",
+      "expiration": 0,
+      "deviceResult": ""
+    }
+  }
+}
+
+[2026-01-22T16:45:21.670Z] ID: 003e4b5o0jOMXV
+Response: {
+  "code": 0,
+  "ts": 1769100321736,
+  "start_ts": 1769100321702,
+  "traceid": "21293f8bed104ae5",
+  "req_0": {
+    "code": 1000,
+    "data": {
+      "uin": "",
+      "retcode": 104009,
+      "verify_type": 0,
+      "login_key": "",
+      "msg": "23.247.137.216;invalidq;",
+      "sip": [],
+      "thirdip": [
+        "",
+        ""
+      ],
+      "testfile2g": "",
+      "testfilewifi": "",
+      "midurlinfo": [
+        {
+          "songmid": "003e4b5o0jOMXV",
+          "filename": "C400004fjBR23Qi7YU.m4a",
+          "purl": "",
+          "errtype": "",
+          "p2pfromtag": 0,
+          "qmdlfromtag": 0,
+          "common_downfromtag": 0,
+          "vip_downfromtag": 0,
+          "pdl": 0,
+          "premain": 0,
+          "hisdown": 0,
+          "hisbuy": 0,
+          "uiAlert": 0,
+          "isbuy": 0,
+          "pneedbuy": 0,
+          "pneed": 0,
+          "isonly": 0,
+          "onecan": 0,
+          "result": 0,
+          "tips": "",
+          "opi48kurl": "",
+          "opi96kurl": "",
+          "opi192kurl": "",
+          "opiflackurl": "",
+          "opi128kurl": "",
+          "opi192koggurl": "",
+          "wififromtag": "",
+          "flowfromtag": "",
+          "wifiurl": "",
+          "flowurl": "",
+          "vkey": "",
+          "opi30surl": "",
+          "ekey": "",
+          "auth_switch": 1,
+          "subcode": 0,
+          "opi96koggurl": "",
+          "auth_switch2": 0,
+          "xcdnurl": ""
+        }
+      ],
+      "servercheck": "",
+      "expiration": 0,
+      "deviceResult": ""
+    }
+  }
+}
+
+[2026-01-22T16:45:22.091Z] ID: 0004b6420Upf0k
+Response: {
+  "code": 0,
+  "ts": 1769100322147,
+  "start_ts": 1769100322119,
+  "traceid": "05bc82fda3cc96c2",
+  "req_0": {
+    "code": 1000,
+    "data": {
+      "uin": "",
+      "retcode": 104009,
+      "verify_type": 0,
+      "login_key": "",
+      "msg": "23.247.137.216;invalidq;",
+      "sip": [],
+      "thirdip": [
+        "",
+        ""
+      ],
+      "testfile2g": "",
+      "testfilewifi": "",
+      "midurlinfo": [
+        {
+          "songmid": "0004b6420Upf0k",
+          "filename": "C4000004b6420Upf0k.m4a",
+          "purl": "",
+          "errtype": "",
+          "p2pfromtag": 0,
+          "qmdlfromtag": 0,
+          "common_downfromtag": 0,
+          "vip_downfromtag": 0,
+          "pdl": 0,
+          "premain": 0,
+          "hisdown": 0,
+          "hisbuy": 0,
+          "uiAlert": 0,
+          "isbuy": 0,
+          "pneedbuy": 0,
+          "pneed": 0,
+          "isonly": 0,
+          "onecan": 0,
+          "result": 0,
+          "tips": "",
+          "opi48kurl": "",
+          "opi96kurl": "",
+          "opi192kurl": "",
+          "opiflackurl": "",
+          "opi128kurl": "",
+          "opi192koggurl": "",
+          "wififromtag": "",
+          "flowfromtag": "",
+          "wifiurl": "",
+          "flowurl": "",
+          "vkey": "",
+          "opi30surl": "",
+          "ekey": "",
+          "auth_switch": 16881409,
+          "subcode": 0,
+          "opi96koggurl": "",
+          "auth_switch2": 0,
+          "xcdnurl": ""
+        }
+      ],
+      "servercheck": "",
+      "expiration": 0,
+      "deviceResult": ""
+    }
+  }
+}
+
+[2026-01-22T16:48:55.530Z] ID: 003AfQ0u10946Y
+Response: {
+  "code": 0,
+  "ts": 1769100535602,
+  "start_ts": 1769100535557,
+  "traceid": "09dc73d789613ecb",
+  "req_0": {
+    "code": 1000,
+    "data": {
+      "uin": "",
+      "retcode": 104009,
+      "verify_type": 0,
+      "login_key": "",
+      "msg": "23.247.137.216;invalidq;",
+      "sip": [],
+      "thirdip": [
+        "",
+        ""
+      ],
+      "testfile2g": "",
+      "testfilewifi": "",
+      "midurlinfo": [
+        {
+          "songmid": "003AfQ0u10946Y",
+          "filename": "C400003AfQ0u10946Y.m4a",
+          "purl": "",
+          "errtype": "",
+          "p2pfromtag": 0,
+          "qmdlfromtag": 0,
+          "common_downfromtag": 0,
+          "vip_downfromtag": 0,
+          "pdl": 0,
+          "premain": 0,
+          "hisdown": 0,
+          "hisbuy": 0,
+          "uiAlert": 0,
+          "isbuy": 0,
+          "pneedbuy": 0,
+          "pneed": 0,
+          "isonly": 0,
+          "onecan": 0,
+          "result": 0,
+          "tips": "",
+          "opi48kurl": "",
+          "opi96kurl": "",
+          "opi192kurl": "",
+          "opiflackurl": "",
+          "opi128kurl": "",
+          "opi192koggurl": "",
+          "wififromtag": "",
+          "flowfromtag": "",
+          "wifiurl": "",
+          "flowurl": "",
+          "vkey": "",
+          "opi30surl": "",
+          "ekey": "",
+          "auth_switch": 1,
+          "subcode": 0,
+          "opi96koggurl": "",
+          "auth_switch2": 0,
+          "xcdnurl": ""
+        }
+      ],
+      "servercheck": "",
+      "expiration": 0,
+      "deviceResult": ""
+    }
+  }
+}
+
+[2026-01-22T16:48:57.984Z] ID: 003AfQ0u10946Y
+Response: {
+  "code": 0,
+  "ts": 1769100538056,
+  "start_ts": 1769100538026,
+  "traceid": "4b37849303c3aa16",
+  "req_0": {
+    "code": 1000,
+    "data": {
+      "uin": "",
+      "retcode": 104009,
+      "verify_type": 0,
+      "login_key": "",
+      "msg": "23.247.137.216;invalidq;",
+      "sip": [],
+      "thirdip": [
+        "",
+        ""
+      ],
+      "testfile2g": "",
+      "testfilewifi": "",
+      "midurlinfo": [
+        {
+          "songmid": "003AfQ0u10946Y",
+          "filename": "C400003AfQ0u10946Y.m4a",
+          "purl": "",
+          "errtype": "",
+          "p2pfromtag": 0,
+          "qmdlfromtag": 0,
+          "common_downfromtag": 0,
+          "vip_downfromtag": 0,
+          "pdl": 0,
+          "premain": 0,
+          "hisdown": 0,
+          "hisbuy": 0,
+          "uiAlert": 0,
+          "isbuy": 0,
+          "pneedbuy": 0,
+          "pneed": 0,
+          "isonly": 0,
+          "onecan": 0,
+          "result": 0,
+          "tips": "",
+          "opi48kurl": "",
+          "opi96kurl": "",
+          "opi192kurl": "",
+          "opiflackurl": "",
+          "opi128kurl": "",
+          "opi192koggurl": "",
+          "wififromtag": "",
+          "flowfromtag": "",
+          "wifiurl": "",
+          "flowurl": "",
+          "vkey": "",
+          "opi30surl": "",
+          "ekey": "",
+          "auth_switch": 1,
+          "subcode": 0,
+          "opi96koggurl": "",
+          "auth_switch2": 0,
+          "xcdnurl": ""
+        }
+      ],
+      "servercheck": "",
+      "expiration": 0,
+      "deviceResult": ""
+    }
+  }
+}
+
