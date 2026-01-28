@@ -1,2 +1,2 @@
-本科课程/毕业论文/Compressed File/*.zip filter=lfs diff=lfs merge=lfs -text
-本科课程/毕业论文/Project/MusicMode/Mode/*.pkl filter=lfs diff=lfs merge=lfs -text
+Compressed File/*.zip filter=lfs diff=lfs merge=lfs -text
+/Project/MusicMode/Mode/*.pkl filter=lfs diff=lfs merge=lfs -text
