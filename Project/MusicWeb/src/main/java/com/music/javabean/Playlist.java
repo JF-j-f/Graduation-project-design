@@ -20,7 +20,8 @@ public class Playlist {
     private int songCount; // 歌曲数量
 
     // 构造方法
-    public Playlist() {}
+    public Playlist() {
+    }
 
     public Playlist(String name, int userId) {
         this.name = name;
@@ -35,38 +36,93 @@ public class Playlist {
     }
 
     // getter和setter方法
-    public int getId() { return id; }
-    public void setId(int id) { this.id = id; }
+    public int getId() {
+        return id;
+    }
 
-    public int getUserId() { return userId; }
-    public void setUserId(int userId) { this.userId = userId; }
+    public void setId(int id) {
+        this.id = id;
+    }
 
-    public String getName() { return name; }
-    public void setName(String name) { this.name = name; }
+    public int getUserId() {
+        return userId;
+    }
 
-    public String getDescription() { return description; }
-    public void setDescription(String description) { this.description = description; }
+    public void setUserId(int userId) {
+        this.userId = userId;
+    }
 
-    public String getCoverImage() { return coverImage; }
-    public void setCoverImage(String coverImage) { this.coverImage = coverImage; }
+    public String getName() {
+        return name;
+    }
 
-    public boolean isDefault() { return isDefault; }
-    public void setDefault(boolean isDefault) { this.isDefault = isDefault; }
+    public void setName(String name) {
+        this.name = name;
+    }
 
-    public String getCreateTime() { return createTime; }
-    public void setCreateTime(String createTime) { this.createTime = createTime; }
+    public String getDescription() {
+        return description;
+    }
 
-    public String getUpdateTime() { return updateTime; }
-    public void setUpdateTime(String updateTime) { this.updateTime = updateTime; }
+    public void setDescription(String description) {
+        this.description = description;
+    }
 
-    public User getUser() { return user; }
-    public void setUser(User user) { this.user = user; }
+    public String getCoverImage() {
+        return coverImage;
+    }
 
-    public List<Song> getSongs() { return songs; }
-    public void setSongs(List<Song> songs) { this.songs = songs; }
+    public void setCoverImage(String coverImage) {
+        this.coverImage = coverImage;
+    }
 
-    public int getSongCount() { return songCount; }
-    public void setSongCount(int songCount) { this.songCount = songCount; }
+    public boolean isDefault() {
+        return isDefault;
+    }
+
+    public void setDefault(boolean isDefault) {
+        this.isDefault = isDefault;
+    }
+
+    public String getCreateTime() {
+        return createTime;
+    }
+
+    public void setCreateTime(String createTime) {
+        this.createTime = createTime;
+    }
+
+    public String getUpdateTime() {
+        return updateTime;
+    }
+
+    public void setUpdateTime(String updateTime) {
+        this.updateTime = updateTime;
+    }
+
+    public User getUser() {
+        return user;
+    }
+
+    public void setUser(User user) {
+        this.user = user;
+    }
+
+    public List<Song> getSongs() {
+        return songs;
+    }
+
+    public void setSongs(List<Song> songs) {
+        this.songs = songs;
+    }
+
+    public int getSongCount() {
+        return songCount;
+    }
+
+    public void setSongCount(int songCount) {
+        this.songCount = songCount;
+    }
 
     /**
      * 获取歌单封面图片路径
@@ -74,9 +130,13 @@ public class Playlist {
      */
     public String getDisplayCover() {
         if (coverImage != null && !coverImage.isEmpty()) {
+            /* 如果是相对路径，添加contextPath前缀 */
+            if (!coverImage.startsWith("http") && !coverImage.startsWith("/")) {
+                return "/musicweb/" + coverImage;
+            }
             return coverImage;
         }
-        return "img/cover.jpg";
+        return "/musicweb/img/cover.jpg";
     }
 
     /**

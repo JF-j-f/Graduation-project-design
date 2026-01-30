@@ -101,46 +101,50 @@ public class UniversalPlayHistoryServlet extends HttpServlet {
                 return;
             }
 
-            // 4.5 对于外部歌曲，如果缺少元数据，调用增强详情 API 获取
+            // 4.1 数据清洗（针对 QQ 音乐等外部源）
+            com.music.utils.MetadataCleaner.CleanResult cleanResult = com.music.utils.MetadataCleaner.clean(title,
+                    artist, album, source);
+            if (cleanResult.isModified()) {
+                title = cleanResult.getTitle();
+                artist = cleanResult.getArtist();
+                album = cleanResult.getAlbum();
+            }
+
+            // 4.5 对于外部歌曲，自动增强缺失的元数据
             String externalId = getJsonString(body, "externalId");
             if (source != null && !"local".equals(source) && externalId != null && !externalId.isEmpty()) {
-                // 检查是否缺少关键元数据
-                boolean needsEnhancement = (releaseYear == 0 || genre == null || language == null || coverUrl == null
-                        || coverUrl.isEmpty());
+                boolean needsEnhancement = (releaseYear == 0 || !isValidMetadata(genre) || !isValidMetadata(language)
+                        || coverUrl == null || coverUrl.isEmpty());
 
                 if (needsEnhancement) {
-                    System.out.println("📡 [元数据增强] 尝试从 API 获取完整信息: " + source + " / " + externalId);
+                    // Step 1: 从音乐源 API 获取基础元数据 (封面、年份等)
                     JsonObject enhancedData = fetchEnhancedMetadata(source, externalId);
-
                     if (enhancedData != null) {
-                        // 用增强数据填充缺失字段
-                        if (releaseYear == 0 && enhancedData.has("releaseYear")
-                                && !enhancedData.get("releaseYear").isJsonNull()) {
-                            releaseYear = enhancedData.get("releaseYear").getAsInt();
-                            System.out.println("   ➤ releaseYear: " + releaseYear);
-                        }
-                        if (genre == null && enhancedData.has("genre") && !enhancedData.get("genre").isJsonNull()) {
-                            genre = enhancedData.get("genre").getAsString();
-                            System.out.println("   ➤ genre: " + genre);
-                        }
-                        if (language == null && enhancedData.has("language")
-                                && !enhancedData.get("language").isJsonNull()) {
-                            language = enhancedData.get("language").getAsString();
-                            System.out.println("   ➤ language: " + language);
-                        }
-                        if ((coverUrl == null || coverUrl.isEmpty()) && enhancedData.has("coverUrl")
-                                && !enhancedData.get("coverUrl").isJsonNull()) {
-                            coverUrl = enhancedData.get("coverUrl").getAsString();
-                            System.out.println("   ➤ coverUrl: "
-                                    + (coverUrl != null ? coverUrl.substring(0, Math.min(50, coverUrl.length())) + "..."
-                                            : "null"));
-                        }
-                        if ((album == null || album.isEmpty()) && enhancedData.has("album")
-                                && !enhancedData.get("album").isJsonNull()) {
-                            album = enhancedData.get("album").getAsString();
-                            System.out.println("   ➤ album: " + album);
+                        if (releaseYear == 0)
+                            releaseYear = getJsonInt(enhancedData, "releaseYear");
+                        if (!isValidMetadata(genre))
+                            genre = getJsonString(enhancedData, "genre");
+                        if (!isValidMetadata(language))
+                            language = getJsonString(enhancedData, "language");
+                        if (coverUrl == null || coverUrl.isEmpty())
+                            coverUrl = getJsonString(enhancedData, "coverUrl");
+                        if (album == null || album.isEmpty())
+                            album = getJsonString(enhancedData, "album");
+                    }
+
+                    // Step 2: 若 genre/language 仍无效，调用多源聚合服务 (网易云百科/Last.fm/MusicBrainz/langdetect)
+                    if (!isValidMetadata(genre) || !isValidMetadata(language)) {
+                        String neteaseId = "netease".equals(source) ? externalId : null;
+                        JsonObject aggregated = fetchMetadataFromAggregator(title, artist, neteaseId);
+                        if (aggregated != null) {
+                            if (!isValidMetadata(genre))
+                                genre = getJsonString(aggregated, "genre");
+                            if (!isValidMetadata(language))
+                                language = getJsonString(aggregated, "language");
                         }
                     }
+
+                    System.out.println("📡 [元数据增强] " + title + " → genre=" + genre + ", language=" + language);
                 }
             }
 
@@ -226,6 +230,33 @@ public class UniversalPlayHistoryServlet extends HttpServlet {
     }
 
     /**
+     * 安全获取 JSON 整数字段
+     */
+    private int getJsonInt(JsonObject obj, String key) {
+        if (obj.has(key) && !obj.get(key).isJsonNull()) {
+            return obj.get(key).getAsInt();
+        }
+        return 0;
+    }
+
+    /**
+     * 检查元数据值是否有效
+     * 
+     * 无效值包括：null、空字符串、"0"、"Unknown"、"unknown"
+     * 
+     * @param value 元数据值 (genre 或 language)
+     * @return true 如果是有效值，false 否则
+     */
+    private boolean isValidMetadata(String value) {
+        if (value == null || value.isEmpty()) {
+            return false;
+        }
+        // 排除无效占位值
+        String trimmed = value.trim();
+        return !trimmed.equals("0") && !trimmed.equalsIgnoreCase("Unknown") && !trimmed.equalsIgnoreCase("null");
+    }
+
+    /**
      * 下载封面到本地
      */
     private String downloadCover(String coverUrl, int songId, HttpServletRequest request) {
@@ -300,6 +331,72 @@ public class UniversalPlayHistoryServlet extends HttpServlet {
 
         } catch (Exception e) {
             System.err.println("⚠️ [元数据增强] 调用 API 失败: " + e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 从 Python 多源元数据聚合服务获取 genre 和 language
+     * 
+     * 四级降级策略：QQ音乐 -> Last.fm -> MusicBrainz -> 本地检测
+     * 
+     * @param title  歌曲名称
+     * @param artist 歌手名称
+     * @return 包含 genre, language 字段的 JsonObject
+     */
+    private JsonObject fetchMetadataFromAggregator(String title, String artist, String neteaseId) {
+        try {
+            // URL 编码处理中文
+            String encodedTitle = java.net.URLEncoder.encode(title, "UTF-8");
+            String encodedArtist = java.net.URLEncoder.encode(artist, "UTF-8");
+
+            String apiUrl = "http://127.0.0.1:8000/song/metadata?title=" + encodedTitle + "&artist=" + encodedArtist;
+            // 如果有网易云 ID，传递给 Python 服务优先查询百科
+            if (neteaseId != null && !neteaseId.isEmpty() && !"0".equals(neteaseId)) {
+                apiUrl += "&netease_id=" + java.net.URLEncoder.encode(neteaseId, "UTF-8");
+            }
+
+            // 调用 Python 聚合 API
+            java.net.URL url = new java.net.URL(apiUrl);
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(15000); // 聚合服务可能需要更长时间
+            conn.setReadTimeout(30000);
+
+            int responseCode = conn.getResponseCode();
+            if (responseCode != 200) {
+                System.err.println("⚠️ [多源聚合] API 返回非 200: " + responseCode);
+                return null;
+            }
+
+            // 读取响应
+            StringBuilder sb = new StringBuilder();
+            try (java.io.BufferedReader reader = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(conn.getInputStream(), "UTF-8"))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    sb.append(line);
+                }
+            }
+
+            JsonObject json = JsonParser.parseString(sb.toString()).getAsJsonObject();
+
+            // 检查响应状态
+            if (!json.has("code") || json.get("code").getAsInt() != 0) {
+                System.err.println("⚠️ [多源聚合] API 业务错误");
+                return null;
+            }
+
+            // 返回 data 对象
+            if (json.has("data") && !json.get("data").isJsonNull()) {
+                System.out.println("✅ [多源聚合] 成功获取聚合数据");
+                return json.getAsJsonObject("data");
+            }
+
+            return null;
+
+        } catch (Exception e) {
+            System.err.println("⚠️ [多源聚合] 调用 API 失败: " + e.getMessage());
             return null;
         }
     }

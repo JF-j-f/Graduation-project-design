@@ -75,7 +75,8 @@ MusicWeb/
 │       │   │   └── UserRegisterServlet.java      # 用户注册接口
 │       │   └── util/                # 工具类目录
 │       │       ├── CoverDownloadUtil.java    # 封面下载工具
-│       │       └── EmailUtil.java            # 邮件发送工具
+│       │       ├── EmailUtil.java            # 邮件发送工具
+│       │       └── MetadataCleaner.java      # 元数据清洗工具
 │       ├── resources/               # 配置文件目录
 │       │   ├── c3p0-config.xml      # 数据库连接池配置
 │       │   ├── music-api.properties # 第三方 API 配置
@@ -84,11 +85,11 @@ MusicWeb/
 │           ├── WEB-INF/web.xml      # Web 应用部署配置
 │           ├── MusicServer/         # 独立音乐 API 服务目录
 │           │   ├── Cookie/          # 缓存 Cookie 目录
-│           │   ├── node_modules/    # Node 依赖库目录
-│           │   ├── qq_api/          # Python 服务目录
-│           │   ├── unblock/         # UnblockNeteaseMusic 服务目录
+│           │   ├── node_modules/    # Node 依赖库目录（不展开）
+│           │   ├── qq_api/          # Python 服务目录（不展开）
+│           │   ├── unblock/         # UnblockNeteaseMusic 服务目录（不展开）
 │           │   ├── package.json     # Node 项目依赖配置
-│           │   └── server.js        # Node 服务入口文件
+│           │   └── server.log       # Node 服务日志
 │           ├── js/                  # 前端脚本目录
 │           │   ├── app.js            # 主业务入口逻辑
 │           │   ├── player.js         # 播放器核心逻辑
@@ -121,7 +122,6 @@ MusicWeb/
 └── target/                          # Maven 构建输出目录
 ```
 
-```
 ## 数据库设计
 
 ### 数据库配置
@@ -664,8 +664,8 @@ MusicWeb/
 
 **初创时间**: 2025年11月
 
-**最新版本**: v3.2.0
+**最新版本**: v3.2.4
 
 ---
 
-*本文档最后更新时间：2026年1月27日*
+*本文档最后更新时间：2026年1月31日 02:00*

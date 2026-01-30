@@ -24,7 +24,7 @@ import java.nio.charset.StandardCharsets;
 public class ImageProxyServlet extends HttpServlet {
 
     // 源码目录路径 (硬编码为开发环境路径)
-    private static final String SOURCE_WEBAPP_PATH = "E:/毕业论文/Project/MusicWeb/src/main/webapp";
+    private static final String SOURCE_WEBAPP_PATH = "E:/Graduation-project-design/Project/MusicWeb/src/main/webapp";
 
     @Override
     protected void doGet(HttpServletRequest request, HttpServletResponse response)

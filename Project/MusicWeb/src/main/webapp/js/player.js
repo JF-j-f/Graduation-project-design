@@ -183,8 +183,10 @@ class AudioPlayer {
                 song.source = data.source;
                 song.externalId = data.externalId;
                 if (data.releaseYear) song.releaseYear = data.releaseYear;
+                if (data.releaseYear) song.releaseYear = data.releaseYear;
                 if (data.genre) song.genre = data.genre;
                 if (data.language) song.language = data.language;
+                if (data.coverUrl) song.coverUrl = data.coverUrl;
 
                 // 设置播放源并播放
                 this.audio.src = data.url;

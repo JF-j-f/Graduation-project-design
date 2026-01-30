@@ -23,9 +23,9 @@
                         <meta charset="UTF-8">
                         <meta name="viewport" content="width=device-width, initial-scale=1.0">
                         <title>搜索结果 - MusicWeb</title>
-                        <link rel="stylesheet" href="css/style.css">
-                        <link rel="stylesheet" href="css/search.css">
-                        <link rel="stylesheet" href="css/player.css">
+                        <link rel="stylesheet" href="${pageContext.request.contextPath}/css/style.css">
+                        <link rel="stylesheet" href="${pageContext.request.contextPath}/css/search.css">
+                        <link rel="stylesheet" href="${pageContext.request.contextPath}/css/player.css">
                         <style>
                             body {
                                 overflow-x: hidden;
@@ -277,12 +277,19 @@
                                                 !songSource.isEmpty() && !"local".equals(songSource); %>
                                                 <div class="song-item fade-in">
                                                     <div class="song-cover">
-                                                        <% if (coverUrl !=null && !coverUrl.isEmpty()) { %>
+                                                        <% if (coverUrl !=null && !coverUrl.isEmpty()) { if
+                                                            (!coverUrl.startsWith("http") && !coverUrl.startsWith("/"))
+                                                            { coverUrl=request.getContextPath() + "/" + coverUrl; } %>
                                                             <img src="<%= coverUrl %>" alt="封面"
                                                                 style="width: 100%; height: 100%; border-radius: 8px; object-fit: cover;">
                                                             <% } else if (song.getCoverImage() !=null &&
-                                                                !song.getCoverImage().isEmpty()) { %>
-                                                                <img src="<%= song.getCoverImage() %>" alt="封面"
+                                                                !song.getCoverImage().isEmpty()) { String
+                                                                localCoverUrl=song.getCoverImage(); if
+                                                                (!localCoverUrl.startsWith("http") &&
+                                                                !localCoverUrl.startsWith("/")) {
+                                                                localCoverUrl=request.getContextPath() + "/" +
+                                                                localCoverUrl; } %>
+                                                                <img src="<%= localCoverUrl %>" alt="封面"
                                                                     style="width: 100%; height: 100%; border-radius: 8px; object-fit: cover;">
                                                                 <% } else { %>
                                                                     🎵
@@ -339,7 +346,8 @@
                             <!-- 左侧：封面和歌曲信息 -->
                             <div class="player-left">
                                 <div class="player-cover">
-                                    <img id="player-cover" src="img/cover.jpg" alt="封面">
+                                    <img id="player-cover" src="${pageContext.request.contextPath}/img/cover.jpg"
+                                        alt="封面">
                                 </div>
                                 <div class="player-info">
                                     <div class="player-title" id="player-title">未播放</div>
@@ -392,9 +400,9 @@
                             </div>
                         </div>
 
-                        <script src="js/qqLoginModal.js"></script>
-                        <script src="js/player.js"></script>
-                        <script src="js/search.js"></script>
+                        <script src="${pageContext.request.contextPath}/js/qqLoginModal.js"></script>
+                        <script src="${pageContext.request.contextPath}/js/player.js"></script>
+                        <script src="${pageContext.request.contextPath}/js/search.js"></script>
                         <script>
                             // 音乐源切换函数
                             function searchWithSource(source) {

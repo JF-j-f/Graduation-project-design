@@ -9,9 +9,25 @@ QQ 音乐 API 桥接服务
 
 import asyncio
 import base64
+import json
 from typing import Optional, Dict, Any
 from contextlib import asynccontextmanager
 import os
+
+# ============================================
+#    加载 QQ 音乐流派/语种映射表
+# ============================================
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_MAPPING_FILE = os.path.join(_SCRIPT_DIR, "qq_music_mapping.json")
+
+try:
+    with open(_MAPPING_FILE, "r", encoding="utf-8") as f:
+        QQ_MAPPING = json.load(f)
+    print(f"✅ [映射表] 已加载 {_MAPPING_FILE}")
+except Exception as e:
+    print(f"⚠️ [映射表] 加载失败: {e}")
+    QQ_MAPPING = {"language": {}, "genre": {}}
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,6 +39,9 @@ from qqmusic_api import search, song, login
 from qqmusic_api.login import QRLoginType, QRCodeLoginEvents, PhoneLoginEvents
 from qqmusic_api import Credential
 from qqmusic_api.utils.session import Session, set_session
+
+# 导入元数据聚合服务
+from metadata_provider import get_metadata
 
 # ============================================
 #    全局状态管理
@@ -236,10 +255,10 @@ async def get_song_detail(
             # 发行时间
             "pubTime": song_info.get("time_public", ""),
             "releaseYear": None,
-            # 语言 (index)
-            "language": song_info.get("language"),
-            # 流派 (QQ 用 genre 索引)
-            "genre": song_info.get("genre"),
+            # 语言 (从索引转换为字符串)
+            "language": QQ_MAPPING.get("language", {}).get(str(song_info.get("language", "")), None),
+            # 流派 (从索引转换为字符串)
+            "genre": QQ_MAPPING.get("genre", {}).get(str(song_info.get("genre", "")), None),
         }
         
         # 解析 VIP 状态
@@ -262,6 +281,39 @@ async def get_song_detail(
         import traceback
         traceback.print_exc()
         print(f"Get song detail failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================
+#    元数据聚合接口
+# ============================================
+
+@app.get("/song/metadata")
+async def get_song_metadata(
+    title: str = Query(..., description="歌曲名称"),
+    artist: str = Query(..., description="歌手名称"),
+    netease_id: str = Query(None, description="网易云歌曲ID (可选)")
+):
+    """
+    多源聚合获取歌曲元数据 (流派和语种)
+    
+    采用五级降级策略:
+    - P-1: 网易云百科 (需要 netease_id)
+    - P0: QQ 音乐 (需要国内 IP)
+    - P1: Last.fm (全球可用)
+    - P2: MusicBrainz (全球可用)
+    - P3: langdetect 本地检测 (语种兜底)
+    
+    Returns:
+        {"code": 0, "data": {"genre": "流行", "language": "国语"}}
+    """
+    try:
+        result = await get_metadata(title, artist, netease_id)
+        return {"code": 0, "data": result}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"Get song metadata failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -638,7 +690,7 @@ async def health_check():
     return {
         "status": "ok",
         "service": "QQ Music API Bridge",
-        "logged_in": current_credential is not None
+        "logged_in": len(credentials) > 0
     }
 
 

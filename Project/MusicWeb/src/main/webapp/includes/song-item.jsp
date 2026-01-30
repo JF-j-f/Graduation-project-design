@@ -4,8 +4,10 @@
             request.getAttribute("isFavorited"); String playTime=(String) request.getAttribute("playTime"); %>
             <div class="song-item fade-in">
                 <div class="song-cover">
-                    <% if (song.getCoverImage() !=null && !song.getCoverImage().isEmpty()) { %>
-                        <img src="<%= song.getCoverImage() %>" alt="封面"
+                    <% if (song.getCoverImage() !=null && !song.getCoverImage().isEmpty()) { String
+                        coverUrl=song.getCoverImage(); if (!coverUrl.startsWith("http") && !coverUrl.startsWith("/")) {
+                        coverUrl=request.getContextPath() + "/" + coverUrl; } %>
+                        <img src="<%= coverUrl %>" alt="封面"
                             style="width: 100%; height: 100%; border-radius: 8px; object-fit: cover;">
                         <% } else { %>
                             <div

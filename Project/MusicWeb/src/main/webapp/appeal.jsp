@@ -8,8 +8,8 @@
 <head>
     <meta charset="UTF-8">
     <title>账号申诉</title>
-    <link rel="stylesheet" href="css/style.css">
-    <link rel="stylesheet" href="css/appeal.css">
+    <link rel="stylesheet" href="${pageContext.request.contextPath}/css/style.css">
+    <link rel="stylesheet" href="${pageContext.request.contextPath}/css/appeal.css">
 </head>
 <body>
     <div class="appeal-container">

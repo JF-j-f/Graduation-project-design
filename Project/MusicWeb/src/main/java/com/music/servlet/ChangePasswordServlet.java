@@ -27,7 +27,7 @@ public class ChangePasswordServlet extends HttpServlet {
         // 获取当前用户会话
         HttpSession session = request.getSession(false);
         if (session == null || session.getAttribute("user") == null) {
-            response.sendRedirect("index.jsp");
+            response.sendRedirect("jsp/index.jsp");
             return;
         }
 
@@ -43,16 +43,16 @@ public class ChangePasswordServlet extends HttpServlet {
             // 验证输入参数
             String errorMessage = validatePasswordInput(currentPassword, newPassword, confirmPassword);
             if (errorMessage != null) {
-                response.sendRedirect("settings.jsp?messageType=error&message=" +
-                                  java.net.URLEncoder.encode(errorMessage, "UTF-8"));
+                response.sendRedirect("jsp/settings.jsp?messageType=error&message=" +
+                        java.net.URLEncoder.encode(errorMessage, "UTF-8"));
                 return;
             }
 
             // 验证当前密码
             if (!userDAO.validatePassword(userId, currentPassword)) {
                 System.err.println("❌ 密码修改失败 - 当前密码错误 - 用户ID: " + userId);
-                response.sendRedirect("settings.jsp?messageType=error&message=" +
-                                  java.net.URLEncoder.encode("当前密码错误", "UTF-8"));
+                response.sendRedirect("jsp/settings.jsp?messageType=error&message=" +
+                        java.net.URLEncoder.encode("当前密码错误", "UTF-8"));
                 return;
             }
 
@@ -67,26 +67,27 @@ public class ChangePasswordServlet extends HttpServlet {
                 // 记录操作日志
                 System.out.println("✅ 密码修改成功 - 用户ID: " + userId);
 
-                response.sendRedirect("settings.jsp?messageType=success&message=" +
-                                  java.net.URLEncoder.encode("密码修改成功！", "UTF-8"));
+                response.sendRedirect("jsp/settings.jsp?messageType=success&message=" +
+                        java.net.URLEncoder.encode("密码修改成功！", "UTF-8"));
             } else {
                 System.err.println("❌ 密码修改失败 - 用户ID: " + userId);
-                response.sendRedirect("settings.jsp?messageType=error&message=" +
-                                  java.net.URLEncoder.encode("密码修改失败，请稍后重试", "UTF-8"));
+                response.sendRedirect("jsp/settings.jsp?messageType=error&message=" +
+                        java.net.URLEncoder.encode("密码修改失败，请稍后重试", "UTF-8"));
             }
 
         } catch (Exception e) {
             System.err.println("❌ 修改密码时发生异常: " + e.getMessage());
             e.printStackTrace();
-            response.sendRedirect("settings.jsp?messageType=error&message=" +
-                              java.net.URLEncoder.encode("系统错误，请稍后重试", "UTF-8"));
+            response.sendRedirect("jsp/settings.jsp?messageType=error&message=" +
+                    java.net.URLEncoder.encode("系统错误，请稍后重试", "UTF-8"));
         }
     }
 
     /**
      * 验证密码输入
+     * 
      * @param currentPassword 当前密码
-     * @param newPassword 新密码
+     * @param newPassword     新密码
      * @param confirmPassword 确认密码
      * @return 错误信息，如果验证通过则返回null
      */
@@ -134,6 +135,7 @@ public class ChangePasswordServlet extends HttpServlet {
 
     /**
      * 检查密码强度
+     * 
      * @param password 密码
      * @return 是否符合强度要求
      */
@@ -161,6 +163,6 @@ public class ChangePasswordServlet extends HttpServlet {
     protected void doGet(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
         // GET 请求重定向到设置页面
-        response.sendRedirect("settings.jsp");
+        response.sendRedirect("jsp/settings.jsp");
     }
 }

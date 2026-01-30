@@ -10,7 +10,7 @@
 <head>
     <meta charset="UTF-8">
     <title>账号状态提示</title>
-    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="${pageContext.request.contextPath}/css/style.css">
     <style>
         .modal-overlay {
             position: fixed;

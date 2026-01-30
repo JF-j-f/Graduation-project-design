@@ -1,4 +1,4 @@
-﻿<%@ page contentType="text/html;charset=UTF-8" language="java" %>
+<%@ page contentType="text/html;charset=UTF-8" language="java" %>
 <%@ page import="com.music.javabean.User" %>
 <%
     /* 检查用户是否登录 */
@@ -19,8 +19,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>播放历史 - MusicWeb</title>
-    <link rel="stylesheet" href="css/style.css">
-    <link rel="stylesheet" href="css/player.css">
+    <link rel="stylesheet" href="${pageContext.request.contextPath}/css/style.css">
+    <link rel="stylesheet" href="${pageContext.request.contextPath}/css/player.css">
     <style>
         .history-container { max-width: 1200px; margin: 0 auto; padding: 2rem; min-height: 100vh; }
         .history-header { display: flex; align-items: center; gap: 1rem; margin-bottom: 2rem; }
@@ -87,7 +87,7 @@
     <audio id="audio-player"></audio>
     <div class="music-player" style="display: none;">
         <div class="player-left">
-            <div class="player-cover"><img id="player-cover" src="img/cover.jpg" alt="封面"></div>
+            <div class="player-cover"><img id="player-cover" src="${pageContext.request.contextPath}/img/cover.jpg" alt="封面"></div>
             <div class="player-info"><div class="player-title" id="player-title">未播放</div><div class="player-artist" id="player-artist"></div></div>
         </div>
         <div class="player-center">
@@ -112,8 +112,8 @@
         <div class="queue-header"><h3 class="queue-title">播放队列</h3><button class="queue-clear" id="queue-clear">清空</button></div>
         <div class="queue-list" id="queue-list"><div class="queue-empty">播放队列为空</div></div>
     </div>
-    <script src="js/qqLoginModal.js"></script>
-    <script src="js/player.js"></script>
+    <script src="${pageContext.request.contextPath}/js/qqLoginModal.js"></script>
+    <script src="${pageContext.request.contextPath}/js/player.js"></script>
     <script>
         var currentDays = 7;
         var currentPage = 1;

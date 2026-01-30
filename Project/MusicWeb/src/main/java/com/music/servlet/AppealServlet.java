@@ -25,9 +25,9 @@ public class AppealServlet extends HttpServlet {
         PrintWriter out = response.getWriter();
 
         if (username == null || password == null || appealType == null ||
-            reason == null || contactEmail == null ||
-            username.trim().isEmpty() || password.trim().isEmpty() ||
-            reason.trim().isEmpty() || contactEmail.trim().isEmpty()) {
+                reason == null || contactEmail == null ||
+                username.trim().isEmpty() || password.trim().isEmpty() ||
+                reason.trim().isEmpty() || contactEmail.trim().isEmpty()) {
             out.println("<script>alert('所有字段都必须填写！');history.back();</script>");
             return;
         }
@@ -49,7 +49,7 @@ public class AppealServlet extends HttpServlet {
 
         AppealDAO appealDAO = new AppealDAO();
         if (appealDAO.createAppeal(appeal)) {
-            out.println("<script>alert('申诉提交成功！我们会尽快处理您的申诉。');window.location.href='index.jsp';</script>");
+            out.println("<script>alert('申诉提交成功！我们会尽快处理您的申诉。');window.location.href='jsp/index.jsp';</script>");
         } else {
             out.println("<script>alert('申诉提交失败，请稍后重试！');history.back();</script>");
         }

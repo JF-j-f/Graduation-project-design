@@ -593,46 +593,245 @@ public class SongDAO {
     }
 
     /**
+     * 智能歌手交集匹配
+     * 
+     * 处理不同音乐源歌手格式不一致的问题，例如：
+     * - 数据库：`VISION SOUND`
+     * - 传入：`jixwang / VISION SOUND`
+     * 
+     * 匹配逻辑：
+     * 1. 按 title 查找所有候选歌曲
+     * 2. 将传入的 artist 按分隔符（" / "、"/"）分割成列表
+     * 3. 检查候选歌曲的 artist 是否与列表有交集
+     * 
+     * @param title  歌曲标题
+     * @param artist 传入的歌手名称（可能包含多个歌手）
+     * @return 匹配的歌曲，未找到返回 null
+     */
+    public Song findByTitleAndArtistIntersection(String title, String artist) {
+        if (title == null || title.isEmpty() || artist == null || artist.isEmpty()) {
+            return null;
+        }
+
+        Connection conn = null;
+        PreparedStatement pstmt = null;
+        ResultSet rs = null;
+        Song bestMatch = null;
+
+        try {
+            conn = DBUtil.getConnection();
+            // 按 title 查找所有候选歌曲
+            String sql = "SELECT * FROM songs WHERE title = ?";
+            pstmt = conn.prepareStatement(sql);
+            pstmt.setString(1, title);
+            rs = pstmt.executeQuery();
+
+            // 将传入的 artist 按分隔符分割成列表（支持多种格式）
+            java.util.Set<String> inputArtists = new java.util.HashSet<>();
+            for (String a : artist.split("\\s*/\\s*|\\s*,\\s*|\\s*&\\s*")) {
+                String trimmed = a.trim().toLowerCase();
+                if (!trimmed.isEmpty()) {
+                    inputArtists.add(trimmed);
+                }
+            }
+
+            while (rs.next()) {
+                String dbArtist = rs.getString("artist");
+                if (dbArtist == null || dbArtist.isEmpty()) {
+                    continue;
+                }
+
+                // 将数据库的 artist 也分割成列表
+                java.util.Set<String> dbArtists = new java.util.HashSet<>();
+                for (String a : dbArtist.split("\\s*/\\s*|\\s*,\\s*|\\s*&\\s*")) {
+                    String trimmed = a.trim().toLowerCase();
+                    if (!trimmed.isEmpty()) {
+                        dbArtists.add(trimmed);
+                    }
+                }
+
+                // 检查是否有交集
+                java.util.Set<String> intersection = new java.util.HashSet<>(inputArtists);
+                intersection.retainAll(dbArtists);
+
+                if (!intersection.isEmpty()) {
+                    // 找到匹配，构建 Song 对象
+                    bestMatch = new Song();
+                    bestMatch.setId(rs.getInt("id"));
+                    bestMatch.setTitle(rs.getString("title"));
+                    bestMatch.setArtist(dbArtist);
+                    bestMatch.setAlbum(rs.getString("album"));
+                    bestMatch.setDuration(rs.getInt("duration"));
+                    bestMatch.setGenre(rs.getString("genre"));
+                    bestMatch.setReleaseYear(rs.getInt("release_year"));
+                    bestMatch.setFilePath(rs.getString("file_path"));
+                    bestMatch.setCoverImage(rs.getString("cover_image"));
+                    bestMatch.setLanguage(rs.getString("language"));
+
+                    System.out.println("🔍 [智能匹配] " + title + " | 传入: '" + artist + "' ↔ 数据库: '" + dbArtist +
+                            "' | 交集: " + intersection + " => 找到 ID=" + bestMatch.getId());
+                    break; // 找到第一个匹配就返回
+                }
+            }
+
+            if (bestMatch == null) {
+                System.out.println("🔍 [智能匹配] " + title + " | '" + artist + "' => 未找到交集匹配");
+            }
+
+        } catch (SQLException e) {
+            System.err.println("❌ [ERROR] 智能歌手匹配失败: " + e.getMessage());
+            e.printStackTrace();
+        } finally {
+            DBUtil.close(conn, pstmt, rs);
+        }
+
+        return bestMatch;
+    }
+
+    /**
      * 添加或更新外部歌曲信息
      * - 如果歌曲不存在：插入新记录
-     * - 如果歌曲已存在：更新来源、封面、专辑、发行年份等缺失字段
+     * - 如果歌曲已存在：强制更新元数据（Album, Duration, Source, Cover, Year, Genre, Language）
+     * 
+     * 匹配策略（两阶段）：
+     * 1. 精确匹配：title + artist + album
+     * 2. 智能匹配：title + 歌手交集（处理不同来源歌手格式不一致问题）
      * 
      * @param title       歌曲标题
      * @param artist      歌手
      * @param album       专辑
      * @param duration    时长（秒）
      * @param source      来源（netease/qq）
-     * @param coverImage  封面路径（本地路径如 img/cover_123.jpg）
-     * @param releaseYear 发行年份（0 表示未知）
-     * @param genre       曲风（格式：二次元；游戏）
-     * @param language    语言（中文/英语/日语等）
-     * @return 歌曲 ID（新插入或已存在的 ID），失败返回 -1
+     * @param coverImage  封面路径
+     * @param releaseYear 发行年份
+     * @param genre       曲风
+     * @param language    语言
+     * @return 歌曲 ID
      */
     public int addOrUpdateFromExternal(String title, String artist, String album,
             int duration, String source,
             String coverImage, int releaseYear,
             String genre, String language) {
-        // 1. 先查找是否已存在
+        // Step 1: 精确匹配 (title + artist + album)
         Song existing = findByTitleArtistAlbum(title, artist, album);
 
+        // Step 2: 若精确匹配失败，尝试智能歌手交集匹配 (处理歌手格式不一致问题)
+        if (existing == null) {
+            existing = findByTitleAndArtistIntersection(title, artist);
+        }
+
         if (existing != null) {
-            // 2. 歌曲已存在，更新缺失字段
-            return updateExistingSong(existing, source, coverImage, album, releaseYear, genre, language);
+            // 3. 歌曲已存在，强制更新元数据
+            return updateExistingSong(existing, source, coverImage, album, releaseYear, genre, language, duration);
         } else {
-            // 3. 歌曲不存在，插入新记录
+            // 4. 歌曲不存在，插入新记录
             return insertNewExternalSong(title, artist, album, duration, source, coverImage, releaseYear, genre,
                     language);
         }
     }
 
     /**
-     * 更新已存在歌曲的元数据
-     * - 累积来源（如原有 netease，新增 qq，则变为 netease,qq）
-     * - 补全空字段（album、cover_image、release_year）
+     * 累积来源标识
+     * 
+     * 将新来源追加到现有来源字符串中，用 ";" 分隔
+     * 不会添加重复的来源
+     * 
+     * @param currentSources 当前来源字符串（如 "qq" 或 "netease;qq"）
+     * @param newSource      新来源（如 "netease"）
+     * @return 更新后的来源字符串
+     */
+    private String accumulateSource(String currentSources, String newSource) {
+        if (newSource == null || newSource.isEmpty()) {
+            return currentSources != null ? currentSources : "";
+        }
+
+        if (currentSources == null || currentSources.isEmpty()) {
+            return newSource;
+        }
+
+        // 检查是否已包含该来源
+        java.util.Set<String> sources = new java.util.LinkedHashSet<>();
+        for (String s : currentSources.split(";")) {
+            String trimmed = s.trim();
+            if (!trimmed.isEmpty()) {
+                sources.add(trimmed);
+            }
+        }
+
+        // 添加新来源
+        sources.add(newSource.trim());
+
+        // 重新组合成字符串
+        return String.join(";", sources);
+    }
+
+    /**
+     * 智能合并元数据值（策略 C：子集判断合并）
+     * 
+     * 逻辑：
+     * - 如果新值的所有标签都是旧值的子集 → 不更新，返回旧值
+     * - 如果旧值的所有标签都是新值的子集 → 更新为新值
+     * - 否则（有新内容）→ 合并两者
+     * 
+     * 用 ";" 作为分隔符
+     * 
+     * @param currentValue 当前值（如 "二次元;国产流行;日本流行"）
+     * @param newValue     新值（如 "二次元"）
+     * @return 合并后的值
+     */
+    private String mergeMetadataValues(String currentValue, String newValue) {
+        // 如果新值为空，保持当前值
+        if (newValue == null || newValue.isEmpty()) {
+            return currentValue;
+        }
+
+        // 如果当前值为空，使用新值
+        if (currentValue == null || currentValue.isEmpty()) {
+            return newValue;
+        }
+
+        // 解析标签集合（支持多种分隔符："; " / ";" / ", " / "," / "；" / "，"）
+        java.util.Set<String> currentTags = new java.util.LinkedHashSet<>();
+        for (String tag : currentValue.split("[;,；，]\\s*")) {
+            String trimmed = tag.trim();
+            if (!trimmed.isEmpty()) {
+                currentTags.add(trimmed);
+            }
+        }
+
+        java.util.Set<String> newTags = new java.util.LinkedHashSet<>();
+        for (String tag : newValue.split("[;,；，]\\s*")) {
+            String trimmed = tag.trim();
+            if (!trimmed.isEmpty()) {
+                newTags.add(trimmed);
+            }
+        }
+
+        // 判断子集关系
+        boolean newIsSubsetOfCurrent = currentTags.containsAll(newTags);
+        boolean currentIsSubsetOfNew = newTags.containsAll(currentTags);
+
+        if (newIsSubsetOfCurrent) {
+            // 新值是旧值的子集 → 保持旧值（标准化格式防止重复）
+            return String.join(";", currentTags);
+        } else if (currentIsSubsetOfNew) {
+            // 旧值是新值的子集 → 使用新值（标准化为 ; 分隔）
+            return String.join(";", newTags);
+        } else {
+            // 两者都有独有内容 → 合并
+            java.util.Set<String> merged = new java.util.LinkedHashSet<>(currentTags);
+            merged.addAll(newTags);
+            return String.join(";", merged);
+        }
+    }
+
+    /**
+     * 强制更新已存在歌曲的元数据
+     * 策略：只要新值有效且与旧值不同，立即覆盖（来源累积）
      */
     private int updateExistingSong(Song existing, String newSource,
             String newCoverImage, String newAlbum, int newReleaseYear,
-            String newGenre, String newLanguage) {
+            String newGenre, String newLanguage, int newDuration) {
         Connection conn = null;
         PreparedStatement pstmt = null;
 
@@ -644,29 +843,21 @@ public class SongDAO {
             List<Object> params = new ArrayList<>();
             boolean needComma = false;
 
-            // 更新来源（累积）
+            // 1. 来源标识 (file_path) - 累积多来源，用 ";" 分隔
+            // 存储所有可用的流媒体源 (如 "netease;qq")
             String currentFilePath = existing.getFilePath();
             if (newSource != null && !newSource.isEmpty()) {
-                String updatedSource;
-                if (currentFilePath == null || currentFilePath.isEmpty()) {
-                    updatedSource = newSource;
-                } else if (currentFilePath.contains(newSource)) {
-                    // 已包含此来源，不重复添加
-                    updatedSource = currentFilePath;
-                } else {
-                    // 累积来源
-                    updatedSource = currentFilePath + "," + newSource;
+                String updatedFilePath = accumulateSource(currentFilePath, newSource);
+                if (!updatedFilePath.equals(currentFilePath)) {
+                    sql.append("file_path = ?");
+                    params.add(updatedFilePath);
+                    needComma = true;
                 }
-                sql.append("file_path = ?");
-                params.add(updatedSource);
-                needComma = true;
             }
 
-            // 补全封面（如果当前为空或为默认值）
+            // 2. 封面 (cover_image) - 强制覆盖
             String currentCover = existing.getCoverImage();
-            if (newCoverImage != null && !newCoverImage.isEmpty() &&
-                    (currentCover == null || currentCover.isEmpty() ||
-                            currentCover.equals("img/cover.jpg"))) {
+            if (newCoverImage != null && !newCoverImage.isEmpty() && !newCoverImage.equals(currentCover)) {
                 if (needComma)
                     sql.append(", ");
                 sql.append("cover_image = ?");
@@ -674,10 +865,9 @@ public class SongDAO {
                 needComma = true;
             }
 
-            // 补全专辑（如果当前为空）
+            // 3. 专辑 (album) - 强制覆盖
             String currentAlbum = existing.getAlbum();
-            if (newAlbum != null && !newAlbum.isEmpty() &&
-                    (currentAlbum == null || currentAlbum.isEmpty())) {
+            if (newAlbum != null && !newAlbum.isEmpty() && !newAlbum.equals(currentAlbum)) {
                 if (needComma)
                     sql.append(", ");
                 sql.append("album = ?");
@@ -685,9 +875,9 @@ public class SongDAO {
                 needComma = true;
             }
 
-            // 补全发行年份（如果当前为0或空）
+            // 4. 发行年份 (release_year) - 强制覆盖
             int currentYear = existing.getReleaseYear();
-            if (newReleaseYear > 0 && currentYear == 0) {
+            if (newReleaseYear > 0 && newReleaseYear != currentYear) {
                 if (needComma)
                     sql.append(", ");
                 sql.append("release_year = ?");
@@ -695,30 +885,44 @@ public class SongDAO {
                 needComma = true;
             }
 
-            // 补全曲风（如果当前为空）
+            // 5. 曲风 (genre) - 智能合并（策略 C：子集判断）
             String currentGenre = existing.getGenre();
-            if (newGenre != null && !newGenre.isEmpty() &&
-                    (currentGenre == null || currentGenre.isEmpty())) {
-                if (needComma)
-                    sql.append(", ");
-                sql.append("genre = ?");
-                params.add(newGenre);
-                needComma = true;
+            if (newGenre != null && !newGenre.isEmpty()) {
+                String mergedGenre = mergeMetadataValues(currentGenre, newGenre);
+                if (!mergedGenre.equals(currentGenre)) {
+                    if (needComma)
+                        sql.append(", ");
+                    sql.append("genre = ?");
+                    params.add(mergedGenre);
+                    needComma = true;
+                }
             }
 
-            // 补全语言（如果当前为空）
+            // 6. 语言 (language) - 智能合并（策略 C：子集判断）
             String currentLanguage = existing.getLanguage();
-            if (newLanguage != null && !newLanguage.isEmpty() &&
-                    (currentLanguage == null || currentLanguage.isEmpty())) {
+            if (newLanguage != null && !newLanguage.isEmpty()) {
+                String mergedLanguage = mergeMetadataValues(currentLanguage, newLanguage);
+                if (!mergedLanguage.equals(currentLanguage)) {
+                    if (needComma)
+                        sql.append(", ");
+                    sql.append("language = ?");
+                    params.add(mergedLanguage);
+                    needComma = true;
+                }
+            }
+
+            // 7. 时长 (duration) - 强制覆盖
+            int currentDuration = existing.getDuration();
+            if (newDuration > 0 && newDuration != currentDuration) {
                 if (needComma)
                     sql.append(", ");
-                sql.append("language = ?");
-                params.add(newLanguage);
+                sql.append("duration = ?");
+                params.add(newDuration);
             }
 
             // 如果没有需要更新的字段，直接返回
             if (params.isEmpty()) {
-                System.out.println("📝 [更新歌曲] ID=" + existing.getId() + " 无需更新");
+                System.out.println("📝 [Skip] Song ID=" + existing.getId() + " data identical, skipped.");
                 return existing.getId();
             }
 
@@ -731,15 +935,15 @@ public class SongDAO {
             }
 
             int result = pstmt.executeUpdate();
-            System.out.println("📝 [更新歌曲] ID=" + existing.getId() +
-                    " 更新字段数=" + (params.size() - 1) + " 结果=" + (result > 0));
+            System.out.println("📝 [Update] Song ID=" + existing.getId() +
+                    " Updated fields=" + (params.size() - 1) + " Success=" + (result > 0));
 
             return existing.getId();
 
         } catch (SQLException e) {
-            System.err.println("❌ [ERROR] 更新歌曲失败: " + e.getMessage());
+            System.err.println("❌ [ERROR] Song update failed: " + e.getMessage());
             e.printStackTrace();
-            return existing.getId(); // 即使更新失败，仍返回已存在的 ID
+            return existing.getId();
         } finally {
             DBUtil.close(conn, pstmt, null);
         }

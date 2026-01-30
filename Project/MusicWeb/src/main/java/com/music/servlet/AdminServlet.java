@@ -44,7 +44,7 @@ public class AdminServlet extends HttpServlet {
         // 检查用户是否登录
         HttpSession session = request.getSession(false);
         if (session == null || session.getAttribute("user") == null) {
-            response.sendRedirect("index.jsp?message=请先登录&messageType=error");
+            response.sendRedirect("jsp/index.jsp?message=请先登录&messageType=error");
             return;
         }
 
@@ -53,7 +53,7 @@ public class AdminServlet extends HttpServlet {
 
         // 检查是否为管理员
         if (!adminDAO.isAdmin(currentUser.getUsername())) {
-            response.sendRedirect("user.jsp?message=权限不足&messageType=error");
+            response.sendRedirect("jsp/user.jsp?message=权限不足&messageType=error");
             return;
         }
 
@@ -319,7 +319,7 @@ public class AdminServlet extends HttpServlet {
                                 "<p>您的账号申诉已通过审核。</p>" +
                                 "<p><strong>管理员回复：</strong>" + finalReply + "</p>" +
                                 "<p>您现在可以正常登录系统了。</p>" +
-                                "<p><a href='http://localhost:8082/musicweb_war_exploded/index.jsp'>点击这里登录</a></p>";
+                                "<p><a href='http://localhost:8082/musicweb_war_exploded/jsp/index.jsp'>点击这里登录</a></p>";
                         EmailUtil.sendEmail(email, "账号申诉审批通知", emailContent);
                     }).start();
                 } else {

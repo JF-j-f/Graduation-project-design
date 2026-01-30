@@ -23,7 +23,7 @@ public class UserLoginServlet extends HttpServlet {
 
         // 输入验证
         if (username == null || username.trim().isEmpty() ||
-            password == null || password.trim().isEmpty()) {
+                password == null || password.trim().isEmpty()) {
             PrintWriter out = response.getWriter();
             out.println("<script>alert('用户名和密码不能为空！');window.location.href='index.jsp';</script>");
             return;

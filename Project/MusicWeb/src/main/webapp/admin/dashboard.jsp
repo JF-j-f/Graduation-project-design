@@ -3,7 +3,7 @@
 <%
     // 检查用户是否登录
     if (session.getAttribute("user") == null) {
-        response.sendRedirect("../index.jsp");
+        response.sendRedirect("../jsp/index.jsp");
         return;
     }
 %>

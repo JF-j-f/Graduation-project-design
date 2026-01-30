@@ -1,6 +1,7 @@
 package com.music.servlet;
 
 import com.music.dao.RedisUtil;
+import com.music.dao.SongDAO;
 import com.music.javabean.User;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.annotation.WebServlet;
@@ -152,6 +153,66 @@ public class GetPlayUrlServlet extends HttpServlet {
                 // 成功获取播放链接，写入缓存（24 小时）
                 RedisUtil.set(cacheKey, gson.toJson(playInfo), RedisUtil.TTL_DAY);
 
+                // ============================================================
+                // 🚀 核心功能：异步持久化元数据 (遵循 V3 强制更新策略)
+                // ============================================================
+                final String fTitle = title != null ? title : "";
+                final String fArtist = artist != null ? artist : "";
+                final JsonObject fPlayInfo = playInfo;
+
+                new Thread(() -> {
+                    try {
+                        String pTitle = fTitle;
+                        String pArtist = fArtist;
+                        String pSource = fPlayInfo.get("source").getAsString();
+                        String pExtId = fPlayInfo.get("externalId").getAsString();
+
+                        // 尝试从 fPlayInfo 获取基础信息，如果没有，再调用 getSongDetail
+                        // 注意：fPlayInfo 可能由 searchAndGetPlayUrl 返回，对于 QQ 音乐可能缺字段
+                        String pAlbum = "";
+                        String pCover = "";
+                        int pYear = 0;
+                        String pGenre = "";
+                        String pLang = "";
+                        int pDuration = 0;
+
+                        // 再次获取完整详情以确保元数据最全 (特别是 Genre, Language, Duration)
+                        JsonObject details = getSongDetail(pExtId, pSource);
+
+                        if (details != null) {
+                            if (details.has("album"))
+                                pAlbum = details.get("album").getAsString();
+                            if (details.has("coverUrl"))
+                                pCover = details.get("coverUrl").getAsString();
+                            if (details.has("releaseYear"))
+                                pYear = details.get("releaseYear").getAsInt();
+                            if (details.has("genre"))
+                                pGenre = details.get("genre").getAsString();
+                            if (details.has("language"))
+                                pLang = details.get("language").getAsString();
+                            if (details.has("duration"))
+                                pDuration = details.get("duration").getAsInt();
+                        } else {
+                            // Fallback: 如果 getSongDetail 失败（罕见），尝试从 fPlayInfo 读一点是一点
+                            if (fPlayInfo.has("releaseYear"))
+                                pYear = fPlayInfo.get("releaseYear").getAsInt();
+                            if (fPlayInfo.has("genre"))
+                                pGenre = fPlayInfo.get("genre").getAsString();
+                            if (fPlayInfo.has("language"))
+                                pLang = fPlayInfo.get("language").getAsString();
+                        }
+
+                        // 执行数据库更新 (SongDAO V3: 强制更新模式)
+                        SongDAO songDao = new SongDAO();
+                        songDao.addOrUpdateFromExternal(pTitle, pArtist, pAlbum, pDuration, pSource, pCover, pYear,
+                                pGenre, pLang);
+
+                    } catch (Exception e) {
+                        // 🔇 异常静默原则：只记录日志，不影响主线程
+                        System.err.println("❌ [Async DB Update] Failed: " + e.getMessage());
+                    }
+                }).start();
+
                 result.addProperty("success", true);
                 result.addProperty("url", playInfo.get("url").getAsString());
                 result.addProperty("source", playInfo.get("source").getAsString());
@@ -233,6 +294,8 @@ public class GetPlayUrlServlet extends HttpServlet {
                         result.add("genre", details.get("genre"));
                     if (details.has("language"))
                         result.add("language", details.get("language"));
+                    if (details.has("coverUrl"))
+                        result.add("coverUrl", details.get("coverUrl"));
                 }
             }
 
@@ -535,8 +598,23 @@ public class GetPlayUrlServlet extends HttpServlet {
             // 5. 流派/风格 (如有)
             if (data.has("genre") && !data.get("genre").isJsonNull()) {
                 details.addProperty("genre", data.get("genre").getAsString());
-            } else if (data.has("albumType") && !data.get("albumType").isJsonNull()) {
                 details.addProperty("genre", data.get("albumType").getAsString());
+            }
+
+            // 6. 时长 (Duration) - 解析并统一为秒
+            int duration = 0;
+            if (data.has("dt")) { // 网易云 (ms)
+                duration = data.get("dt").getAsInt() / 1000;
+            } else if (data.has("duration")) { // 网易云/通用 (ms or s?) 通常网易云 detail 是 dt
+                duration = data.get("duration").getAsInt();
+                // 简单判断: 如果数值巨大(>10000)认为是ms
+                if (duration > 10000)
+                    duration = duration / 1000;
+            } else if (data.has("interval")) { // QQ (s)
+                duration = data.get("interval").getAsInt();
+            }
+            if (duration > 0) {
+                details.addProperty("duration", duration);
             }
 
             // 6. VIP 状态 (QQ 音乐)

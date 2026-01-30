@@ -28,7 +28,7 @@ public class UpdateProfileServlet extends HttpServlet {
         // 获取当前用户会话
         HttpSession session = request.getSession(false);
         if (session == null || session.getAttribute("user") == null) {
-            response.sendRedirect("index.jsp");
+            response.sendRedirect("jsp/index.jsp");
             return;
         }
 
@@ -43,8 +43,8 @@ public class UpdateProfileServlet extends HttpServlet {
             // 验证输入参数
             String errorMessage = validateInput(nickname, email, phone);
             if (errorMessage != null) {
-                response.sendRedirect("settings.jsp?messageType=error&message=" +
-                                  java.net.URLEncoder.encode(errorMessage, "UTF-8"));
+                response.sendRedirect("jsp/settings.jsp?messageType=error&message=" +
+                        java.net.URLEncoder.encode(errorMessage, "UTF-8"));
                 return;
             }
 
@@ -67,29 +67,30 @@ public class UpdateProfileServlet extends HttpServlet {
 
                 // 记录操作日志
                 System.out.println("✅ 用户信息更新成功 - 用户ID: " + currentUser.getId() +
-                                 ", 昵称: " + nickname + ", 邮箱: " + email + ", 电话: " + phone);
+                        ", 昵称: " + nickname + ", 邮箱: " + email + ", 电话: " + phone);
 
-                response.sendRedirect("settings.jsp?messageType=success&message=" +
-                                  java.net.URLEncoder.encode("个人信息更新成功！", "UTF-8"));
+                response.sendRedirect("jsp/settings.jsp?messageType=success&message=" +
+                        java.net.URLEncoder.encode("个人信息更新成功！", "UTF-8"));
             } else {
                 System.err.println("❌ 用户信息更新失败 - 用户ID: " + currentUser.getId());
-                response.sendRedirect("settings.jsp?messageType=error&message=" +
-                                  java.net.URLEncoder.encode("更新失败，请稍后重试", "UTF-8"));
+                response.sendRedirect("jsp/settings.jsp?messageType=error&message=" +
+                        java.net.URLEncoder.encode("更新失败，请稍后重试", "UTF-8"));
             }
 
         } catch (Exception e) {
             System.err.println("❌ 更新用户信息时发生异常: " + e.getMessage());
             e.printStackTrace();
-            response.sendRedirect("settings.jsp?messageType=error&message=" +
-                              java.net.URLEncoder.encode("系统错误，请稍后重试", "UTF-8"));
+            response.sendRedirect("jsp/settings.jsp?messageType=error&message=" +
+                    java.net.URLEncoder.encode("系统错误，请稍后重试", "UTF-8"));
         }
     }
 
     /**
      * 验证输入参数
+     * 
      * @param nickname 昵称
-     * @param email 邮箱
-     * @param phone 电话
+     * @param email    邮箱
+     * @param phone    电话
      * @return 错误信息，如果验证通过则返回null
      */
     private String validateInput(String nickname, String email, String phone) {
@@ -129,6 +130,7 @@ public class UpdateProfileServlet extends HttpServlet {
 
     /**
      * 验证邮箱格式
+     * 
      * @param email 邮箱地址
      * @return 是否有效
      */
@@ -143,6 +145,7 @@ public class UpdateProfileServlet extends HttpServlet {
 
     /**
      * 验证手机号格式
+     * 
      * @param phone 手机号
      * @return 是否有效
      */
@@ -160,6 +163,6 @@ public class UpdateProfileServlet extends HttpServlet {
     protected void doGet(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
         // GET 请求重定向到设置页面
-        response.sendRedirect("settings.jsp");
+        response.sendRedirect("jsp/settings.jsp");
     }
 }

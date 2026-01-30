@@ -16,7 +16,7 @@ if %ERRORLEVEL% neq 0 (
 )
 
 echo [1/2] 检查并安装依赖...
-pip install -r requirements.txt -q
+python -m pip install -r requirements.txt -q --disable-pip-version-check
 if %ERRORLEVEL% neq 0 (
     echo [警告] 依赖安装可能存在问题，尝试继续启动...
 )

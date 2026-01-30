@@ -2,6 +2,133 @@
 
 本文档记录 MusicWeb 项目的所有更新历史。
 
+## v3.2.4-QQ-Cleaning-Fix (2026-01-31) - 元数据清洗与界面修复
+
+### 🚀 新增 (Added)
+
+- **QQ 元数据清洗系统**:
+  - 新增 `MetadataCleaner` 工具类，专门处理 QQ 音乐源的非标准元数据（如 `Artist《Title》` 格式）。
+  - 实现正则表达式 `^(.+?)《(.+?)》(.*)$` 自动提取真实歌手和歌名，修复了“把歌手当专辑”的字段错位问题。
+  - 集成至 `UniversalPlayHistoryServlet`，确保记录播放历史时数据自动标准化。
+
+- **界面体验优化**:
+  - **每日推荐**: `user.jsp` 将 "推荐给你" 更名为 "每日推荐"，并修复了刷新按钮与标题底对齐的样式问题。
+
+### � 回滚 (Reverted)
+
+- **JSP 目录结构回滚**:
+  - 鉴于 v3.2.3 的目录重构导致了大量路径及访问问题，已将 `webapp/jsp/` 下的所有 JSP 文件回滚至 `webapp/` 根目录。
+  - 移除了 `webapp/jsp/` 目录。
+  - 还原了所有 Servlet (`UserLoginServlet`, `SearchServlet` 等) 中的 JSP 跳转路径。
+
+### �🐛 修复 (Fixed)
+
+- **JSP 语法修复**:
+  - 修复 `playlist.jsp` 因单行注释机制导致的 500 编译错误，采取分行重写策略增强兼容性。
+
+### 🚧 待解决问题 (Known Issues)
+
+- **🔴 严重：用户无法登录 (User JSP 500)**:
+  - 现象：用户登录后跳转 `user.jsp` 失败，Tomcat 抛出 `java.lang.ClassNotFoundException: org.apache.jsp.user_jsp`。
+  - 分析：JSP 编译类未能成功加载，可能源于 `user.jsp` 内部仍存在隐蔽的语法错误，或 Tomcat work 目录缓存损坏。
+  - 影响：用户无法进入个人中心，无法查看推荐、排行榜和播放历史。
+
+---
+
+## v3.2.3-File-Structure-Refactor (2026-01-30) - 文件结构重构
+
+### 🚀 新增 (Added)
+
+- **JSP 文件结构优化**:
+  - 将 `webapp/` 根目录下的 11 个 JSP 文件迁移到 `webapp/jsp/` 目录，提升项目结构清晰度。
+  - 新增 `webapp/jsp/includes/` 目录存放组件文件 (`song-item.jsp`, `chart-item.jsp`)。
+  
+- **web.xml 欢迎页配置**:
+  - 添加 `<welcome-file>jsp/index.jsp</welcome-file>` 配置，确保访问根路径能正确跳转。
+
+### 🔧 修改 (Changed)
+
+- **Redis 数据持久化路径**:
+  - 修改 `scripts/start_redis.bat`，添加 `--dir` 参数将 `dump.rdb` 保存到 `webapp/log/` 目录。
+
+- **Servlet 路径更新** (10 个文件):
+  - `AdminServlet.java`: 更新 `sendRedirect` 和 `forward` 路径
+  - `AppealServlet.java`: 更新重定向路径
+  - `ChangePasswordServlet.java`: 更新所有 JSP 引用
+  - `DeleteAccountServlet.java`: 更新所有 JSP 引用
+  - `FavoriteServlet.java`: 更新所有 JSP 引用
+  - `LogoutServlet.java`: 更新重定向路径
+  - `PlaylistServlet.java`: 更新所有 JSP 引用
+  - `SearchServlet.java`: 更新所有 JSP 引用
+  - `UpdateProfileServlet.java`: 更新所有 JSP 引用
+  - `UserLoginServlet.java`: 更新所有 JSP 引用
+
+- **Admin JSP 路径更新** (5 个文件):
+  - `dashboard.jsp`, `users.jsp`, `userDetails.jsp`, `songs.jsp`, `favorites.jsp`: 更新 `../index.jsp` → `../jsp/index.jsp`
+
+- **JSP 静态资源路径更新** (11 个文件):
+  - 所有迁移的 JSP 文件中的 CSS/JS 引用从 `css/`/`js/` 更新为 `../css/`/`../js/`
+
+---
+
+## v3.2.2-Metadata-Aggregation (2026-01-29) - 全链路元数据聚合与凭证整合
+
+### 🚀 新增 (Added)
+
+- **五级元数据聚合策略 (5-Level Metadata Strategy)**:
+  正式上线了基于 Python 微服务的高可用元数据获取流水线 (`metadata_provider.py`)，确保歌曲流派 (Genre) 和语种 (Language) 的高覆盖率：
+  1. **P1 (Top)**: **网易云百科 (NetEase Wiki)** - 精准度最高，优先匹配。
+  2. **P2**: **QQ 音乐 (QQ Music API)** - 国内数据最全，已修复 Cookie 认证与 Smart Box 解析逻辑。
+  3. **P3**: **Last.fm** - 国际化补充，完美覆盖英文/欧美歌曲流派。
+  4. **P4**: **MusicBrainz** - 开源数据库兜底，提供基础元数据支持。
+  5. **P5 (Base)**: **langdetect** - 本地算法兜底，基于文本分析进行语种识别。
+
+- **QQ 音乐流派/语种映射表增强 (`qq_music_mapping.json`)**:
+  - 新增 `"37": "二次元"` 映射，修复了 QQ 音乐返回 `genre_idx=37` 时流派显示为空的问题。
+  - 通过反向调用 QQ 音乐官方接口 (`fcg_get_diss_tag_conf`)，获取并整合了最新的分类 ID 表，新增 17 个流派、14 个主题、9 个心情、13 个场景分类。
+
+### 🐛 修复 (Fixed)
+
+- **QQ 音乐数据源重构**:
+  - **认证修复**: 修复了 `metadata_provider.py` 未加载 `api_credentials.json` 导致搜索需要登录接口失败的问题。
+  - **解析增强**: 重写结果解析器，支持 API 返回的 "Smart Box" (直达结果) 结构，解决了 "Bohemian Rhapsody" 等热门歌曲元数据丢失问题。
+  - **映射修正**: 修正了 `qq_music_mapping.json` 中严重的映射错误（如将索引 `1` 误标为国语，实为 **粤语**；修正了乡村、电子等流派索引）。
+
+- **凭证文件整合**:
+  - 将独立的 `netease_cookie.txt` 文件内容迁移至 `api_credentials.json` 中的 `netease.cookie` 字段。
+  - 修改 `js/server.js` 的 `loadCookie()` 函数，从读取纯文本升级为解析 JSON 结构，增强了错误处理和日志提示。
+  - 删除冗余的 `netease_cookie.txt` 文件，实现"网易云 + QQ 音乐"凭证的统一管理。
+
+- **file_path 来源累积修复** (`SongDAO.java`):
+  - 原问题：从不同平台播放同一首歌曲时，`file_path` 字段会被覆盖（如 `netease` → `qq`），丢失历史来源信息。
+  - 解决方案：新增 `accumulateSource()` 方法，实现来源累积机制（用 `;` 分隔，如 `netease;qq`），确保多平台播放记录完整保留。
+
+- **genre/language 智能合并修复** (`SongDAO.java`):
+  - 原问题：网易云返回丰富的流派标签（如 `二次元;国产流行;日本流行`），被 QQ 音乐的简单标签（如 `二次元`）覆盖。
+  - 解决方案：新增 `mergeMetadataValues()` 方法，实现 **策略 C（子集判断合并）**：
+    - 新值是旧值的子集 → 保持旧值
+    - 旧值是新值的子集 → 更新为新值
+    - 两者都有独有内容 → 合并两者
+  - 额外修复：正则表达式支持中文全角分号 `；` 和逗号 `，`，兼容网易云百科返回的格式。
+
+### ⚡ 优化 (Optimized)
+
+- **数据源验证**: 通过 `verify_foreign_sources.py` 验证了 Last.fm 和 MusicBrainz 在非中文环境下的有效性。
+- **项目结构清理**: 移除了冗余的调试脚本 (`debug_*.py`, `verify_*.py`, `inspect_api.py`, `fetch_categories.py`, `merge_mappings.py`) 和临时数据文件，保持目录整洁。
+- **元数据格式标准化**: `mergeMetadataValues()` 方法统一输出格式为英文分号 `;` 分隔，避免格式不一致导致的重复判定失败。
+
+### 🚧 待解决问题 (Known Issues)
+
+- **QQ 音乐 API 错误 [2001]**: 部分搜索请求触发 `ResponseCodeError [2001]`，疑似反爬限制或参数校验失败，需进一步排查 Cookie 有效性或请求频率。
+
+## v3.2.1-Hotfix-CoverSystem (2026-01-28) - 封面系统紧急修复
+
+### 🐛 修复 (Fixed)
+
+- **路径与传递逻辑修复**:
+  - 修正了 `CoverDownloadUtil` 和 `ImageProxyServlet` 下的硬编码路径，指向当前工作空间。
+  - 修复了 `GetPlayUrlServlet` 未返回封面 URL 的问题，确保前端能正确触发封面下载逻辑。
+
 ## v3.2.0-Metadata-Enhanced (2026-01-27) - 元数据与播放体验升级
 
 ### 🏗️ 架构变更 (Changed)

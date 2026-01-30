@@ -20,7 +20,7 @@ import java.time.Duration;
 public class CoverDownloadUtil {
 
     // 源码目录路径 (固定路径，配合 ImageProxyServlet 使用)
-    private static final String SOURCE_WEBAPP_PATH = "E:/毕业论文/Project/MusicWeb/src/main/webapp";
+    private static final String SOURCE_WEBAPP_PATH = "E:/Graduation-project-design/Project/MusicWeb/src/main/webapp";
 
     // HTTP 客户端（复用以提高性能）
     private static final HttpClient httpClient = HttpClient.newBuilder()

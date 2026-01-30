@@ -37,7 +37,7 @@ const PY_API_BASE = 'http://127.0.0.1:8000';
 const UNBLOCK_API_BASE = 'http://127.0.0.1:8081';
 
 // Cookie 文件路径
-const COOKIE_FILE = path.join(__dirname, '../MusicServer/Cookie/netease_cookie.txt');
+const COOKIE_FILE = path.join(__dirname, '../MusicServer/Cookie/api_credentials.json');
 
 // 全局 Cookie 变量
 let NETEASE_COOKIE = '';
@@ -46,11 +46,18 @@ let NETEASE_COOKIE = '';
 function loadCookie() {
     try {
         if (fs.existsSync(COOKIE_FILE)) {
-            NETEASE_COOKIE = fs.readFileSync(COOKIE_FILE, 'utf-8').trim();
-            console.log('✅ [Cookie] 已加载网易云 SVIP Cookie');
-            console.log(`   📝 Cookie 长度: ${NETEASE_COOKIE.length} 字符`);
+            const content = fs.readFileSync(COOKIE_FILE, 'utf-8').trim();
+            const json = JSON.parse(content);
+
+            if (json.netease && json.netease.cookie) {
+                NETEASE_COOKIE = json.netease.cookie;
+                console.log('✅ [Cookie] 已从 api_credentials.json 加载网易云 Cookie');
+                console.log(`   📝 Cookie 长度: ${NETEASE_COOKIE.length} 字符`);
+            } else {
+                console.warn('⚠️ [Cookie] api_credentials.json 中未找到 netease.cookie 字段');
+            }
         } else {
-            console.warn('⚠️ [Cookie] 未找到 Cookie 文件:', COOKIE_FILE);
+            console.warn('⚠️ [Cookie] 未找到凭证文件:', COOKIE_FILE);
         }
     } catch (err) {
         console.error('❌ [Cookie] 加载失败:', err.message);
@@ -404,6 +411,104 @@ app.get('/netease/song/detail/full', async (req, res) => {
 
     } catch (error) {
         console.error('获取完整歌曲详情错误:', error.message);
+        res.status(500).json({ code: 500, message: error.message });
+    }
+});
+
+/**
+ * 网易云音乐获取歌曲百科摘要 (流派/语种)
+ * GET /netease/song/wiki/summary?id=123456
+ * 
+ * 返回: { genre: "流行；R&B", language: null }
+ * 注意: 并非所有歌曲都有百科信息
+ */
+app.get('/netease/song/wiki/summary', async (req, res) => {
+    try {
+        const { id } = req.query;
+        if (!id) {
+            return res.status(400).json({ code: 400, message: '缺少歌曲ID' });
+        }
+
+        console.log(`📖 [Wiki] 查询歌曲百科: ${id}`);
+
+        const result = await NeteaseAPI.song_wiki_summary({
+            id,
+            cookie: NETEASE_COOKIE
+        });
+
+        if (result.body && result.body.data) {
+            const wikiData = result.body.data;
+
+            // 解析 blocks 中的流派和语种信息
+            let genre = null;
+            let language = null;
+            let genres = [];
+
+            if (wikiData.blocks && Array.isArray(wikiData.blocks)) {
+                for (const block of wikiData.blocks) {
+                    // console.log(`[WikiDebug] Block: ${block.code} / ${block.showType}`);
+
+                    // 1. 尝试解析 songTag (曲风) 和 language (语种) - 新版结构
+                    if (block.creatives && Array.isArray(block.creatives)) {
+                        for (const creative of block.creatives) {
+                            // console.log(`[WikiDebug]   Creative: ${creative.creativeType}`);
+
+                            // 解析曲风
+                            if (creative.creativeType === 'songTag' && creative.resources) {
+                                for (const res of creative.resources) {
+                                    if (res.uiElement && res.uiElement.mainTitle && res.uiElement.mainTitle.title) {
+                                        const title = res.uiElement.mainTitle.title;
+                                        // console.log(`[WikiDebug]     Found Genre: ${title}`);
+                                        genres.push(title);
+                                    }
+                                }
+                            }
+                            // 解析语种
+                            if (creative.creativeType === 'language' && creative.uiElement && creative.uiElement.textLinks) {
+                                for (const link of creative.uiElement.textLinks) {
+                                    if (link.text) {
+                                        const lang = link.text;
+                                        // console.log(`[WikiDebug]     Found Language: ${lang}`);
+                                        language = lang;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // 2. 也是检查 key-value 类型 (旧版结构兼容)
+                    if (block.kvList) {
+                        for (const kv of block.kvList) {
+                            const key = (kv.key || '').toLowerCase();
+                            if (key.includes('流派') || key.includes('genre')) {
+                                genres.push(kv.value);
+                            }
+                            if (key.includes('语种') || key.includes('language')) {
+                                language = kv.value;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 组合流派
+            if (genres.length > 0) {
+                // 去重
+                genre = [...new Set(genres)].slice(0, 3).join('；');
+            }
+
+            console.log(`   ✅ Wiki 获取成功: genre=${genre}, language=${language}`);
+            res.json({
+                code: 200,
+                data: { genre, language, raw: wikiData }
+            });
+        } else {
+            console.log(`   ⚠️ Wiki 无数据`);
+            res.json({ code: 200, data: { genre: null, language: null } });
+        }
+
+    } catch (error) {
+        console.error('获取歌曲百科错误:', error.message);
         res.status(500).json({ code: 500, message: error.message });
     }
 });

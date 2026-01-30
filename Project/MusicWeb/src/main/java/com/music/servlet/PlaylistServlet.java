@@ -36,7 +36,7 @@ public class PlaylistServlet extends HttpServlet {
 
         // 检查用户是否登录
         if (user == null) {
-            response.sendRedirect("index.jsp");
+            response.sendRedirect("jsp/index.jsp");
             return;
         }
 
@@ -208,7 +208,7 @@ public class PlaylistServlet extends HttpServlet {
      * 查看歌单详情
      */
     private void viewPlaylist(HttpServletRequest request, HttpServletResponse response,
-                             User user, PlaylistDAO playlistDAO) throws ServletException, IOException {
+            User user, PlaylistDAO playlistDAO) throws ServletException, IOException {
         try {
             int playlistId = Integer.parseInt(request.getParameter("id"));
             Playlist playlist = playlistDAO.getPlaylistById(playlistId);
@@ -249,11 +249,13 @@ public class PlaylistServlet extends HttpServlet {
         json.append("[");
         for (int i = 0; i < playlists.size(); i++) {
             Playlist p = playlists.get(i);
-            if (i > 0) json.append(",");
+            if (i > 0)
+                json.append(",");
             json.append("{");
             json.append("\"id\":").append(p.getId()).append(",");
             json.append("\"name\":\"").append(escapeJson(p.getName())).append("\",");
-            json.append("\"description\":\"").append(escapeJson(p.getDescription() != null ? p.getDescription() : "")).append("\",");
+            json.append("\"description\":\"").append(escapeJson(p.getDescription() != null ? p.getDescription() : ""))
+                    .append("\",");
             json.append("\"songCount\":").append(p.getSongCount()).append(",");
             json.append("\"isDefault\":").append(p.isDefault()).append(",");
             json.append("\"coverImage\":\"").append(escapeJson(p.getDisplayCover())).append("\"");
@@ -270,7 +272,8 @@ public class PlaylistServlet extends HttpServlet {
      * 转义JSON特殊字符
      */
     private String escapeJson(String str) {
-        if (str == null) return "";
+        if (str == null)
+            return "";
         return str.replace("\\", "\\\\")
                 .replace("\"", "\\\"")
                 .replace("\n", "\\n")
