@@ -17,8 +17,9 @@ public class PlaylistDAO {
 
     /**
      * 创建歌单
-     * @param name 歌单名称
-     * @param userId 用户ID
+     * 
+     * @param name      歌单名称
+     * @param userId    用户ID
      * @param isDefault 是否为默认歌单
      * @return 创建的歌单ID，失败返回-1
      */
@@ -57,6 +58,7 @@ public class PlaylistDAO {
 
     /**
      * 获取用户的所有歌单
+     * 
      * @param userId 用户ID
      * @return 歌单列表
      */
@@ -105,6 +107,7 @@ public class PlaylistDAO {
 
     /**
      * 获取用户的默认歌单
+     * 
      * @param userId 用户ID
      * @return 默认歌单，不存在返回null
      */
@@ -149,6 +152,7 @@ public class PlaylistDAO {
 
     /**
      * 根据ID获取歌单详情
+     * 
      * @param playlistId 歌单ID
      * @return 歌单对象，不存在返回null
      */
@@ -192,6 +196,7 @@ public class PlaylistDAO {
 
     /**
      * 获取歌单中的所有歌曲
+     * 
      * @param playlistId 歌单ID
      * @return 歌曲列表
      */
@@ -212,12 +217,23 @@ public class PlaylistDAO {
             pstmt.setInt(1, playlistId);
             rs = pstmt.executeQuery();
 
-            SongDAO songDAO = new SongDAO();
             while (rs.next()) {
-                Song song = songDAO.getSongById(rs.getInt("id"));
-                if (song != null) {
-                    songs.add(song);
-                }
+                Song song = new Song();
+                song.setId(rs.getInt("id"));
+                song.setTitle(rs.getString("title"));
+                song.setArtist(rs.getString("artist"));
+                song.setAlbum(rs.getString("album"));
+                song.setDuration(rs.getInt("duration"));
+                song.setGenre(rs.getString("genre"));
+                song.setReleaseYear(rs.getInt("release_year"));
+                song.setFilePath(rs.getString("file_path"));
+                song.setCoverImage(rs.getString("cover_image"));
+                song.setLanguage(rs.getString("language"));
+
+                // 仅映射数据库中存在的字段，避免 Column not found 错误
+                // source, external_id 等字段在数据库中不存在，无需映射
+
+                songs.add(song);
             }
 
             System.out.println("🎵 [DEBUG] 获取歌单歌曲 - 歌单ID: " + playlistId + ", 数量: " + songs.size());
@@ -234,8 +250,9 @@ public class PlaylistDAO {
 
     /**
      * 添加歌曲到歌单
+     * 
      * @param playlistId 歌单ID
-     * @param songId 歌曲ID
+     * @param songId     歌曲ID
      * @return 是否成功
      */
     public boolean addSongToPlaylist(int playlistId, int songId) {
@@ -265,8 +282,9 @@ public class PlaylistDAO {
 
     /**
      * 从歌单移除歌曲
+     * 
      * @param playlistId 歌单ID
-     * @param songId 歌曲ID
+     * @param songId     歌曲ID
      * @return 是否成功
      */
     public boolean removeSongFromPlaylist(int playlistId, int songId) {
@@ -296,8 +314,9 @@ public class PlaylistDAO {
 
     /**
      * 更新歌单信息
-     * @param playlistId 歌单ID
-     * @param name 歌单名称
+     * 
+     * @param playlistId  歌单ID
+     * @param name        歌单名称
      * @param description 歌单描述
      * @return 是否成功
      */
@@ -329,6 +348,7 @@ public class PlaylistDAO {
 
     /**
      * 删除歌单
+     * 
      * @param playlistId 歌单ID
      * @return 是否成功
      */
@@ -365,8 +385,9 @@ public class PlaylistDAO {
 
     /**
      * 检查歌曲是否在歌单中
+     * 
      * @param playlistId 歌单ID
-     * @param songId 歌曲ID
+     * @param songId     歌曲ID
      * @return 是否存在
      */
     public boolean isSongInPlaylist(int playlistId, int songId) {

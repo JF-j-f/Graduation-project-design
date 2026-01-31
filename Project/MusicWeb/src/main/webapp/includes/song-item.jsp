@@ -28,6 +28,18 @@
                         <% } %>
                 </div>
                 <div class="song-actions">
+                    <!-- 添加到歌单按钮 -->
+                    <div class="add-to-playlist-wrapper" style="position: relative; display: inline-block;">
+                        <button class="add-to-playlist-btn" data-song-id="<%= song.getId() %>"
+                            data-song-title="<%= song.getTitle() %>" title="添加到歌单"
+                            style="background: none; border: none; font-size: 1.1rem; cursor: pointer; padding: 0.3rem 0.5rem; color: #666; transition: all 0.2s ease;">➕</button>
+                        <div class="playlist-dropdown"
+                            style="display: none; position: absolute; top: 100%; right: 0; min-width: 180px; background: white; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); z-index: 1000; overflow: hidden;">
+                            <div class="playlist-dropdown-loading"
+                                style="padding: 1rem; text-align: center; color: #888;">加载中...</div>
+                        </div>
+                    </div>
+
                     <button class="play-btn" data-song-id="<%= song.getId() %>" data-song-title="<%= song.getTitle() %>"
                         data-song-artist="<%= song.getArtist() %>" data-song-album="<%= song.getAlbum() %>"
                         data-song-duration="<%= song.getDuration() %>" title="播放">▶️</button>

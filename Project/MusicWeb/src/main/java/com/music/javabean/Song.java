@@ -153,4 +153,15 @@ public class Song {
     public void setVip(boolean vip) {
         this.vip = vip;
     }
+
+    // 收藏状态 (数据库无关字段，仅用于前端展示)
+    private boolean isFavorited;
+
+    public boolean isFavorited() {
+        return isFavorited;
+    }
+
+    public void setFavorited(boolean favorited) {
+        isFavorited = favorited;
+    }
 }

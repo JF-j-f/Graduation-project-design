@@ -66,6 +66,7 @@ MusicWeb/
 │       │   │   ├── PlayHistoryPageServlet.java   # 播放历史分页查询接口
 │       │   │   ├── PlayHistoryServlet.java       # 播放历史记录接口
 │       │   │   ├── PlaylistServlet.java          # 歌单管理接口
+│       │   │   ├── PlaylistSongsPageServlet.java # 歌单歌曲分页接口
 │       │   │   ├── RefreshRecommendServlet.java  # 推荐刷新接口
 │       │   │   ├── SearchServlet.java            # 混合搜索接口
 │       │   │   ├── TestDBServlet.java            # 数据库连接测试接口
@@ -92,6 +93,7 @@ MusicWeb/
 │           │   └── server.log       # Node 服务日志
 │           ├── js/                  # 前端脚本目录
 │           │   ├── app.js            # 主业务入口逻辑
+│           │   ├── addToPlaylist.js  # 添加到歌单逻辑
 │           │   ├── player.js         # 播放器核心逻辑
 │           │   ├── qqLoginModal.js   # QQ登录弹窗逻辑
 │           │   ├── search.js         # 搜索功能逻辑
@@ -638,6 +640,7 @@ MusicWeb/
 - [ ] **封面图本地化**: 实现外部封面图的自动缓存与本地引用
 - [ ] 用户头像上传与裁剪
 - [ ] 数据导出功能 (Excel/JSON)
+- [ ] **Redis 缓存进阶 (Phase 2)**: 缓存用户收藏状态 (Favorites) 和歌单列表，进一步降低数据库 IO 压力
 
 ### 长期规划
 
@@ -668,4 +671,4 @@ MusicWeb/
 
 ---
 
-*本文档最后更新时间：2026年1月31日 02:00*
+*本文档最后更新时间：2026年2月1日 00:15*

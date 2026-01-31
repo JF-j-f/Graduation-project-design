@@ -48,6 +48,9 @@ public class FavoriteServlet extends HttpServlet {
                 return;
             }
 
+            PlaylistDAO playlistDAO = new PlaylistDAO();
+            Playlist defaultPlaylist = playlistDAO.getDefaultPlaylist(user.getId());
+
             if ("add".equals(action)) {
                 // 检查是否已经收藏
                 if (favoriteDAO.isFavorite(user.getId(), songId)) {
@@ -57,6 +60,13 @@ public class FavoriteServlet extends HttpServlet {
 
                 // 添加收藏
                 if (favoriteDAO.addFavorite(user.getId(), songId)) {
+                    // 同步添加到默认歌单
+                    if (defaultPlaylist != null) {
+                        if (!playlistDAO.isSongInPlaylist(defaultPlaylist.getId(), songId)) {
+                            playlistDAO.addSongToPlaylist(defaultPlaylist.getId(), songId);
+                            System.out.println("🎵 [SYNC] 已同步添加到默认歌单: " + defaultPlaylist.getName());
+                        }
+                    }
                     out.println("<script>alert('收藏成功！');window.location.href='jsp/user.jsp';</script>");
                 } else {
                     out.println("<script>alert('收藏失败，请重试！');window.location.href='jsp/user.jsp';</script>");
@@ -65,6 +75,11 @@ public class FavoriteServlet extends HttpServlet {
             } else if ("remove".equals(action)) {
                 // 取消收藏
                 if (favoriteDAO.removeFavorite(user.getId(), songId)) {
+                    // 同步从默认歌单移除
+                    if (defaultPlaylist != null) {
+                        playlistDAO.removeSongFromPlaylist(defaultPlaylist.getId(), songId);
+                        System.out.println("🎵 [SYNC] 已同步从默认歌单移除: " + defaultPlaylist.getName());
+                    }
                     out.println("<script>alert('取消收藏成功！');window.location.href='jsp/user.jsp';</script>");
                 } else {
                     out.println("<script>alert('取消收藏失败，请重试！');window.location.href='jsp/user.jsp';</script>");

@@ -148,11 +148,11 @@
                                                                                 </div>
                                                                                 <div class="stat-card">
                                                                                     <span class="stat-number">
-                                                                                        <% if (user.getCreateTime()
-                                                                                            !=null &&
-                                                                                            user.getCreateTime().length()>
-                                                                                            = 10) {
-                                                                                            out.print(user.getCreateTime().substring(0,
+                                                                                        <% /* 获取用户创建时间 */ String
+                                                                                            createTime=user.getCreateTime();
+                                                                                            if (createTime !=null &&
+                                                                                            createTime.length()>= 10) {
+                                                                                            out.print(createTime.substring(0,
                                                                                             10));
                                                                                             } else {
                                                                                             out.print("新用户");
@@ -648,6 +648,8 @@
                                                                             src="${pageContext.request.contextPath}/js/player.js"></script>
                                                                         <script
                                                                             src="${pageContext.request.contextPath}/js/search.js"></script>
+                                                                        <script
+                                                                            src="${pageContext.request.contextPath}/js/addToPlaylist.js"></script>
                                                                         <script
                                                                             src="${pageContext.request.contextPath}/js/user-logic.js"></script>
                                                                     </body>

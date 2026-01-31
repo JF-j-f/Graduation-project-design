@@ -65,6 +65,18 @@ public class UserRegisterServlet extends HttpServlet {
                     // 冷启动失败不影响注册流程
                     System.err.println("Cold start recommendation failed: " + e.getMessage());
                 }
+
+                // 为新用户创建默认歌单 "我喜欢的音乐"
+                try {
+                    PlaylistDAO playlistDAO = new PlaylistDAO();
+                    int playlistId = playlistDAO.createPlaylist("我喜欢的音乐", registeredUser.getId(), true);
+                    if (playlistId > 0) {
+                        System.out.println("🎵 [注册] 已为用户 " + registeredUser.getUsername() + " 创建默认歌单，ID=" + playlistId);
+                    }
+                } catch (Exception e) {
+                    // 创建歌单失败不影响注册流程
+                    System.err.println("Failed to create default playlist: " + e.getMessage());
+                }
             }
 
             // 注册成功后自动登录

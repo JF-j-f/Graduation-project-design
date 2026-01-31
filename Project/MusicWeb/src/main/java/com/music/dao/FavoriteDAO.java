@@ -180,7 +180,8 @@ public class FavoriteDAO {
             rs = pstmt.executeQuery();
 
             boolean exists = rs.next();
-            System.out.println("🎵 [DEBUG] 检查歌曲是否存在 - 歌曲ID: " + songId + ", 存在: " + exists);
+            // System.out.println("🎵 [DEBUG] 检查歌曲是否存在 - 歌曲ID: " + songId + ", 存在: " +
+            // exists);
 
             return exists;
         } catch (SQLException e) {
@@ -191,5 +192,47 @@ public class FavoriteDAO {
         } finally {
             DBUtil.close(conn, pstmt, rs);
         }
+    }
+
+    // 批量查询歌曲是否已收藏
+    public List<Integer> getFavoritedSongIds(int userId, List<Integer> songIds) {
+        List<Integer> favoritedIds = new ArrayList<>();
+        if (songIds == null || songIds.isEmpty()) {
+            return favoritedIds;
+        }
+
+        Connection conn = null;
+        PreparedStatement pstmt = null;
+        ResultSet rs = null;
+
+        try {
+            conn = DBUtil.getConnection();
+            StringBuilder sqlBuilder = new StringBuilder(
+                    "SELECT song_id FROM favorites WHERE user_id = ? AND song_id IN (");
+            for (int i = 0; i < songIds.size(); i++) {
+                sqlBuilder.append(i == 0 ? "?" : ", ?");
+            }
+            sqlBuilder.append(")");
+
+            pstmt = conn.prepareStatement(sqlBuilder.toString());
+            pstmt.setInt(1, userId);
+            for (int i = 0; i < songIds.size(); i++) {
+                pstmt.setInt(i + 2, songIds.get(i));
+            }
+
+            rs = pstmt.executeQuery();
+            while (rs.next()) {
+                favoritedIds.add(rs.getInt("song_id"));
+            }
+            // System.out.println("🎵 [DEBUG] 批量检查收藏 - 用户ID: " + userId + ", 查询数: " +
+            // songIds.size() + ", 命中数: " + favoritedIds.size());
+
+        } catch (SQLException e) {
+            System.err.println("❌ [ERROR] 批量检查收藏失败 - 用户ID: " + userId);
+            e.printStackTrace();
+        } finally {
+            DBUtil.close(conn, pstmt, rs);
+        }
+        return favoritedIds;
     }
 }

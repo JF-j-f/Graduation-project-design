@@ -48,6 +48,23 @@ public class UserLoginServlet extends HttpServlet {
                 User user = userDAO.getUserByUsername(username);
                 session.setAttribute("user", user);
 
+                // 检查老用户是否有默认歌单，没有则补建
+                if (user != null) {
+                    try {
+                        PlaylistDAO playlistDAO = new PlaylistDAO();
+                        Playlist defaultPlaylist = playlistDAO.getDefaultPlaylist(user.getId());
+                        if (defaultPlaylist == null) {
+                            int playlistId = playlistDAO.createPlaylist("我喜欢的音乐", user.getId(), true);
+                            if (playlistId > 0) {
+                                System.out.println("🎵 [登录] 已为老用户 " + user.getUsername() + " 补建默认歌单，ID=" + playlistId);
+                            }
+                        }
+                    } catch (Exception e) {
+                        // 补建失败不影响登录流程
+                        System.err.println("Failed to create default playlist for existing user: " + e.getMessage());
+                    }
+                }
+
                 // 检查是否为管理员
                 boolean isAdmin = adminDAO.isAdmin(username);
 
