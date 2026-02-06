@@ -2,6 +2,29 @@
 
 本文档记录 MusicWeb 项目的所有更新历史。
 
+## v4.0.1-Startup-Fix (2026-02-06) - 启动脚本健壮性修复
+
+### 🐛 修复 (Fixed)
+
+- **JAVA_HOME 环境变量失效**：
+  - 修复 VS Code 终端未正确继承系统环境变量导致 Maven 无法启动的问题。
+  - 在 `run_services.bat` 开头强制设置 `JAVA_HOME`，确保构建过程使用正确的 JDK。
+
+- **Cargo 部署超时**：
+  - 修复 Tomcat 部署超过 120 秒后报 `failed to finish deploying within the timeout period` 错误。
+  - 在 `pom.xml` 中添加 `<cargo.deployer.ping.timeout>300000</cargo.deployer.ping.timeout>` 配置，将超时时间延长至 5 分钟。
+
+- **Python 终端 emoji 显示失败**：
+  - 修复 Python 服务在 GBK 终端下输出 emoji 导致 `UnicodeEncodeError` 崩溃的问题。
+  - 在 `start_qq_api.bat` 中添加 `set PYTHONIOENCODING=utf-8`，确保 Python 输出使用 UTF-8 编码。
+
+### ⚡ 优化 (Optimized)
+
+- **环境兼容性增强**：
+  - 优化启动脚本对不同终端环境的兼容性，降低因环境变量不一致导致的启动失败概率。
+
+---
+
 ## v4.0.0-BugFix-Playlist (2026-02-01) - 歌单加载性能与逻辑修复
 
 ### 🐛 修复 (Fixed)

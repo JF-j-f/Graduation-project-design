@@ -127,6 +127,8 @@
                             <cargo.servlet.port>8082</cargo.servlet.port>
                             <cargo.logging>high</cargo.logging>
                             <cargo.jvmargs>-Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8</cargo.jvmargs>
+                            <!-- 增加部署超时时间为 5 分钟，解决首次启动超时问题 -->
+                            <cargo.deployer.ping.timeout>300000</cargo.deployer.ping.timeout>
                         </properties>
                         <configfiles>
                             <configfile>

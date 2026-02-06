@@ -2,6 +2,8 @@
 cd /d "%~dp0..\src\main\webapp\MusicServer\qq_api"
 chcp 65001 >nul
 
+REM 设置 Python 输出编码为 UTF-8，以支持 emoji 显示
+set PYTHONIOENCODING=utf-8
 echo ============================================
 echo   QQ Music Python API 服务启动
 echo ============================================
