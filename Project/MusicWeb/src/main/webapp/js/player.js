@@ -196,15 +196,17 @@ class AudioPlayer {
                 const sourceName = data.source === 'netease' ? '网易云' : 'QQ音乐';
                 this.showNotification(`✅ 已从${sourceName}获取音源${data.cached ? ' (缓存)' : ''}`);
             } else {
-                // 3. 处理失败
-                this.showNotification(`❌ ${data.message || '未找到可播放的音源'}`);
-                // 尝试播放下一曲 (非重试状态下)
-                if (!isRetry) setTimeout(() => this.playNext(), 2000);
+                // 3. 处理失败（可能因版权下架没有任何音源）
+                this.showNotification(`❌ 暂无歌曲版权: ${data.message || '未找到可播放的音源'}`);
+                // 暂停播放，不自动跳过
+                this.audio.pause();
+                this.updatePlayButtonUI();
             }
         } catch (error) {
             console.error('获取播放链接失败:', error);
-            this.showNotification('❌ 获取播放链接失败: ' + error.message);
-            if (!isRetry) setTimeout(() => this.playNext(), 2000);
+            this.showNotification('❌ 获取播放链接失败，暂无可播放音源');
+            this.audio.pause();
+            this.updatePlayButtonUI();
         }
     }
 

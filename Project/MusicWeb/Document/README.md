@@ -185,6 +185,8 @@ MusicWeb/
 - `frozen_reason` (VARCHAR): 冻结原因
 - `deleted_at` (TIMESTAMP): 逻辑删除时间
 - `create_time` (TIMESTAMP): 注册时间
+- `preferred_genres` (VARCHAR): 注册时的流派偏好标签 (v5.0.1 新增，供冷启动使用)
+- `preferred_artists` (VARCHAR): 注册时的歌手偏好标签 (v5.0.1 新增，供冷启动使用)
 
 #### 2. 歌曲表 (`songs`)
 
@@ -596,4 +598,4 @@ MusicWeb/
 
 ---
 
-*本文档最后更新时间：2026年2月25日 14:50*
+*本文档最后更新时间：2026年2月26日 00:30*

@@ -56,9 +56,17 @@ public class UserRegisterServlet extends HttpServlet {
             // 获取新注册用户的完整信息
             User registeredUser = userDAO.getUserByUsername(username);
 
-            // 冷启动：根据用户选择的标签生成初始推荐
+            // 冷启动：保存用户偏好标签到 users 表，供 Python 推荐引擎读取
             if (registeredUser != null) {
                 try {
+                    /* 持久化偏好到 users 表 (v5.0.1) */
+                    if ((selectedGenres != null && !selectedGenres.trim().isEmpty())
+                            || (selectedArtists != null && !selectedArtists.trim().isEmpty())) {
+                        userDAO.updatePreferences(registeredUser.getId(),
+                                selectedGenres != null ? selectedGenres.trim() : "",
+                                selectedArtists != null ? selectedArtists.trim() : "");
+                    }
+
                     RecommendationService recService = new RecommendationService();
                     recService.initForNewUser(registeredUser.getId(), selectedGenres, selectedArtists);
                 } catch (Exception e) {

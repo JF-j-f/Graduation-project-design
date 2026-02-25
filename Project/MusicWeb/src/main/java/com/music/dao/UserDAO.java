@@ -64,14 +64,16 @@ public class UserDAO {
 
             // 设置参数前进行空值处理
             String email = (user.getEmail() != null && !user.getEmail().trim().isEmpty()) ? user.getEmail().trim() : "";
-            String nickname = (user.getNickname() != null && !user.getNickname().trim().isEmpty()) ? user.getNickname().trim() : "";
+            String nickname = (user.getNickname() != null && !user.getNickname().trim().isEmpty())
+                    ? user.getNickname().trim()
+                    : "";
             String phone = (user.getPhone() != null && !user.getPhone().trim().isEmpty()) ? user.getPhone().trim() : "";
 
             pstmt.setString(1, user.getUsername());
             pstmt.setString(2, user.getPassword());
-            pstmt.setString(3, email);          // 使用处理后的email
-            pstmt.setString(4, nickname);       // 使用处理后的nickname
-            pstmt.setString(5, phone);          // 使用处理后的phone
+            pstmt.setString(3, email); // 使用处理后的email
+            pstmt.setString(4, nickname); // 使用处理后的nickname
+            pstmt.setString(5, phone); // 使用处理后的phone
 
             return pstmt.executeUpdate() > 0;
         } catch (SQLException e) {
@@ -356,5 +358,27 @@ public class UserDAO {
         }
 
         return users;
+    }
+
+    // 更新用户偏好标签 (v5.0.1 - 供推荐引擎冷启动使用)
+    public boolean updatePreferences(int userId, String genres, String artists) {
+        Connection conn = null;
+        PreparedStatement pstmt = null;
+
+        try {
+            conn = DBUtil.getConnection();
+            String sql = "UPDATE users SET preferred_genres = ?, preferred_artists = ? WHERE id = ?";
+            pstmt = conn.prepareStatement(sql);
+            pstmt.setString(1, genres);
+            pstmt.setString(2, artists);
+            pstmt.setInt(3, userId);
+
+            return pstmt.executeUpdate() > 0;
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return false;
+        } finally {
+            DBUtil.close(conn, pstmt, null);
+        }
     }
 }

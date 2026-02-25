@@ -26,11 +26,12 @@ MusicMode 是一个基于大数据技术的**个性化音乐推荐系统后端�
 - **SQLAlchemy 2.0+** - ORM 工具，用于结果回写
 - **MySQL Connector/J 8.0.30** - JDBC 驱动（PySpark 使用）
 
-### 算法模型（规划中）
+### 算法模型
 
 - **DeepCTR-Torch** - 基于 PyTorch 的深度兴趣网络
+- **DeepFM** - 高阶交叉特征排序 (已训练, AUC=0.7933)
+- **FAISS** - 高性能向量相似度检索引擎
 - **Spark MLlib ALS** - 协同过滤召回
-- **DeepFM** - 高阶交叉特征排序
 
 ## 项目核心结构
 
@@ -40,9 +41,10 @@ MusicMode/
 │   ├── README.md                 # 项目文档
 │   ├── CHANGELOG.md              # 项目更新日志
 │   └── Data_Description.md       # 数据集说明文档
-├── scripts/                     # Python 脚本目录
+├── scripts/                     # 运维脚本目录
 │   ├── spark_etl_songs.py        # KKBOX 歌曲全量导入脚本
 │   ├── update_song_metadata.py   # 歌曲元数据更新脚本
+│   ├── start_daily_recommend.bat # 每日推荐定时任务脚本
 │   └── requirements.txt          # Python 依赖配置
 ├── sql/                         # SQL 脚本目录
 │   └── migration_phase1.sql      # 数据库迁移脚本
@@ -52,12 +54,16 @@ MusicMode/
 │   ├── prepare_features.py       # 特征工程
 │   ├── train_als.py              # ALS 召回模型
 │   ├── train_deepfm.py           # DeepFM 精排模型
-│   ├── sync_recs.py              # 结果同步
+│   ├── build_faiss_index.py      # FAISS 向量索引构建
+│   ├── sync_recs.py              # 旧版结果同步
+│   ├── sync_recs_v2.py           # 多通道混合推荐脚本
 │   └── run_pipeline.py           # 一键运行脚本
 └── Mode/                         # 模型产物
     ├── features.pkl              # 预处理特征
     ├── encoders.pkl              # 标签编码器
     ├── deepfm_model.pth          # DeepFM 训练模型
+    ├── song_index.faiss          # FAISS 向量索引
+    ├── song_id_map.pkl           # FAISS ID ↔ MySQL ID 映射
     ├── als_model.pkl             # ALS 召回模型
     ├── candidates.pkl            # 候选集缓存
     ├── cleaned_songs.pkl         # 清洗后的歌曲数据
@@ -88,10 +94,12 @@ MusicMode/
 1. **行为日志采集**: MusicWeb 通过 `PlayHistoryDAO` 实时记录用户行为至 MySQL
 2. **大数据同步 (ETL)**: PySpark 使用 JDBC 抽取交互数据，或直接读取 CSV 文件
 3. **混合推荐计算**:
-   - **离线召回**: Spark MLlib ALS 算法生成候选集
-   - **在线排序**: DeepFM 模型对候选集进行精排
-4. **结果回传**: SQLAlchemy 将预测结果批量更新至 `recommendations` 表
-5. **实时渲染**: 用户访问页面时，Java 端调用推荐逻辑展示个性化内容
+   - **DeepFM 精排**: 全量训练后提取歌曲嵌入向量 (64维)
+   - **FAISS 检索**: 根据用户画像向量从索引中召回 Top-100 候选
+   - **热度兜底**: FAISS 结果不足时按 popularity + release_year 补充
+4. **反馈闭环**: `recommendation_feedback` 表追踪推荐交互，动态调整评分与冷却
+5. **结果回传**: `sync_recs_v2.py` 将 Top-10 推荐批量写入 `recommendations` 表
+6. **实时渲染**: 用户访问页面时，Java 端调用推荐逻辑展示个性化内容
 
 ## 环境配置
 
@@ -108,7 +116,7 @@ MusicMode/
 $env:JAVA_HOME = "C:\Program Files\Eclipse Adoptium\jdk-21.0.9.10-hotspot"
 
 # Hadoop winutils
-$env:HADOOP_HOME = "E:\毕业论文\hadoop"
+$env:HADOOP_HOME = "E:\毕业论文\Graduation-project-design\hadoop\bin"
 ```
 
 ### 安装依赖
@@ -126,7 +134,7 @@ pip install -r requirements.txt -i https://pypi.org/simple/
 
 ```powershell
 $env:JAVA_HOME = "C:\Program Files\Eclipse Adoptium\jdk-21.0.9.10-hotspot"
-$env:HADOOP_HOME = "E:\毕业论文\hadoop"
+$env:HADOOP_HOME = "E:\毕业论文\Graduation-project-design\hadoop\bin"
 python spark_etl_songs.py
 ```
 
@@ -150,3 +158,7 @@ python update_song_metadata.py
 - 用 Spark 读取 `song_extra_info.csv` 获取真实歌名
 - 将 `genre_ids` 映射为中文流派
 - 通过 `kkbox_id` 匹配更新 MySQL
+
+---
+
+*本文档最后更新时间：2026年2月26日 00:30*

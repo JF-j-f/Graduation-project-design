@@ -25,7 +25,7 @@ warnings.filterwarnings('ignore')
 # ============================================
 
 # 数据路径
-DATA_DIR = r"E:\毕业论文\Data"
+DATA_DIR = r"E:\Graduation-project-design\Data"
 TRAIN_CSV = os.path.join(DATA_DIR, "train.csv")
 SONGS_CSV = os.path.join(DATA_DIR, "songs.csv")
 MEMBERS_CSV = os.path.join(DATA_DIR, "members.csv")
@@ -40,7 +40,7 @@ CLEANED_SONGS_PATH = os.path.join(MODE_DIR, "cleaned_songs.pkl")
 RANDOM_SEED = 42
 NEGATIVE_SAMPLE_RATIO = 3  # 正:负 = 1:3
 MIN_USER_INTERACTIONS = 3   # 最少交互次数
-MIN_SONG_INTERACTIONS = 2   # 最少被听次数
+MIN_SONG_INTERACTIONS = 1   # 最少被听次数（保留全部歌曲以最大化 Embedding 覆盖）
 
 
 def load_data():
