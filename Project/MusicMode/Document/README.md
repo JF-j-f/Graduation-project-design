@@ -38,7 +38,8 @@ MusicMode 是一个基于大数据技术的**个性化音乐推荐系统后端�
 MusicMode/
 ├── Document/                    # 项目文档目录
 │   ├── README.md                 # 项目文档
-│   └── Data_Description.md       # 数据描述文档
+│   ├── CHANGELOG.md              # 项目更新日志
+│   └── Data_Description.md       # 数据集说明文档
 ├── scripts/                     # Python 脚本目录
 │   ├── spark_etl_songs.py        # KKBOX 歌曲全量导入脚本
 │   ├── update_song_metadata.py   # 歌曲元数据更新脚本
@@ -56,11 +57,14 @@ MusicMode/
 └── Mode/                         # 模型产物
     ├── features.pkl              # 预处理特征
     ├── encoders.pkl              # 标签编码器
-    ├── deepfm_model.pth          # 训练好的模型
-    ├── als_model.pkl             # ALS 模型
+    ├── deepfm_model.pth          # DeepFM 训练模型
+    ├── als_model.pkl             # ALS 召回模型
     ├── candidates.pkl            # 候选集缓存
     ├── cleaned_songs.pkl         # 清洗后的歌曲数据
     ├── cleaned_train.pkl         # 清洗后的训练数据
+    ├── eda_distribution.png      # EDA 分布可视化图
+    ├── eda_report.md             # EDA 分析报告
+    └── training_progress.png     # 训练过程可视化图
 ```
 
 ## 数据流程

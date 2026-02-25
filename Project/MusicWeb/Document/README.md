@@ -32,27 +32,44 @@ MusicWeb 是一个基于 Java Web 技术栈开发的在线音乐平台，提供�
 ```text
 MusicWeb/
 ├── pom.xml                          # Maven 项目配置文件
-├── database.sql                     # 数据库初始化脚本
 ├── Document/                        # 项目文档目录
 │   ├── README.md                    # 项目核心文档
 │   ├── OPERATION_MANUAL.md          # 运维操作手册
 │   ├── CHANGELOG.md                 # 项目更新日志
-│   └── claude.md                    # 开发过程对话记录
+│   └── playlist_square_plan.md      # 歌单广场开发计划
+├── sql/                             # 数据库脚本目录
+│   └── database.sql                 # 数据库初始化脚本
 ├── scripts/                         # 自动化运维脚本目录
 │   ├── run_services.bat             # 一键启动所有服务
 │   ├── stop_services.bat            # 一键停止所有服务
 │   ├── start_qq_api.bat             # Python QQ 音乐服务启动脚本
 │   ├── start_redis.bat              # Redis 服务启动脚本
 │   ├── start.bat                    # Node.js 网易云服务启动脚本
-│   └── mvnw.cmd                     # Maven Wrapper 脚本
+│   ├── start_unblock.bat            # UnblockNeteaseMusic 启动脚本
+│   ├── mvnw.cmd                     # Maven Wrapper 脚本 (Windows)
+│   └── mvnw                         # Maven Wrapper 脚本 (Unix)
 ├── src/
 │   └── main/
 │       ├── java/com/music/
 │       │   ├── javabean/            # 实体类目录
+│       │   │   ├── Appeal.java              # 申诉实体
+│       │   │   ├── DBUtil.java              # 数据库连接工具
+│       │   │   ├── Favorite.java            # 收藏实体
+│       │   │   ├── PlayHistory.java         # 播放历史实体
+│       │   │   ├── Playlist.java            # 歌单实体
+│       │   │   ├── Song.java                # 歌曲实体
+│       │   │   └── User.java                # 用户实体
 │       │   ├── dao/                 # 数据访问层目录
+│       │   │   ├── AdminDAO.java             # 管理员数据操作
+│       │   │   ├── AppealDAO.java            # 申诉数据操作
+│       │   │   ├── FavoriteDAO.java          # 收藏数据操作
+│       │   │   ├── PlayHistoryDAO.java       # 播放历史数据操作
+│       │   │   ├── PlaylistDAO.java          # 歌单数据操作
+│       │   │   ├── RedisUtil.java            # Redis 缓存工具
 │       │   │   ├── SongDAO.java              # 歌曲与元数据管理
-│       │   │   ├── PlayHistoryDAO.java       # 播放历史数据管理
-│       │   │   └── ...
+│       │   │   └── UserDAO.java              # 用户数据操作
+│       │   ├── service/             # 业务逻辑层目录
+│       │   │   └── RecommendationService.java    # 推荐服务
 │       │   ├── servlet/             # 业务控制层目录
 │       │   │   ├── AdminServlet.java             # 管理员业务处理接口
 │       │   │   ├── AppealServlet.java            # 申诉业务处理接口
@@ -60,8 +77,8 @@ MusicWeb/
 │       │   │   ├── ChangePasswordServlet.java    # 密码修改接口
 │       │   │   ├── DeleteAccountServlet.java     # 账号注销接口
 │       │   │   ├── FavoriteServlet.java          # 收藏业务处理接口
-│       │   │   ├── GetPlayUrlServlet.java        # 获取多源播放链接接口
-│       │   │   ├── ImageProxyServlet.java        # 封面图片代理服务接口
+│       │   │   ├── GetPlayUrlServlet.java        # 多源播放链接接口
+│       │   │   ├── ImageProxyServlet.java        # 封面图片代理接口
 │       │   │   ├── LogoutServlet.java            # 用户登出接口
 │       │   │   ├── PlayHistoryPageServlet.java   # 播放历史分页查询接口
 │       │   │   ├── PlayHistoryServlet.java       # 播放历史记录接口
@@ -70,25 +87,33 @@ MusicWeb/
 │       │   │   ├── RefreshRecommendServlet.java  # 推荐刷新接口
 │       │   │   ├── SearchServlet.java            # 混合搜索接口
 │       │   │   ├── TestDBServlet.java            # 数据库连接测试接口
-│       │   │   ├── UniversalPlayHistoryServlet.java # 通用播放历史记录接口
+│       │   │   ├── UniversalPlayHistoryServlet.java # 通用播放历史接口
 │       │   │   ├── UpdateProfileServlet.java     # 用户资料更新接口
 │       │   │   ├── UserLoginServlet.java         # 用户登录接口
+│       │   │   ├── UserPlaylistsServlet.java     # 用户歌单列表接口
 │       │   │   └── UserRegisterServlet.java      # 用户注册接口
-│       │   └── util/                # 工具类目录
-│       │       ├── CoverDownloadUtil.java    # 封面下载工具
-│       │       ├── EmailUtil.java            # 邮件发送工具
+│       │   ├── util/                # 工具类目录
+│       │   │   ├── CoverDownloadUtil.java    # 封面下载工具
+│       │   │   └── EmailUtil.java            # 邮件发送工具
+│       │   └── utils/               # 扩展工具类目录
 │       │       └── MetadataCleaner.java      # 元数据清洗工具
 │       ├── resources/               # 配置文件目录
 │       │   ├── c3p0-config.xml      # 数据库连接池配置
 │       │   ├── music-api.properties # 第三方 API 配置
+│       │   ├── email.properties     # 邮件服务配置
 │       │   └── logging.properties   # 日志配置
 │       └── webapp/                  # 前端资源根目录
 │           ├── WEB-INF/web.xml      # Web 应用部署配置
 │           ├── MusicServer/         # 独立音乐 API 服务目录
 │           │   ├── Cookie/          # 缓存 Cookie 目录
-│           │   ├── node_modules/    # Node 依赖库目录（不展开）
-│           │   ├── qq_api/          # Python 服务目录（不展开）
-│           │   ├── unblock/         # UnblockNeteaseMusic 服务目录（不展开）
+│           │   ├── node_modules/    # Node 依赖库目录
+│           │   ├── qq_api/          # Python QQ 音乐 API 服务目录
+│           │   │   ├── app.py               # QQ 音乐 FastAPI 服务
+│           │   │   ├── metadata_provider.py # 五级元数据聚合引擎
+│           │   │   ├── qq_credential.json   # QQ 音乐登录凭证
+│           │   │   ├── qq_music_mapping.json # 流派语种映射表
+│           │   │   └── requirements.txt     # Python 依赖配置
+│           │   ├── unblock/         # UnblockNeteaseMusic 服务目录
 │           │   ├── package.json     # Node 项目依赖配置
 │           │   └── server.log       # Node 服务日志
 │           ├── js/                  # 前端脚本目录
@@ -103,7 +128,15 @@ MusicWeb/
 │           │   ├── verify_qq.js      # QQ验证逻辑
 │           │   └── verify_qq_multi.js # 多用户验证逻辑
 │           ├── css/                 # 样式表目录
+│           │   ├── style.css         # 主样式表
+│           │   ├── player.css        # 播放器样式
+│           │   ├── search.css        # 搜索页样式
+│           │   ├── settings.css      # 设置页样式
+│           │   ├── login.css         # 登录页样式
+│           │   ├── register.css      # 注册页样式
+│           │   └── appeal.css        # 申诉页样式
 │           ├── img/                 # 图片资源目录
+│           ├── log/                 # 运行日志目录
 │           ├── admin/               # 后台管理页面目录
 │           │   ├── appeals.jsp       # 申诉管理页面
 │           │   ├── dashboard.jsp     # 管理后台仪表盘
@@ -112,6 +145,8 @@ MusicWeb/
 │           │   ├── userDetails.jsp   # 用户详情页面
 │           │   └── users.jsp         # 用户列表页面
 │           ├── includes/            # 通用 JSP 组件目录
+│           │   ├── song-item.jsp     # 歌曲列表项组件
+│           │   └── chart-item.jsp    # 排行榜列表项组件
 │           ├── accountStatus.jsp    # 账号状态页面
 │           ├── appeal.jsp           # 申诉提交页面
 │           ├── index.jsp            # 网站首页
@@ -262,116 +297,6 @@ MusicWeb/
 - `id` (INT): 歌曲ID
 - `title` (LONGTEXT): 标题
 - `genre` (LONGTEXT): 流派
-- `username` - 用户名，唯一
-- `password` - 密码
-- `email` - 邮箱
-- `nickname` - 昵称
-- `phone` - 手机号
-- `status` - 账号状态 (active/frozen/deleted)
-- `frozen_until` - 冻结截止时间
-- `frozen_reason` - 冻结原因
-- `deleted_at` - 删除时间
-- `create_time` - 创建时间
-
-#### 歌曲表 (songs)
-
-- `id` - 主键，自增
-- `title` - 歌曲标题
-- `artist` - 艺术家
-- `album` - 专辑
-- `duration` - 时长（秒）
-- `genre` - 音乐类型
-- `release_year` - 发行年份
-- `file_path` - 音频文件路径
-- `cover_image` - 封面图片路径
-
-#### 收藏表 (favorites)
-
-- `id` - 主键，自增
-- `user_id` - 用户ID，外键
-- `song_id` - 歌曲ID，外键
-- `create_time` - 收藏时间
-- **唯一约束**: (user_id, song_id) - 防止重复收藏
-
-#### 申诉表 (appeals)
-
-- `id` - 主键，自增
-- `username` - 申诉用户名
-- `user_id` - 用户ID，外键（可为NULL）
-- `appeal_type` - 申诉类型 (frozen/deleted)
-- `reason` - 申诉原因
-- `contact_email` - 联系邮箱
-- `status` - 申诉状态 (pending/approved/rejected)
-- `admin_reply` - 管理员回复
-- `create_time` - 创建时间
-- `update_time` - 更新时间
-
-#### 播放历史表 (play_history)
-
-- `id` - 主键，自增
-- `user_id` - 用户ID，外键
-- `song_id` - 歌曲ID，外键
-- `play_time` - 播放时间
-- `play_duration` - 实际播放时长（秒）
-- **索引**: idx_user_time (user_id, play_time DESC) - 优化查询性能
-
-#### 用户歌单表 (user_playlists)
-
-- `id` - 主键，自增
-- `user_id` - 用户ID，外键
-- `name` - 歌单名称
-- `description` - 歌单描述
-- `cover_image` - 歌单封面图片路径
-- `is_default` - 是否为默认歌单（布尔值）
-- `create_time` - 创建时间
-- `update_time` - 更新时间
-- **外键约束**: FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-
-#### 歌单歌曲关联表 (playlist_songs)
-
-- `id` - 主键，自增
-- `playlist_id` - 歌单ID，外键
-- `song_id` - 歌曲ID，外键
-- `add_time` - 添加时间
-- **唯一约束**: (playlist_id, song_id) - 防止重复添加
-- **外键约束**:
-  - FOREIGN KEY (playlist_id) REFERENCES user_playlists(id) ON DELETE CASCADE
-  - FOREIGN KEY (song_id) REFERENCES songs(id) ON DELETE CASCADE
-
-### 推荐系统表
-
-#### 网易云歌单表 (playlist_info)
-
-- `id` - 主键，自增
-- `playlist_id` - 网易云歌单ID，唯一
-- `title` - 歌单标题
-- `category` - 所属分类
-- `tags` - 歌单标签
-- `play_count` - 播放量
-- `fav_count` - 收藏量
-- `share_count` - 分享量
-- `comment_count` - 评论数
-- `url` - 歌单链接
-- `create_time` - 创建时间
-
-#### 歌单歌曲表 (song_info)
-
-- `id` - 主键，自增
-- `playlist_id` - 关联的歌单ID，外键
-- `song_name` - 歌曲名
-- `duration` - 时长
-- `artist` - 歌手
-- `album` - 专辑
-
-#### 推荐表 (recommendations)
-
-- `id` - 主键，自增
-- `user_id` - 目标用户ID
-- `song_id` - 推荐的歌曲ID
-- `score` - 推荐得分（相似度累加）
-- `create_time` - 创建时间
-- **索引**: idx_user (user_id) - 用户查询优化
-- **索引**: idx_user_score (user_id, score) - 联合索引优化排序
 
 ## 核心功能
 
@@ -523,16 +448,16 @@ MusicWeb/
 
 ## 部署说明
 
-- Tomcat中部署的工件名字是musicweb：war exploded；
-- 应用程序上下文：/musicweb_war_exploded
+- Cargo 插件部署的工件名是 musicweb
+- 应用程序上下文：/musicweb
 - 默认浏览器是：Chrome
 
 ### 环境要求
 
 - Java 25
-- Maven 3.0
+- Maven 3.x
 - MySQL 8.4
-- Apache Tomcat 10.1.23
+- Apache Tomcat 10.x
 
 ### 部署步骤
 
@@ -545,9 +470,9 @@ MusicWeb/
 
 ### 访问地址
 
-- 首页：`http://localhost:8082/musicweb_war_exploded/index.jsp`
+- 首页：`http://localhost:8082/musicweb/index.jsp`
 - 登录：首页集成登录功能
-- 注册：`http://localhost:8082/musicweb_war_exploded/index.jspregister.jsp`
+- 注册：`http://localhost:8082/musicweb/register.jsp`
 
 ## 特色功能
 
@@ -635,27 +560,27 @@ MusicWeb/
 - [x] ~~启动脚本与目录重构~~ ✅ 已完成（v1.8.1/v2.1.2）
 - [x] ~~通用播放历史系统~~ ✅ 已完成（v3.1.0）
 - [x] ~~元数据架构升级 (语种/流派)~~ ✅ 已完成（v3.2.0）
-- [ ] **存量数据清洗**: 批量更新旧版网易云数据的元信息
-- [ ] **高级搜索筛选**: 基于流派、年份、语种的组合筛选
-- [ ] **封面图本地化**: 实现外部封面图的自动缓存与本地引用
-- [ ] 用户头像上传与裁剪
-- [ ] 数据导出功能 (Excel/JSON)
-- [ ] **Redis 缓存进阶 (Phase 2)**: 缓存用户收藏状态 (Favorites) 和歌单列表，进一步降低数据库 IO 压力
+- [ ] **🎯 歌单广场** (P0): 接入网易云歌单API，替代"我的收藏"导航
+- [ ] **收藏系统迁移**: 统一收藏与歌单系统，❤️ 操作写入默认歌单
+- [ ] **排行榜重构**: 飙升榜（增长率）+ 个性化新歌榜 + 口碑榜
+- [x] **Redis 缓存进阶 (Phase 2)**: 缓存用户收藏状态 (v4.0.2)
+- [ ] 高级搜索筛选: 基于流派、年份、语种的组合筛选
+- [ ] 存量数据清洗: 批量更新旧版网易云数据的元信息
 
 ### 长期规划
 
-- [ ] **智能推荐引擎**: 引入协同过滤或深度学习模型提升推荐精准度
+- [ ] **序列推荐增强**: 引入 Transformer (SASRec) 提升推荐精准度
+- [ ] **知识图谱增强**: 构建音乐知识图谱，解决冷启动问题
 - [ ] **音乐社区化**: 评论、弹幕、动态分享、关注系统
-- [ ] **多端适配**: 开发 Flutter/React Native 移动端 App
-- [ ] **沉浸式体验**: Web Audio API 频谱可视化、卡拉OK歌词模式
-- [ ] **大数据驾驶舱**: 基于 ECharts 的全站数据可视化大屏
-- [ ] **商业化探索**: VIP 会员体系、积分商城
+- [ ] **多端适配**: 开发移动端 App
+- [ ] **沉浸式体验**: 歌词滚动、频谱可视化
+- [ ] **签到/任务系统**: 提升用户留存率
 
 ## 联系信息
 
 **项目名称**: MusicWeb 在线音乐平台
 
-**开发语言**: Java 25 + JSP + Servlet
+**开发语言**: Java 23 + JSP + Servlet
 
 **技术框架**: Jakarta EE 10+ (Servlet 6.1, JSP 3.1)
 
@@ -667,8 +592,8 @@ MusicWeb/
 
 **初创时间**: 2025年11月
 
-**最新版本**: v4.0.1
+**最新版本**: v4.0.2
 
 ---
 
-*本文档最后更新时间：2026年2月6日 17:15*
+*本文档最后更新时间：2026年2月25日 14:50*

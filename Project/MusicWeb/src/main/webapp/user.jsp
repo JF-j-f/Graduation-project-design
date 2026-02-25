@@ -4,14 +4,20 @@
 
         <%@ page import="com.music.javabean.*, com.music.dao.*, java.util.*" %>
             <% /* User Login Check */ User user=(User) session.getAttribute("user"); if (user==null) {
-                response.sendRedirect("index.jsp"); return; } /* Initialize DAO */ FavoriteDAO favoriteDAO=new
-                FavoriteDAO(); SongDAO songDAO=new SongDAO(); PlayHistoryDAO playHistoryDAO=new PlayHistoryDAO();
-                PlaylistDAO playlistDAO=new PlaylistDAO(); /* Get User Data */ List<Favorite> favorites =
-                favoriteDAO.getUserFavorites(user.getId());
-                if (favorites == null) favorites = new ArrayList<>();
+                response.sendRedirect("index.jsp"); return; } /* Initialize DAO */ SongDAO songDAO=new SongDAO();
+                PlayHistoryDAO playHistoryDAO=new PlayHistoryDAO(); PlaylistDAO playlistDAO=new PlaylistDAO(); /*
+                获取用户歌单列表 */ List<Playlist> playlists = playlistDAO.getUserPlaylists(user.getId());
+                if (playlists == null) playlists = new ArrayList<>();
 
-                    List<Playlist> playlists = playlistDAO.getUserPlaylists(user.getId());
-                        if (playlists == null) playlists = new ArrayList<>();
+                    /* 获取默认歌单（用于收藏统计和收藏歌曲列表） */
+                    Playlist defaultPlaylist = playlistDAO.getDefaultPlaylist(user.getId());
+                    List<Song> favoriteSongsList = new ArrayList<>();
+                            int favoriteCount = 0;
+                            if (defaultPlaylist != null) {
+                            favoriteSongsList = playlistDAO.getPlaylistSongs(defaultPlaylist.getId());
+                            favoriteCount = defaultPlaylist.getSongCount();
+                            }
+
 
                             /* Get Charts data */
                             List<Song> hotSongs = songDAO.getHotSongs(10);
@@ -134,16 +140,21 @@
                                                                                 <div class="stat-card">
                                                                                     <span class="stat-number"
                                                                                         id="fav-count">
-                                                                                        <%= favorites.size() %>
+                                                                                        <%= favoriteCount %>
                                                                                     </span>
                                                                                     <span class="stat-label">收藏歌曲</span>
                                                                                 </div>
                                                                                 <div class="stat-card">
-                                                                                    <span class="stat-number">0</span>
+                                                                                    <span class="stat-number">
+                                                                                        <%= playlists.size() %>
+                                                                                    </span>
                                                                                     <span class="stat-label">创建歌单</span>
                                                                                 </div>
                                                                                 <div class="stat-card">
-                                                                                    <span class="stat-number">0</span>
+                                                                                    <span class="stat-number">
+                                                                                        <%= PlayHistoryDAO.formatListenDuration(playHistoryDAO.getTotalListenDuration(user.getId()))
+                                                                                            %>
+                                                                                    </span>
                                                                                     <span class="stat-label">收听时长</span>
                                                                                 </div>
                                                                                 <div class="stat-card">
@@ -351,7 +362,7 @@
                                                                                     id="recommend-list">
                                                                                     <% for (Song song :
                                                                                         recommendedSongs) { boolean
-                                                                                        isRecFavorited=favoriteDAO.isFavorite(user.getId(),
+                                                                                        isRecFavorited=playlistDAO.isFavorite(user.getId(),
                                                                                         song.getId());
                                                                                         request.setAttribute("song",
                                                                                         song);
@@ -392,7 +403,7 @@
                                                                                                         5); i++) { Song
                                                                                                         song=hotSongs.get(i);
                                                                                                         boolean
-                                                                                                        isFavorited=favoriteDAO.isFavorite(user.getId(),
+                                                                                                        isFavorited=playlistDAO.isFavorite(user.getId(),
                                                                                                         song.getId());
                                                                                                         request.setAttribute("song",
                                                                                                         song);
@@ -431,7 +442,7 @@
                                                                                                         5); i++) { Song
                                                                                                         song=newSongs.get(i);
                                                                                                         boolean
-                                                                                                        isFavorited=favoriteDAO.isFavorite(user.getId(),
+                                                                                                        isFavorited=playlistDAO.isFavorite(user.getId(),
                                                                                                         song.getId());
                                                                                                         request.setAttribute("song",
                                                                                                         song);
@@ -471,7 +482,7 @@
                                                                                                         5); i++) { Song
                                                                                                         song=favoriteSongs.get(i);
                                                                                                         boolean
-                                                                                                        isFavorited=favoriteDAO.isFavorite(user.getId(),
+                                                                                                        isFavorited=playlistDAO.isFavorite(user.getId(),
                                                                                                         song.getId());
                                                                                                         request.setAttribute("song",
                                                                                                         song);
@@ -539,7 +550,7 @@
                                                                                                     history.getSong();
                                                                                                     boolean isFavorited
                                                                                                     =
-                                                                                                    favoriteDAO.isFavorite(user.getId(),
+                                                                                                    playlistDAO.isFavorite(user.getId(),
                                                                                                     song.getId());
                                                                                                     String playTime =
                                                                                                     history.getPlayTime()

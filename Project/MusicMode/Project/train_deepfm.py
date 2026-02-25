@@ -34,7 +34,7 @@ PREDICTIONS_PATH = os.path.join(MODE_DIR, "predictions.pkl")
 TRAINING_PLOT_PATH = os.path.join(MODE_DIR, "training_progress.png")
 
 # 训练超参数
-BATCH_SIZE = 512        # GPU 可以用更大 batch
+BATCH_SIZE = 256        # 全量训练数据量较大，降低 batch 防显存溢出
 EPOCHS = 5              # 训练轮数
 LEARNING_RATE = 0.001
 DNN_HIDDEN_UNITS = (256, 128, 64)

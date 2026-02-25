@@ -2,6 +2,34 @@
 
 本文档记录 MusicWeb 项目的所有更新历史。
 
+## v4.0.2-Search-Favorite-Fix (2026-02-07) - 搜索结果收藏状态修复
+
+### 🐛 修复 (Fixed)
+
+- **搜索结果红心不显示**：
+  - 修复搜索页面已收藏歌曲的红心图标不显示的问题。
+  - 根因：搜索 API 返回的 `Song` 对象 `id=0`，导致 `isFavorite(userId, 0)` 判断失败。
+  - 解决方案：改用 `title|artist` 组合匹配判断收藏状态，一次性获取用户收藏集合后批量比对。
+
+### ⚡ 优化 (Optimized)
+
+- **Redis 缓存优化**：
+  - `PlaylistDAO` 新增 `getFavoritedSongKeys(userId)` 方法，返回用户已收藏歌曲的 `title|artist` 集合。
+  - `RedisUtil` 新增 `getUserFavoritesKey()` 和 `clearUserFavoritesCache()` 方法，TTL=3分钟。
+  - 搜索60首歌曲的数据库查询从 **60次** 降低至 **1次**，Redis 缓存命中后为 **0次**。
+  - 收藏/取消收藏操作后自动清除 Redis 缓存，保证数据一致性。
+
+### 📝 技术细节
+
+| 文件 | 改动 |
+|------|------|
+| `RedisUtil.java` | 新增 `KEY_USER_FAVORITES`、`TTL_FAVORITES`、`getUserFavoritesKey()`、`clearUserFavoritesCache()` |
+| `PlaylistDAO.java` | 新增 `getFavoritedSongKeys()` 方法，带 Redis 缓存支持 |
+| `search.jsp` | 改用 `Set.contains(title|artist)` 批量判断收藏状态 |
+| `FavoriteServlet.java` | 收藏/取消收藏后调用 `RedisUtil.clearUserFavoritesCache()` |
+
+---
+
 ## v4.0.1-Startup-Fix (2026-02-06) - 启动脚本健壮性修复
 
 ### 🐛 修复 (Fixed)

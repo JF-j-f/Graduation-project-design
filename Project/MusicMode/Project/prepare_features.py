@@ -48,7 +48,7 @@ MYSQL_USER = "root"
 MYSQL_PASSWORD = "JF123456"
 
 # 采样配置（内存优化，仅在使用原始数据时生效）
-SAMPLE_RATE = 0.3  # 采样 30% 数据训练
+SAMPLE_RATE = 1.0  # 使用全量数据训练（提升模型精度和 Embedding 覆盖量）
 RANDOM_SEED = 42
 
 

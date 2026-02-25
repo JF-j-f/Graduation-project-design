@@ -298,4 +298,65 @@ public class PlayHistoryDAO {
             DBUtil.close(conn, pstmt, rs);
         }
     }
+
+    /**
+     * 获取用户总收听时长（秒）
+     * 通过 play_history 表统计所有播放记录，关联 songs 表累加歌曲时长
+     * 
+     * @param userId 用户ID
+     * @return 总收听时长（秒）
+     */
+    public long getTotalListenDuration(int userId) {
+        Connection conn = null;
+        PreparedStatement pstmt = null;
+        ResultSet rs = null;
+
+        try {
+            conn = DBUtil.getConnection();
+            // 累加所有播放记录对应歌曲的时长
+            String sql = "SELECT COALESCE(SUM(s.duration), 0) as total_duration " +
+                    "FROM play_history ph " +
+                    "JOIN songs s ON ph.song_id = s.id " +
+                    "WHERE ph.user_id = ?";
+            pstmt = conn.prepareStatement(sql);
+            pstmt.setInt(1, userId);
+            rs = pstmt.executeQuery();
+
+            if (rs.next()) {
+                long totalSeconds = rs.getLong("total_duration");
+                System.out.println("🎵 [DEBUG] 获取用户总收听时长 - 用户ID: " + userId + ", 秒数: " + totalSeconds);
+                return totalSeconds;
+            }
+            return 0;
+        } catch (SQLException e) {
+            System.err.println("❌ [ERROR] 获取用户总收听时长失败 - 用户ID: " + userId);
+            e.printStackTrace();
+            return 0;
+        } finally {
+            DBUtil.close(conn, pstmt, rs);
+        }
+    }
+
+    /**
+     * 格式化收听时长为友好显示
+     * 
+     * @param totalSeconds 总秒数
+     * @return 格式化字符串，如 "2.5h" 或 "45m"
+     */
+    public static String formatListenDuration(long totalSeconds) {
+        if (totalSeconds <= 0) {
+            return "0";
+        }
+        long hours = totalSeconds / 3600;
+        long minutes = (totalSeconds % 3600) / 60;
+
+        if (hours > 0) {
+            if (minutes > 0) {
+                return hours + "h" + minutes + "m";
+            }
+            return hours + "h";
+        } else {
+            return minutes + "m";
+        }
+    }
 }

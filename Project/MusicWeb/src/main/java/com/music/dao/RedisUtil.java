@@ -330,6 +330,33 @@ public class RedisUtil {
         return String.format(KEY_PLAY_HISTORY_COUNT, userId, days);
     }
 
+    /** 用户收藏歌曲缓存键前缀 (v3.3.0) */
+    public static final String KEY_USER_FAVORITES = "musicweb:user:%d:favorites";
+
+    /** 用户收藏缓存 TTL：3分钟 */
+    public static final int TTL_FAVORITES = 60 * 3;
+
+    /**
+     * 生成用户收藏歌曲缓存键
+     * 
+     * @param userId 用户ID
+     * @return 缓存键
+     */
+    public static String getUserFavoritesKey(int userId) {
+        return String.format(KEY_USER_FAVORITES, userId);
+    }
+
+    /**
+     * 清除用户收藏缓存
+     * 在用户收藏/取消收藏歌曲时调用
+     * 
+     * @param userId 用户ID
+     */
+    public static void clearUserFavoritesCache(int userId) {
+        delete(getUserFavoritesKey(userId));
+        System.out.println("🗑️ [Redis] 已清除用户 " + userId + " 的收藏缓存");
+    }
+
     /**
      * 清除用户所有播放历史缓存
      * 在用户播放新歌曲时调用，确保下次查询获取最新数据

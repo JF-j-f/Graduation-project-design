@@ -144,12 +144,12 @@ public class PlaylistSongsPageServlet extends HttpServlet {
                     : List.of();
             System.out.println("✅ [DEBUG] Step 6: 分页完成, 当前页 " + pagedSongs.size() + " 首");
 
-            // 7. [修复] 批量填充收藏状态
+            // 7. [修复] 批量填充收藏状态 (v3.3.0: 改用 PlaylistDAO 统一收藏判断)
             if (!pagedSongs.isEmpty()) {
                 System.out.println("⏳ [DEBUG] Step 7: 开始批量查询收藏状态...");
-                com.music.dao.FavoriteDAO favoriteDAO = new com.music.dao.FavoriteDAO();
                 List<Integer> songIds = pagedSongs.stream().map(Song::getId).collect(Collectors.toList());
-                List<Integer> favoritedIds = favoriteDAO.getFavoritedSongIds(user.getId(), songIds);
+                // 使用 PlaylistDAO 统一判断收藏状态（基于默认歌单）
+                List<Integer> favoritedIds = playlistDAO.getFavoritedSongIds(user.getId(), songIds);
                 System.out.println("✅ [DEBUG] Step 7: 批量查询结束, 命中 " + favoritedIds.size() + " 首");
 
                 for (Song song : pagedSongs) {

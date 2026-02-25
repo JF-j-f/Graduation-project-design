@@ -1,7 +1,7 @@
 package com.music.servlet;
 
 import com.music.dao.SongDAO;
-import com.music.dao.FavoriteDAO;
+import com.music.dao.PlaylistDAO;
 import com.music.javabean.Song;
 import com.music.javabean.User;
 import jakarta.servlet.ServletException;
@@ -43,7 +43,7 @@ public class RefreshRecommendServlet extends HttpServlet {
 
         // 4. 获取推荐数据
         SongDAO songDAO = new SongDAO();
-        FavoriteDAO favoriteDAO = new FavoriteDAO();
+        PlaylistDAO playlistDAO = new PlaylistDAO(); // v3.3.0: 统一使用 PlaylistDAO 判断收藏
 
         // 获取 5 首随机推荐
         List<Song> songs = songDAO.getRecommendationsByRandom(user.getId(), 5);
@@ -52,7 +52,7 @@ public class RefreshRecommendServlet extends HttpServlet {
         StringBuilder json = new StringBuilder("[");
         for (int i = 0; i < songs.size(); i++) {
             Song s = songs.get(i);
-            boolean isFavorited = favoriteDAO.isFavorite(user.getId(), s.getId());
+            boolean isFavorited = playlistDAO.isFavorite(user.getId(), s.getId()); // 基于默认歌单判断
 
             json.append("{")
                     .append("\"id\":").append(s.getId()).append(",")
