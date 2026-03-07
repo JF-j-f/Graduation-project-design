@@ -36,17 +36,23 @@ public class RefreshRecommendServlet extends HttpServlet {
             return;
         }
 
-        // 3. 【关键修复】清除用户推荐缓存，确保每次刷新获取新数据
-        String cacheKey = com.music.dao.RedisUtil.getUserRecommendationsKey(user.getId());
-        com.music.dao.RedisUtil.delete(cacheKey);
-        System.out.println("🔄 [刷新推荐] 已清除用户 " + user.getId() + " 的推荐缓存");
+        // 3. 接收和解析 offset 参数（基于得分高低流转所需）
+        int offset = 0;
+        String offsetStr = request.getParameter("offset");
+        if (offsetStr != null && !offsetStr.isEmpty()) {
+            try {
+                offset = Integer.parseInt(offsetStr);
+            } catch (NumberFormatException e) {
+                // 忽略解析错误，保持 0
+            }
+        }
 
         // 4. 获取推荐数据
         SongDAO songDAO = new SongDAO();
         PlaylistDAO playlistDAO = new PlaylistDAO(); // v3.3.0: 统一使用 PlaylistDAO 判断收藏
 
-        // 获取 5 首随机推荐
-        List<Song> songs = songDAO.getRecommendationsByRandom(user.getId(), 5);
+        // 获取对应 offset 下的 5 首依 score 排序的推荐
+        List<Song> songs = songDAO.getRecommendationsByScore(user.getId(), 5, offset);
 
         // 4. 手动构建 JSON (避免引入 Jackson 等库，保持轻量)
         StringBuilder json = new StringBuilder("[");

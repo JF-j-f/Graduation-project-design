@@ -44,7 +44,7 @@ WEIGHTS = {
     'playlist_custom': 0.7
 }
 
-TOP_N = 10
+TOP_N = 20
 
 def get_db_connection():
     return pymysql.connect(

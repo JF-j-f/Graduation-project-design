@@ -143,8 +143,14 @@ app.get('/netease/song/url', async (req, res) => {
         if (anonymousResult.body && anonymousResult.body.data && anonymousResult.body.data[0]) {
             const songData = anonymousResult.body.data[0];
             if (songData.url && songData.url !== '') {
-                console.log('   ✅ Step 0 成功: 匿名获取到链接（非 VIP 歌曲）');
-                return res.json(anonymousResult.body);
+                // 关键校验：通过 freeTrialInfo 字段判断是否为30秒试听残链
+                // freeTrialInfo 仅在试听限制时出现，短曲（本身<=30s）不会有此字段
+                if (songData.freeTrialInfo != null) {
+                    console.log(`   ⚠️ Step 0: 检测到试听限制 (freeTrialInfo 存在, time=${songData.time}ms)，继续降级...`);
+                } else {
+                    console.log(`   ✅ Step 0 成功: 完整歌曲 (时长: ${songData.time ? (songData.time / 1000).toFixed(0) + 's' : '未知'})`);
+                    return res.json(anonymousResult.body);
+                }
             }
         }
         console.log('   ⚠️ Step 0 失败: 歌曲可能需要 VIP');
@@ -217,6 +223,7 @@ app.get('/netease/song/url', async (req, res) => {
             if (searchRes.status === 200 && searchRes.data.code === 0 && searchRes.data.data && searchRes.data.data.length > 0) {
                 const qqSong = searchRes.data.data[0];
                 const mid = qqSong.songmid || qqSong.mid;
+                const qqInterval = qqSong.interval || 0; // 歌曲完整时长（秒）
 
                 // 获取 QQ 音乐播放链接
                 const urlRes = await axios.get(`${PY_API_BASE}/song/url`, {
@@ -226,7 +233,7 @@ app.get('/netease/song/url', async (req, res) => {
                 });
 
                 if (urlRes.status === 200 && urlRes.data.code === 0 && urlRes.data.data && urlRes.data.data.url) {
-                    console.log('   ✅ Step 3 成功: QQ Fallback 获取到链接');
+                    console.log(`   ✅ Step 3 成功: QQ Fallback 获取到链接 (歌曲完整时长: ${qqInterval}s)`);
                     return res.json({
                         code: 200,
                         data: [{
@@ -234,7 +241,8 @@ app.get('/netease/song/url', async (req, res) => {
                             url: urlRes.data.data.url,
                             br: 128000,
                             type: 'm4a',
-                            source: 'qq_fallback'
+                            source: 'qq_fallback',
+                            time: qqInterval * 1000 // 统一为毫秒，与网易云格式对齐
                         }]
                     });
                 }

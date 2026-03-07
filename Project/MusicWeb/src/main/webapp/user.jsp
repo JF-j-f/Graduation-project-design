@@ -29,9 +29,9 @@
                                             List<Song> favoriteSongs = songDAO.getFavoriteSongs(10);
                                                 if (favoriteSongs == null) favoriteSongs = new ArrayList<>();
 
-                                                    /* Get Recommendations */
+                                                    /* Get Recommendations (获取前5首最高分) */
                                                     List<Song> recommendedSongs =
-                                                        songDAO.getRecommendationsByRandom(user.getId(), 5);
+                                                        songDAO.getRecommendationsByScore(user.getId(), 5, 0);
                                                         if (recommendedSongs == null) recommendedSongs = new ArrayList<>
                                                             ();
 
@@ -662,7 +662,7 @@
                                                                         <script
                                                                             src="${pageContext.request.contextPath}/js/addToPlaylist.js"></script>
                                                                         <script
-                                                                            src="${pageContext.request.contextPath}/js/user-logic.js"></script>
+                                                                            src="${pageContext.request.contextPath}/js/user-logic.js?v=<%= System.currentTimeMillis() %>"></script>
                                                                     </body>
 
                                                                     </html>

@@ -457,17 +457,9 @@ public class SongDAO {
         return songs;
     }
 
-    // 获取个性化推荐（从推荐池中随机抽取）
-    public List<Song> getRecommendationsByRandom(int userId, int limit) {
-        // 1. 先查缓存
-        String cacheKey = RedisUtil.getUserRecommendationsKey(userId);
-        List<Song> cachedSongs = RedisUtil.getList(cacheKey,
-                new com.google.gson.reflect.TypeToken<List<Song>>() {
-                });
-        if (cachedSongs != null && !cachedSongs.isEmpty()) {
-            return cachedSongs.size() > limit ? cachedSongs.subList(0, limit) : cachedSongs;
-        }
-
+    // 新增：获取个性化推荐（按照 score 得分从高到低，支持游标分页）
+    public List<Song> getRecommendationsByScore(int userId, int limit, int offset) {
+        // 由于存在 offset 轮询机制，为了保证前端严格按序拿到数据，暂不使用 Redis 整体缓存，而是直接走 MySQL 拿最准确的 TOP
         Connection conn = null;
         PreparedStatement pstmt = null;
         ResultSet rs = null;
@@ -475,16 +467,16 @@ public class SongDAO {
 
         try {
             conn = DBUtil.getConnection();
-            // 关键 SQL：联合查询 recommendations 表，并随机排序
-            // 如果 recommendations 表为空（冷启动），这会返回空列表
             String sql = "SELECT s.* FROM songs s " +
                     "JOIN recommendations r ON s.id = r.song_id " +
                     "WHERE r.user_id = ? " +
-                    "ORDER BY RAND() LIMIT ?";
+                    "ORDER BY r.score DESC " +
+                    "LIMIT ? OFFSET ?";
 
             pstmt = conn.prepareStatement(sql);
             pstmt.setInt(1, userId);
             pstmt.setInt(2, limit);
+            pstmt.setInt(3, offset);
 
             rs = pstmt.executeQuery();
 
@@ -504,15 +496,10 @@ public class SongDAO {
             }
 
             // 【兜底策略】
-            // 如果推荐表里没数据（Python还没跑，或者新用户），回退到"新歌榜"
-            if (songs.isEmpty()) {
+            // 如果取出的数据为空（新用户或 Python 未跑），回退到"新歌榜"
+            if (songs.isEmpty() && offset == 0) {
                 System.out.println("⚠️ 用户 " + userId + " 无个性化数据，降级为新歌榜");
                 return getNewSongs(limit);
-            }
-
-            // 2. 写入缓存 (1小时)
-            if (!songs.isEmpty()) {
-                RedisUtil.setList(cacheKey, songs, RedisUtil.TTL_LONG);
             }
 
         } catch (SQLException e) {

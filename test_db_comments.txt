@@ -1,0 +1,1 @@
+(('appeals', '用户申诉表'), ('favorites', '歌曲收藏表'), ('play_history', '播放历史表'), ('playlist_info', '[已废弃] 外部歌单表'), ('playlist_songs', '歌单歌曲表'), ('recommendation_feedback', '推荐反馈表'), ('recommendations', '歌曲推荐表'), ('song_info', '[已废弃] 歌曲草稿表'), ('songs', '歌曲主表'), ('songs_update_temp', '[已废弃] 歌曲更新表'), ('user_playlists', '用户歌单表'), ('users', '用户信息表'))

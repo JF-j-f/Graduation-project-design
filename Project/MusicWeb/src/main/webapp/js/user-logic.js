@@ -90,6 +90,8 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // --- 3. 刷新推荐功能 ---
     var refreshBtn = document.getElementById('refresh-recommend-btn');
+    var recommendOffset = 5; // 初始页面已经加载了 0~4
+
     if (refreshBtn) {
         refreshBtn.addEventListener('click', function () {
             var btn = this;
@@ -99,10 +101,17 @@ document.addEventListener('DOMContentLoaded', function () {
             btn.style.transform = 'rotate(360deg)';
             list.style.opacity = '0.5';
 
-            // 2. 发起请求
-            fetch('api/refreshRecommend')
+            // 2. 发起请求带上 offset
+            fetch('api/refreshRecommend?offset=' + recommendOffset)
                 .then(function (response) { return response.json(); })
                 .then(function (songs) {
+
+                    // 如果拉到底了（后端不足5首说明这20发子弹打光了），重置游标从头开始
+                    if (songs.length < 5) {
+                        recommendOffset = 0;
+                    } else {
+                        recommendOffset += 5;
+                    }
                     // 3. 清空列表
                     list.innerHTML = '';
 
