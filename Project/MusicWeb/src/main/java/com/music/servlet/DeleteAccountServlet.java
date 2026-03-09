@@ -1,7 +1,8 @@
 package com.music.servlet;
 
 import com.music.dao.UserDAO;
-import com.music.dao.FavoriteDAO;
+import com.music.dao.PlaylistDAO;
+import com.music.javabean.Playlist;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.annotation.WebServlet;
 import jakarta.servlet.http.HttpServlet;
@@ -17,7 +18,7 @@ import java.io.IOException;
 public class DeleteAccountServlet extends HttpServlet {
 
     private UserDAO userDAO = new UserDAO();
-    private FavoriteDAO favoriteDAO = new FavoriteDAO();
+    private PlaylistDAO playlistDAO = new PlaylistDAO();
 
     @Override
     protected void doPost(HttpServletRequest request, HttpServletResponse response)
@@ -60,11 +61,11 @@ public class DeleteAccountServlet extends HttpServlet {
 
             // 1. 先删除用户的收藏记录
             try {
-                // 获取用户收藏数量用于日志
-                int favoriteCount = favoriteDAO.getFavoriteCount(userId);
+                // 获取用户收藏数量用于日志（通过默认歌单统计）
+                Playlist defaultPlaylist = playlistDAO.getDefaultPlaylist(userId);
+                int favoriteCount = defaultPlaylist != null ? defaultPlaylist.getSongCount() : 0;
 
-                // 由于FavoriteDAO没有批量删除方法，我们可以使用UserDAO的删除用户方法
-                // 数据库的外键约束会自动删除相关的收藏记录
+                // 数据库的外键约束会自动删除相关的歌单和收藏记录
                 favoriteCleanupSuccess = true;
 
                 System.out.println("🗑️ [DEBUG] 用户收藏清理 - 用户ID: " + userId +

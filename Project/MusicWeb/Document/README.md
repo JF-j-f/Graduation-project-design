@@ -128,6 +128,11 @@ MusicWeb/
 │           │   ├── verify_qq.js      # QQ验证逻辑
 │           │   └── verify_qq_multi.js # 多用户验证逻辑
 │           ├── css/                 # 样式表目录
+│           │   ├── admin/            # 后台专属样式目录
+│           │   │   ├── admin.css           # 后台公共样式
+│           │   │   ├── appeals.css         # 申诉页面样式
+│           │   │   ├── songs.css           # 歌曲管理页面样式
+│           │   │   └── userDetails.css     # 用户详情专属样式
 │           │   ├── style.css         # 主样式表
 │           │   ├── player.css        # 播放器样式
 │           │   ├── search.css        # 搜索页样式
@@ -185,8 +190,8 @@ MusicWeb/
 - `frozen_reason` (VARCHAR): 冻结原因
 - `deleted_at` (TIMESTAMP): 逻辑删除时间
 - `create_time` (TIMESTAMP): 注册时间
-- `preferred_genres` (VARCHAR): 注册时的流派偏好标签 (v5.0.1 新增，供冷启动使用)
-- `preferred_artists` (VARCHAR): 注册时的歌手偏好标签 (v5.0.1 新增，供冷启动使用)
+- `preferred_genres` (VARCHAR): 偏好流派标签
+- `preferred_artists` (VARCHAR): 偏好歌手标签
 
 #### 2. 歌曲表 (`songs`)
 
@@ -199,12 +204,12 @@ MusicWeb/
 - `duration` (INT): 时长(秒)
 - `genre` (VARCHAR): 流派
 - `release_year` (INT): 发行年份
-- `file_path` (VARCHAR): 文件路径 (相对 `music/` 目录)
-- `cover_image` (VARCHAR): 封面路径
+- `file_path` (VARCHAR): 音频文件路径
+- `cover_image` (VARCHAR): 封面图片路径
 - `kkbox_id` (VARCHAR): KKBOX 原曲ID
 - `genre_ids` (VARCHAR): 曲风ID列表
 - `language` (VARCHAR): 语言代码
-- `popularity` (INT): 热度值
+- `popularity` (INT): 歌曲热度
 
 #### 3. 播放历史表 (`play_history`)
 
@@ -216,16 +221,7 @@ MusicWeb/
 - `play_time` (TIMESTAMP): 播放时间
 - `play_duration` (INT): 播放时长(秒)
 
-#### 4. 收藏表 (`favorites`)
-
-用户收藏的歌曲。
-
-- `id` (INT): 主键
-- `user_id` (INT): 用户ID
-- `song_id` (INT): 歌曲ID
-- `create_time` (TIMESTAMP): 收藏时间
-
-#### 5. 申诉表 (`appeals`)
+#### 4. 申诉表 (`appeals`)
 
 账号申诉记录。
 
@@ -237,20 +233,23 @@ MusicWeb/
 - `contact_email` (VARCHAR): 联系邮箱
 - `status` (ENUM): 状态 (`pending`/`approved`/`rejected`)
 - `admin_reply` (TEXT): 管理员回复
+- `create_time` (TIMESTAMP): 申诉创建时间
+- `update_time` (TIMESTAMP): 最后更新时间
 
-#### 6. 自建歌单表 (`user_playlists`)
+#### 5. 自建歌单表 (`user_playlists`)
 
-用户创建的歌单。
+用户创建的歌单。默认歌单(`is_default=TRUE`)即为用户的收藏夹，用以取代已废弃的旧版收藏表。
 
 - `id` (INT): 主键
 - `user_id` (INT): 创建者ID
 - `name` (VARCHAR): 歌单名
 - `description` (TEXT): 描述
 - `cover_image` (VARCHAR): 封面
-- `is_default` (TINYINT): 是否默认 (0/1)
+- `is_default` (BOOLEAN): 是否默认收藏夹 (0/1)
 - `create_time` (TIMESTAMP): 创建时间
+- `update_time` (TIMESTAMP): 最后更新时间
 
-#### 7. 歌单歌曲关联表 (`playlist_songs`)
+#### 6. 歌单歌曲关联表 (`playlist_songs`)
 
 自建歌单与歌曲的多对多关系。
 
@@ -258,6 +257,23 @@ MusicWeb/
 - `playlist_id` (INT): 歌单ID
 - `song_id` (INT): 歌曲ID
 - `add_time` (TIMESTAMP): 添加时间
+
+#### 7. 推荐反馈表 (`recommendation_feedback`)
+
+记录用户对推荐歌曲的互动行为，用于强化学习修正推荐模型。
+
+- `id` (INT): 主键
+- `user_id` (INT): 目标用户ID
+- `song_id` (INT): 歌曲ID
+- `recommend_date` (DATE): 推荐日期
+- `was_played` (TINYINT): 是否已播放 (0/1)
+- `play_completion` (FLOAT): 播放完成度进度
+- `was_favorited` (TINYINT): 是否收藏 (0/1)
+- `consecutive_ignore_days` (INT): 连续忽略天数
+- `feedback_score` (FLOAT): 综合反馈得分
+- `cooldown_until` (DATE): 推荐冷却期截止
+- `created_at` (TIMESTAMP): 创建时间
+- `updated_at` (TIMESTAMP): 更新时间
 
 #### 8. 推荐表 (`recommendations`)
 
@@ -269,36 +285,6 @@ MusicWeb/
 - `score` (DOUBLE): 推荐得分
 - `create_time` (DATETIME): 生成时间
 - `source_type` (VARCHAR): 推荐来源 (默认 `deepfm`)
-
-#### 9. 外部歌单信息表 (`playlist_info`)
-
-**（非核心业务表 - 爬虫/旧版功能数据）**
-爬取的网易云歌单元数据，**目前未被核心业务代码引用**。
-
-- `id` (INT): 主键
-- `playlist_id` (VARCHAR): 外部歌单ID
-- `title` (VARCHAR): 标题
-- `play_count` (BIGINT): 播放量
-- `url` (VARCHAR): 链接
-
-#### 10. 外部歌单歌曲表 (`song_info`)
-
-**（非核心业务表 - 爬虫/旧版功能数据）**
-外部歌单包含的歌曲详情，**目前未被核心业务代码引用**。
-
-- `id` (INT): 主键
-- `playlist_id` (VARCHAR): 关联外部歌单ID
-- `song_name` (VARCHAR): 歌名
-- `artist` (VARCHAR): 歌手
-- `album` (VARCHAR): 专辑
-
-#### 11. 歌曲更新临时表 (`songs_update_temp`)
-
-用于批量更新歌曲信息的临时表。
-
-- `id` (INT): 歌曲ID
-- `title` (LONGTEXT): 标题
-- `genre` (LONGTEXT): 流派
 
 ## 核心功能
 
@@ -565,7 +551,7 @@ MusicWeb/
 - [ ] **🎯 歌单广场** (P0): 接入网易云歌单API，替代"我的收藏"导航
 - [ ] **收藏系统迁移**: 统一收藏与歌单系统，❤️ 操作写入默认歌单
 - [ ] **排行榜重构**: 飙升榜（增长率）+ 个性化新歌榜 + 口碑榜
-- [x] **Redis 缓存进阶 (Phase 2)**: 缓存用户收藏状态 (v4.0.2)
+- [x] **Redis 缓存进阶**: 缓存用户收藏状态 (v4.0.2)
 - [ ] 高级搜索筛选: 基于流派、年份、语种的组合筛选
 - [ ] 存量数据清洗: 批量更新旧版网易云数据的元信息
 
@@ -594,8 +580,8 @@ MusicWeb/
 
 **初创时间**: 2025年11月
 
-**最新版本**: v4.0.2
+**最新版本**: v4.1.2
 
 ---
 
-*本文档最后更新时间：2026年2月26日 00:30*
+*本文档最后更新时间：2026年3月9日 17:35*

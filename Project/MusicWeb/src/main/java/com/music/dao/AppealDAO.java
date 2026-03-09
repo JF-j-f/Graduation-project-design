@@ -121,14 +121,14 @@ public class AppealDAO {
         Appeal appeal = new Appeal();
         appeal.setId(rs.getInt("id"));
         appeal.setUsername(rs.getString("username"));
-        appeal.setUserId(rs.getObject("user_id", Integer.class));
+        int uid = rs.getInt("user_id");
+        appeal.setUserId(rs.wasNull() ? null : uid);
         appeal.setAppealType(rs.getString("appeal_type"));
         appeal.setReason(rs.getString("reason"));
         appeal.setContactEmail(rs.getString("contact_email"));
         appeal.setStatus(rs.getString("status"));
         appeal.setAdminReply(rs.getString("admin_reply"));
         appeal.setCreateTime(rs.getString("create_time"));
-        appeal.setUpdateTime(rs.getString("update_time"));
         return appeal;
     }
 }

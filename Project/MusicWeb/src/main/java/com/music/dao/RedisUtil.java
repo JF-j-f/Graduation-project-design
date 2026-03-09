@@ -330,6 +330,45 @@ public class RedisUtil {
         return String.format(KEY_PLAY_HISTORY_COUNT, userId, days);
     }
 
+    /** 管理员页歌曲分页缓存键前缀 */
+    public static final String KEY_ADMIN_SONGS_PAGE = "musicweb:admin:songs:page:%d";
+
+    /** 管理员页歌曲总数缓存键 */
+    public static final String KEY_ADMIN_SONGS_COUNT = "musicweb:admin:songs:count";
+
+    /**
+     * 生成管理员歌曲分页缓存键
+     * 
+     * @param page 页码
+     * @return 缓存键
+     */
+    public static String getAdminSongsPageKey(int page) {
+        return String.format(KEY_ADMIN_SONGS_PAGE, page);
+    }
+
+    /**
+     * 清除管理员歌曲分页及总数缓存
+     * 在歌曲被删除、添加或修改后调用
+     */
+    public static void clearAdminSongsCache() {
+        Jedis jedis = null;
+        try {
+            jedis = getJedis();
+            if (jedis != null) {
+                jedis.del(KEY_ADMIN_SONGS_COUNT);
+                // 保守清除前 200 页（生产环境中应避免使用 KEYS 导致阻塞）
+                for (int i = 1; i <= 200; i++) {
+                    jedis.del(getAdminSongsPageKey(i));
+                }
+                System.out.println("🗑️ [Redis] 已清除管理员后台歌曲列表缓存");
+            }
+        } catch (Exception e) {
+            System.err.println("⚠️ 清除管理员后台歌曲缓存失败: " + e.getMessage());
+        } finally {
+            closeJedis(jedis);
+        }
+    }
+
     /** 用户收藏歌曲缓存键前缀 (v3.3.0) */
     public static final String KEY_USER_FAVORITES = "musicweb:user:%d:favorites";
 

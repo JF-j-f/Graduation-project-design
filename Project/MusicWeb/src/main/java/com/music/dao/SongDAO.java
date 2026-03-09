@@ -135,8 +135,8 @@ public class SongDAO {
             conn = DBUtil.getConnection();
             conn.setAutoCommit(false);
 
-            // 先删除 favorites 表中的相关记录
-            String deleteFavoriteSql = "DELETE FROM favorites WHERE song_id = ?";
+            // 先删除 playlist_songs 表中的相关记录（已废弃 favorites 表）
+            String deleteFavoriteSql = "DELETE FROM playlist_songs WHERE song_id = ?";
             pstmt = conn.prepareStatement(deleteFavoriteSql);
             pstmt.setInt(1, songId);
             pstmt.executeUpdate();
@@ -187,10 +187,11 @@ public class SongDAO {
 
         try {
             conn = DBUtil.getConnection();
-            // 假设有play_count字段，如果没有则按ID排序
+            // 按收藏次数排序（数据来源：playlist_songs 默认歌单）
             String sql = "SELECT s.*, IFNULL(f.favorite_count, 0) as favorite_count FROM songs s " +
-                    "LEFT JOIN (SELECT song_id, COUNT(*) as favorite_count FROM favorites GROUP BY song_id) f ON s.id = f.song_id "
-                    +
+                    "LEFT JOIN (SELECT ps.song_id, COUNT(*) as favorite_count " +
+                    "FROM playlist_songs ps JOIN user_playlists up ON ps.playlist_id = up.id " +
+                    "WHERE up.is_default = TRUE GROUP BY ps.song_id) f ON s.id = f.song_id " +
                     "ORDER BY favorite_count DESC, s.id DESC LIMIT ?";
             pstmt = conn.prepareStatement(sql);
             pstmt.setInt(1, limit);
@@ -285,8 +286,9 @@ public class SongDAO {
 
         try {
             conn = DBUtil.getConnection();
-            String sql = "SELECT s.*, COUNT(f.id) as favorite_count FROM songs s " +
-                    "LEFT JOIN favorites f ON s.id = f.song_id " +
+            String sql = "SELECT s.*, COUNT(ps.id) as favorite_count FROM songs s " +
+                    "LEFT JOIN playlist_songs ps ON s.id = ps.song_id " +
+                    "LEFT JOIN user_playlists up ON ps.playlist_id = up.id AND up.is_default = TRUE " +
                     "GROUP BY s.id " +
                     "ORDER BY favorite_count DESC, s.id DESC " +
                     "LIMIT ?";

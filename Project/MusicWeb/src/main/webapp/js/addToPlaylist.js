@@ -72,7 +72,7 @@
     }
 
     /* 渲染下拉菜单 */
-    function renderDropdown(dropdown, playlists, songId) {
+    function renderDropdown(dropdown, playlists, songId, songMeta) {
         if (!playlists || playlists.length === 0) {
             dropdown.innerHTML = '<div style="padding: 1rem; text-align: center; color: #888;">暂无歌单</div>';
             return;
@@ -81,6 +81,12 @@
         var html = '';
         playlists.forEach(function (playlist) {
             html += '<div class="playlist-dropdown-item" data-playlist-id="' + playlist.id + '" data-song-id="' + songId + '" ' +
+                'data-song-title="' + escapeHtml(songMeta.title || '') + '" ' +
+                'data-song-artist="' + escapeHtml(songMeta.artist || '') + '" ' +
+                'data-song-album="' + escapeHtml(songMeta.album || '') + '" ' +
+                'data-song-source="' + escapeHtml(songMeta.source || '') + '" ' +
+                'data-song-cover-url="' + escapeHtml(songMeta.coverUrl || '') + '" ' +
+                'data-song-duration="' + (songMeta.duration || '0') + '" ' +
                 'style="padding: 10px 16px; cursor: pointer; border-bottom: 1px solid #eee; transition: background 0.2s; display: flex; align-items: center; gap: 10px;">' +
                 '<span style="font-size: 1.2rem;">' + (playlist.isDefault ? '❤️' : '📁') + '</span>' +
                 '<div style="flex: 1; overflow: hidden;">' +
@@ -104,15 +110,35 @@
                 var playlistId = this.getAttribute('data-playlist-id');
                 var songIdAttr = this.getAttribute('data-song-id');
                 var playlistName = this.querySelector('div > div').textContent;
-                addSongToPlaylist(playlistId, songIdAttr, playlistName);
+                /* 收集元数据 */
+                var meta = {
+                    title: this.getAttribute('data-song-title') || '',
+                    artist: this.getAttribute('data-song-artist') || '',
+                    album: this.getAttribute('data-song-album') || '',
+                    source: this.getAttribute('data-song-source') || '',
+                    coverUrl: this.getAttribute('data-song-cover-url') || '',
+                    duration: this.getAttribute('data-song-duration') || '0'
+                };
+                addSongToPlaylist(playlistId, songIdAttr, playlistName, meta);
                 closeAllDropdowns();
             });
         });
     }
 
     /* 添加歌曲到歌单 */
-    function addSongToPlaylist(playlistId, songId, playlistName) {
-        fetch('playlist?action=addSong&playlistId=' + playlistId + '&songId=' + songId, {
+    function addSongToPlaylist(playlistId, songId, playlistName, songMeta) {
+        /* 构建请求 URL，songId=0 时附带元数据用于后端自动入库 */
+        var url = 'playlist?action=addSong&playlistId=' + playlistId + '&songId=' + songId;
+        if ((songId === '0' || songId === 0) && songMeta) {
+            url += '&songTitle=' + encodeURIComponent(songMeta.title || '');
+            url += '&songArtist=' + encodeURIComponent(songMeta.artist || '');
+            url += '&songAlbum=' + encodeURIComponent(songMeta.album || '');
+            url += '&songSource=' + encodeURIComponent(songMeta.source || '');
+            url += '&songCoverUrl=' + encodeURIComponent(songMeta.coverUrl || '');
+            url += '&songDuration=' + encodeURIComponent(songMeta.duration || '0');
+        }
+
+        fetch(url, {
             method: 'POST'
         })
             .then(function (r) { return r.json(); })
@@ -164,6 +190,15 @@
                 var wrapper = this.closest('.add-to-playlist-wrapper');
                 var dropdown = wrapper.querySelector('.playlist-dropdown');
                 var songId = this.getAttribute('data-song-id');
+                /* 收集元数据（用于外部歌曲 songId=0 时传递给后端自动入库） */
+                var songMeta = {
+                    title: this.getAttribute('data-song-title') || '',
+                    artist: this.getAttribute('data-song-artist') || '',
+                    album: this.getAttribute('data-song-album') || '',
+                    source: this.getAttribute('data-song-source') || '',
+                    coverUrl: this.getAttribute('data-song-cover-url') || '',
+                    duration: this.getAttribute('data-song-duration') || '0'
+                };
 
                 /* 如果当前下拉已打开，则关闭 */
                 if (dropdown.style.display === 'block') {
@@ -183,7 +218,7 @@
                 /* 获取歌单并渲染 */
                 fetchPlaylists(function (playlists) {
                     if (dropdown.style.display === 'block') {
-                        renderDropdown(dropdown, playlists, songId);
+                        renderDropdown(dropdown, playlists, songId, songMeta);
                     }
                 });
             });

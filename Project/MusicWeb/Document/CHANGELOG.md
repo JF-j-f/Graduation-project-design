@@ -1,6 +1,52 @@
 # MusicWeb 更新日志 (Changelog)
 
-本文档记录 MusicWeb 项目的所有更新历史。
+本文档记录了 MusicWeb 项目的所有更新历史。
+
+## v4.1.2 (2026-03-09) - 管理员后台深度功能修复与 UI 优化
+
+### 🐛 Bug 修复
+
+- **申诉详情跳转 500/Dashboard 修复**：
+  - 修正了 `AppealDAO` 内部对 `user_id` 的类型提取逻辑，使用 `rs.getInt()` 配合 `rs.wasNull()` 完美兼容 Optional 字段。
+  - 修复了 `appeals.jsp` 中对实体类不存在方法 `getEmail()` 的调用（修正为 `getContactEmail()`）。
+- **歌单详情载入空白修复**：
+  - 修正了 `AdminDAO.getPlaylistSongsForAdmin` 查询中错误的排序列名 `added_time`（已更正为物理表对应的 `add_time`）。
+- **管理员导航 404 与重定向冲突修复**：
+  - 解决了右上角“返回主站”指向 `/jsp/index.jsp` 的路径错误问题。
+  - 针对首页自动重定向至 `user.jsp` 的逻辑，将后台导航统一更名为 **“返回仪表盘”** 并指向 `admin?action=dashboard`。
+
+### 🎨 UI/UX 优化
+
+- **模态弹窗透明度修复**：针对 `appeals.css` 中透明变量失效及缓存问题，对所有 Admin 弹窗应用了内联的 `#ffffff !important` 底色补丁，确保文字清晰可读。
+- **管理列表噪音过滤**：
+  - `AdminDAO.getAllUsers` 默认排除 `admin` 账号。
+  - `AdminDAO.getAllPlaylistsWithUser` 自动屏蔽管理员创建的内部歌单。
+
+### 🗄️ 数据库同步
+
+- **生产环境 Schema 同步**：同步全量 `database.sql` 脚本至 2026-03-09 最新生产状态。
+- **清理工程噪音**：移除了调试期间遗留的所有 `probe.jsp` 及 `TableProbe.java` 等临时探针代码。
+
+---
+
+## v4.1.0 (2026-03-08) - 后台页面重写与废弃依赖清理
+
+### 🐛 Bug 修复
+
+- **后台用户详情页 500 编译报错**：
+  - 现象：访问 `/admin?action=userDetails` 触发 JspCompilationContext 空指针和字符报错。
+  - 成因：受代码格式化工具影响，JSP中的 `out.print` 多行拼接字符被截断破坏引用的字符串字面量。
+  - 结果：将带有隐患的输出语句切回原生的 `<%= %>` HTML 嵌出流彻底解决换行编译错误。
+
+### 🚀 性能优化
+
+- **废弃旧版 favorites 表关联改写数据逻辑 (重构)**：
+  - **废弃**：彻底废弃和移除老旧版本 `favorites` 数据表读取交互逻辑，统一将收藏概念下沉至“默认自建歌单”。
+  - **重构**：修改 `AdminDAO` 中所有仪表盘统计及收藏列表查询。改用检查 `user_playlists` 表中的 `is_default=TRUE` 默认收藏夹，并联表计算 `playlist_songs` 数据。
+- **剥离后台高耦合式内联层叠样式 (重构)**：
+  - **整改**：创建独立 `css/admin` 后台专属样式目录，将 `style.css` 中所有管理端逻辑彻底迁移至 `admin.css`，保持前台逻辑洁净，避免由于大规模 JSP 导致的样式冲突及加载性能问题。
+
+---
 
 ## v4.0.2-Search-Favorite-Fix (2026-02-07) - 搜索结果收藏状态修复
 

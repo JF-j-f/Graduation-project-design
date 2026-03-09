@@ -4,7 +4,7 @@ description: 文档更新规范
 
 1.只有当收到 “撰写工作总结” 命令时，才执行以下指令：
 README 是项目的脸面。仅当项目的**“What (是什么)”、“How (怎么用)”** 或 “Why (核心技术)” 发生本质变化时，才更新此文档。
-模块分类：区分 MusicWeb (前端/综合) 与 MusicMode (后端算法)，若前端没有发生变化，则不更新前端的README和CHANGELOG文档，反之后端同理！（PS：这里的后端指算法层面的变动。MusicMode 专注于算法与核心模型逻辑。）
+模块分类：区分 MusicWeb (前端/综合) 与 MusicMode (后端推荐算法)，若前端没有发生变化，则不更新前端的README和CHANGELOG文档，反之后端同理！（PS：这里的后端指算法层面的变动。MusicMode 专注于算法与核心模型逻辑。）
 
 对于MusicWeb和MusicMode下的REAMDE.md文档遵循以下更新指令：
 4.1. 项目核心结构 (Core Structure)

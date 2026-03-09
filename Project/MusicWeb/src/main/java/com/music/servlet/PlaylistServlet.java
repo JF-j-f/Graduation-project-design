@@ -101,6 +101,44 @@ public class PlaylistServlet extends HttpServlet {
                 int playlistId = Integer.parseInt(request.getParameter("playlistId"));
                 int songId = Integer.parseInt(request.getParameter("songId"));
 
+                // === 核心修复：外部歌曲自动入库 ===
+                if (songId == 0) {
+                    String songTitle = request.getParameter("songTitle");
+                    String songArtist = request.getParameter("songArtist");
+                    String songAlbum = request.getParameter("songAlbum");
+                    String songSource = request.getParameter("songSource");
+                    String songCoverUrl = request.getParameter("songCoverUrl");
+                    String songDurationStr = request.getParameter("songDuration");
+
+                    if (songTitle != null && !songTitle.isEmpty()
+                            && songArtist != null && !songArtist.isEmpty()) {
+                        int songDuration = 0;
+                        try {
+                            songDuration = Integer.parseInt(songDurationStr);
+                        } catch (Exception ignored) {
+                        }
+
+                        SongDAO songDAO = new SongDAO();
+                        songId = songDAO.addOrUpdateFromExternal(
+                                songTitle, songArtist,
+                                songAlbum != null ? songAlbum : "",
+                                songDuration,
+                                songSource != null ? songSource : "",
+                                songCoverUrl != null ? songCoverUrl : "",
+                                0, "", "");
+                        System.out.println("🎵 [歌单-自动入库] 外部歌曲已入库 - 标题: " + songTitle +
+                                ", 歌手: " + songArtist + ", 新ID: " + songId);
+                    }
+
+                    if (songId <= 0) {
+                        result.put("success", false);
+                        result.put("message", "歌曲信息不完整或同步失败");
+                        out.println("{\"success\": " + result.get("success") + ", \"message\": \""
+                                + result.get("message") + "\"}");
+                        return;
+                    }
+                }
+
                 // 检查歌单是否属于当前用户
                 Playlist playlist = playlistDAO.getPlaylistById(playlistId);
                 if (playlist == null || playlist.getUserId() != user.getId()) {

@@ -12,9 +12,12 @@ public class User {
     private String frozenReason;
     private String deletedAt;
     private String createTime;
+    private String preferredGenres;
+    private String preferredArtists;
 
     // 构造方法
-    public User() {}
+    public User() {
+    }
 
     public User(String username, String password, String email, String nickname, String phone) {
         this.username = username;
@@ -25,36 +28,107 @@ public class User {
     }
 
     // Getter和Setter方法
-    public int getId() { return id; }
-    public void setId(int id) { this.id = id; }
+    public int getId() {
+        return id;
+    }
 
-    public String getUsername() { return username; }
-    public void setUsername(String username) { this.username = username; }
+    public void setId(int id) {
+        this.id = id;
+    }
 
-    public String getPassword() { return password; }
-    public void setPassword(String password) { this.password = password; }
+    public String getUsername() {
+        return username;
+    }
 
-    public String getEmail() { return email; }
-    public void setEmail(String email) { this.email = email; }
+    public void setUsername(String username) {
+        this.username = username;
+    }
 
-    public String getNickname() { return nickname; }
-    public void setNickname(String nickname) { this.nickname = nickname; }
+    public String getPassword() {
+        return password;
+    }
 
-    public String getPhone() { return phone; }
-    public void setPhone(String phone) { this.phone = phone; }
+    public void setPassword(String password) {
+        this.password = password;
+    }
 
-    public String getStatus() { return status; }
-    public void setStatus(String status) { this.status = status; }
+    public String getEmail() {
+        return email;
+    }
 
-    public String getFrozenUntil() { return frozenUntil; }
-    public void setFrozenUntil(String frozenUntil) { this.frozenUntil = frozenUntil; }
+    public void setEmail(String email) {
+        this.email = email;
+    }
 
-    public String getFrozenReason() { return frozenReason; }
-    public void setFrozenReason(String frozenReason) { this.frozenReason = frozenReason; }
+    public String getNickname() {
+        return nickname;
+    }
 
-    public String getDeletedAt() { return deletedAt; }
-    public void setDeletedAt(String deletedAt) { this.deletedAt = deletedAt; }
+    public void setNickname(String nickname) {
+        this.nickname = nickname;
+    }
 
-    public String getCreateTime() { return createTime; }
-    public void setCreateTime(String createTime) { this.createTime = createTime; }
+    public String getPhone() {
+        return phone;
+    }
+
+    public void setPhone(String phone) {
+        this.phone = phone;
+    }
+
+    public String getStatus() {
+        return status;
+    }
+
+    public void setStatus(String status) {
+        this.status = status;
+    }
+
+    public String getFrozenUntil() {
+        return frozenUntil;
+    }
+
+    public void setFrozenUntil(String frozenUntil) {
+        this.frozenUntil = frozenUntil;
+    }
+
+    public String getFrozenReason() {
+        return frozenReason;
+    }
+
+    public void setFrozenReason(String frozenReason) {
+        this.frozenReason = frozenReason;
+    }
+
+    public String getDeletedAt() {
+        return deletedAt;
+    }
+
+    public void setDeletedAt(String deletedAt) {
+        this.deletedAt = deletedAt;
+    }
+
+    public String getCreateTime() {
+        return createTime;
+    }
+
+    public void setCreateTime(String createTime) {
+        this.createTime = createTime;
+    }
+
+    public String getPreferredGenres() {
+        return preferredGenres;
+    }
+
+    public void setPreferredGenres(String preferredGenres) {
+        this.preferredGenres = preferredGenres;
+    }
+
+    public String getPreferredArtists() {
+        return preferredArtists;
+    }
+
+    public void setPreferredArtists(String preferredArtists) {
+        this.preferredArtists = preferredArtists;
+    }
 }

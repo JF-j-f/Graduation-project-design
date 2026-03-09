@@ -48,6 +48,46 @@ public class FavoriteServlet extends HttpServlet {
             SongDAO songDAO = new SongDAO();
             PlaylistDAO playlistDAO = new PlaylistDAO();
 
+            // === 核心修复：外部歌曲自动入库 ===
+            // 当 songId=0 时（搜索结果中的外部歌曲尚未入库），
+            // 通过前端传来的元数据自动入库后再操作
+            if (songId == 0) {
+                String songTitle = request.getParameter("songTitle");
+                String songArtist = request.getParameter("songArtist");
+                String songAlbum = request.getParameter("songAlbum");
+                String songSource = request.getParameter("songSource");
+                String songCoverUrl = request.getParameter("songCoverUrl");
+                String songDurationStr = request.getParameter("songDuration");
+
+                if (songTitle == null || songTitle.isEmpty() || songArtist == null || songArtist.isEmpty()) {
+                    out.println("<script>alert('歌曲信息不完整！');window.location.href='user.jsp';</script>");
+                    return;
+                }
+
+                int songDuration = 0;
+                try {
+                    songDuration = Integer.parseInt(songDurationStr);
+                } catch (Exception ignored) {
+                }
+
+                // 调用已有的 addOrUpdateFromExternal 方法：
+                // 内部先按 title+artist 查库，已存在则返回已有ID，不存在则插入新记录
+                songId = songDAO.addOrUpdateFromExternal(
+                        songTitle, songArtist,
+                        songAlbum != null ? songAlbum : "",
+                        songDuration,
+                        songSource != null ? songSource : "",
+                        songCoverUrl != null ? songCoverUrl : "",
+                        0, "", "");
+
+                if (songId <= 0) {
+                    out.println("<script>alert('歌曲信息同步失败！');window.location.href='user.jsp';</script>");
+                    return;
+                }
+                System.out.println("🎵 [自动入库] 外部歌曲已入库 - 标题: " + songTitle +
+                        ", 歌手: " + songArtist + ", 新ID: " + songId);
+            }
+
             // 检查歌曲是否存在
             if (!songDAO.isSongExist(songId)) {
                 out.println("<script>alert('歌曲不存在！');window.location.href='user.jsp';</script>");

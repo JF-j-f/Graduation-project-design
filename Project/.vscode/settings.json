@@ -1,3 +1,10 @@
 {
-    "java.configuration.updateBuildConfiguration": "interactive"
+    "java.configuration.updateBuildConfiguration": "interactive",
+    // JSP 文件被识别为 HTML，禁用 HTML 的自动格式化
+    // 防止 IDE 破坏 JSP scriptlet (<% %>) 语法
+    "[html]": {
+        "editor.formatOnSave": false,
+        "editor.formatOnPaste": false,
+        "editor.formatOnType": false
+    }
 }

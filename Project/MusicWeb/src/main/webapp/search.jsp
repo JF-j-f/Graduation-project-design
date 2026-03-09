@@ -334,6 +334,12 @@
                                                                 <button class="add-to-playlist-btn"
                                                                     data-song-id="<%= song.getId() %>"
                                                                     data-song-title="<%= song.getTitle() %>"
+                                                                    data-song-artist="<%= song.getArtist() %>"
+                                                                    data-song-album="<%= song.getAlbum() != null ? song.getAlbum() : "" %>"
+                                                                    data-song-source="<%= songSource != null ? songSource : "" %>"
+                                                                    data-song-external-id="<%= externalId != null ? externalId : "" %>"
+                                                                    data-song-cover-url="<%= coverUrl != null ? coverUrl : "" %>"
+                                                                    data-song-duration="<%= song.getDuration() %>"
                                                                     title="添加到歌单"
                                                                     style="background: none; border: none; font-size: 1.1rem; cursor: pointer; padding: 0.3rem 0.5rem; color: #666; transition: all 0.2s ease;">➕</button>
                                                                 <div class="playlist-dropdown"
@@ -448,6 +454,13 @@
                                         favBtn.className = 'favorite-btn-ajax' + (isFavorited ? ' favorited' : '');
                                         favBtn.dataset.action = isFavorited ? 'remove' : 'add';
                                         favBtn.dataset.songId = songId;
+                                        // 复制歌曲元数据到收藏按钮（用于外部歌曲 songId=0 时自动入库）
+                                        favBtn.dataset.songTitle = playBtn.dataset.songTitle || '';
+                                        favBtn.dataset.songArtist = playBtn.dataset.songArtist || '';
+                                        favBtn.dataset.songAlbum = playBtn.dataset.songAlbum || '';
+                                        favBtn.dataset.songSource = playBtn.dataset.songSource || '';
+                                        favBtn.dataset.songCoverUrl = playBtn.dataset.songCoverUrl || '';
+                                        favBtn.dataset.songDuration = playBtn.dataset.songDuration || '0';
                                         favBtn.title = isFavorited ? '取消收藏' : '收藏';
                                         favBtn.style.cssText = 'background:none;border:none;font-size:1.25rem;cursor:pointer;padding:0.5rem;color:' + (isFavorited ? 'red' : '#666');
                                         favBtn.textContent = isFavorited ? '❤️' : '🤍';
@@ -501,10 +514,21 @@
                                         const songId = btn.dataset.songId;
                                         const currentAction = btn.dataset.action;
 
+                                        // 构建请求体，songId=0 时附带歌曲元数据
+                                        var body = 'action=' + currentAction + '&songId=' + songId;
+                                        if (songId === '0' || songId === 0) {
+                                            body += '&songTitle=' + encodeURIComponent(btn.dataset.songTitle || '');
+                                            body += '&songArtist=' + encodeURIComponent(btn.dataset.songArtist || '');
+                                            body += '&songAlbum=' + encodeURIComponent(btn.dataset.songAlbum || '');
+                                            body += '&songSource=' + encodeURIComponent(btn.dataset.songSource || '');
+                                            body += '&songCoverUrl=' + encodeURIComponent(btn.dataset.songCoverUrl || '');
+                                            body += '&songDuration=' + encodeURIComponent(btn.dataset.songDuration || '0');
+                                        }
+
                                         fetch('favorite', {
                                             method: 'POST',
                                             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                                            body: 'action=' + currentAction + '&songId=' + songId
+                                            body: body
                                         })
                                             .then(response => {
                                                 if (response.ok || response.redirected) {

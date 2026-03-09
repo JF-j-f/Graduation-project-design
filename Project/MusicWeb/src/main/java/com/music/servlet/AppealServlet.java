@@ -49,7 +49,7 @@ public class AppealServlet extends HttpServlet {
 
         AppealDAO appealDAO = new AppealDAO();
         if (appealDAO.createAppeal(appeal)) {
-            out.println("<script>alert('申诉提交成功！我们会尽快处理您的申诉。');window.location.href='jsp/index.jsp';</script>");
+            out.println("<script>alert('申诉提交成功！我们会尽快处理您的申诉。');window.location.href='" + request.getContextPath() + "/jsp/index.jsp';</script>");
         } else {
             out.println("<script>alert('申诉提交失败，请稍后重试！');history.back();</script>");
         }

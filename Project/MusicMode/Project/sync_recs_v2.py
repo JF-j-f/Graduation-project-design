@@ -248,8 +248,13 @@ def get_user_profile(db, user_id, mysql2faiss, index, genre_cache, song_meta_cac
                         vectors.append(pvec)
                         weights.append(w * 0.5)  # 代理权重打折
                 
-        # 2. 收藏
-        cur.execute("SELECT song_id FROM favorites WHERE user_id = %s", (user_id,))
+        # 2. 收藏（数据来源：playlist_songs 默认歌单，已废弃 favorites 表）
+        cur.execute(
+            "SELECT ps.song_id FROM playlist_songs ps "
+            "JOIN user_playlists up ON ps.playlist_id = up.id "
+            "WHERE up.is_default = TRUE AND up.user_id = %s",
+            (user_id,)
+        )
         for row in cur.fetchall():
             sid = row['song_id']
             if sid in mysql2faiss:

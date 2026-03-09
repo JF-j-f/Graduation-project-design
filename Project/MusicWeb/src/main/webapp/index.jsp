@@ -2,7 +2,6 @@
     <%@ page import="com.music.javabean.*, com.music.dao.*, java.util.*" %>
         <% /* 1. 获取用户Session */ User user=(User) session.getAttribute("user"); /* 2. 如果用户已登录，直接在这里跳转并结束 */ if (user
             !=null) { response.sendRedirect("user.jsp"); return; /* 结束当前页面的执行 */ } /* 3. 后续逻辑只会在"未登录"状态下执行 */
-            FavoriteDAO favoriteDAO=new FavoriteDAO(); List<Favorite> favorites = new ArrayList<>();
 
                 /* 推荐歌曲数据 (为了防止数据库空指针，加了容错) */
                 SongDAO songDAO = new SongDAO();

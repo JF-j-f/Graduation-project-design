@@ -1,0 +1,582 @@
+/* 高对比度极客风格 (Dark Pro) - 管理后台核心 CSS */
+
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap');
+
+:root {
+    --sidebar-bg: #1E1E2D;
+    --sidebar-hover: #1b1b29;
+    --sidebar-text: #9899ac;
+    --sidebar-active-bg: #009EF7;
+    --sidebar-active-text: #ffffff;
+
+    --header-bg: #ffffff;
+    --body-bg: #F5F8FA;
+
+    --text-main: #3F4254;
+    --text-muted: #B5B5C3;
+
+    --primary: #009EF7;
+    --primary-hover: #0095e8;
+    --primary-light: #F1FAFF;
+
+    --success: #50CD89;
+    --success-light: #E8FFF3;
+
+    --danger: #F1416C;
+    --danger-light: #FFF5F8;
+
+    --warning: #FFC700;
+    --warning-light: #FFF8DD;
+
+    --border-color: #E4E6EF;
+    --card-shadow: 0px 0px 20px 0px rgba(76, 87, 125, 0.02);
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body.admin-page {
+    font-family: 'Roboto', -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    background-color: var(--body-bg);
+    color: var(--text-main);
+    display: flex;
+    min-height: 100vh;
+    overflow-x: hidden;
+}
+
+/* ================= 侧边栏 (Sidebar) ================= */
+.admin-sidebar {
+    width: 265px;
+    background-color: var(--sidebar-bg);
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 100;
+    box-shadow: 0px 0px 28px 0px rgba(82, 63, 105, 0.08);
+}
+
+.sidebar-logo {
+    height: 70px;
+    display: flex;
+    align-items: center;
+    padding: 0 25px;
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #ffffff;
+    text-decoration: none;
+    border-bottom: 1px dashed rgba(255, 255, 255, 0.1);
+}
+
+.sidebar-logo span {
+    color: var(--primary);
+}
+
+.sidebar-menu {
+    padding: 20px 0;
+    flex: 1;
+    overflow-y: auto;
+}
+
+.sidebar-item {
+    display: flex;
+    align-items: center;
+    padding: 12px 25px;
+    margin: 0 15px 5px 15px;
+    border-radius: 6px;
+    text-decoration: none;
+    color: var(--sidebar-text);
+    transition: all 0.3s ease;
+    border: none;
+    background: transparent;
+    width: calc(100% - 30px);
+    text-align: left;
+    cursor: pointer;
+    font-size: 1rem;
+    font-weight: 500;
+}
+
+.sidebar-item:hover {
+    background-color: var(--sidebar-hover);
+    color: var(--primary);
+}
+
+.sidebar-item.active {
+    background-color: var(--sidebar-active-bg);
+    color: var(--sidebar-active-text);
+    box-shadow: 0 4px 9px rgba(0, 158, 247, 0.25);
+}
+
+.sidebar-item-icon {
+    margin-right: 12px;
+    font-size: 1.2rem;
+    display: inline-flex;
+    justify-content: center;
+    width: 20px;
+}
+
+/* ================= 右侧主区域 (Main Wrapper) ================= */
+.admin-wrapper {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    margin-left: 265px;
+    /* 侧边栏宽度 */
+    min-height: 100vh;
+}
+
+/* ================= 顶部导航 (Header) ================= */
+.admin-header {
+    height: 70px;
+    background-color: var(--header-bg);
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    padding: 0 30px;
+    box-shadow: 0px 10px 30px 0px rgba(82, 63, 105, 0.05);
+    position: sticky;
+    top: 0;
+    z-index: 90;
+}
+
+.user-info {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.admin-badge {
+    background-color: var(--danger-light);
+    color: var(--danger);
+    padding: 5px 10px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+
+/* ================= 按钮 (Buttons) ================= */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.6rem 1.25rem;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    font-weight: 500;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-decoration: none;
+}
+
+.btn-primary {
+    color: #fff;
+    background-color: var(--primary);
+    border-color: var(--primary);
+}
+
+.btn-primary:hover {
+    background-color: var(--primary-hover);
+    border-color: var(--primary-hover);
+}
+
+.btn-light {
+    color: var(--text-main);
+    background-color: #F4F6FA;
+    border-color: #F4F6FA;
+}
+
+.btn-light:hover {
+    color: var(--primary);
+    background-color: #E1E9FF;
+}
+
+.btn-danger {
+    color: #fff;
+    background-color: var(--danger);
+}
+
+.btn-danger:hover {
+    background-color: #d9214e;
+}
+
+.btn-outline {
+    color: var(--primary);
+    background-color: transparent;
+    border-color: var(--primary);
+}
+
+.btn-outline:hover {
+    background-color: var(--primary);
+    color: #fff;
+}
+
+.btn-sm {
+    padding: 0.4rem 0.8rem;
+    font-size: 0.85rem;
+}
+
+/* ================= 内容区 (Content) ================= */
+.admin-content {
+    padding: 30px;
+    flex: 1;
+}
+
+.page-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text-main);
+    margin-bottom: 25px;
+    display: flex;
+    align-items: center;
+}
+
+/* ================= 卡片 (Cards) ================= */
+.card {
+    background-color: #ffffff;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    box-shadow: var(--card-shadow);
+    margin-bottom: 30px;
+    overflow: hidden;
+}
+
+.card-header {
+    padding: 20px 25px;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.card-title {
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: var(--text-main);
+    margin: 0;
+}
+
+.card-body {
+    padding: 25px;
+}
+
+/* ================= 数据统计区 (Dashboard) ================= */
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 25px;
+    margin-bottom: 30px;
+}
+
+.stat-widget {
+    background-color: #ffffff;
+    border-radius: 12px;
+    padding: 25px;
+    border: 1px solid var(--border-color);
+    box-shadow: var(--card-shadow);
+    display: flex;
+    align-items: center;
+    transition: transform 0.2s ease;
+}
+
+.stat-widget:hover {
+    transform: translateY(-5px);
+    border-color: var(--primary);
+}
+
+.stat-icon {
+    width: 60px;
+    height: 60px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2rem;
+    margin-right: 20px;
+}
+
+.stat-icon.primary {
+    background-color: var(--primary-light);
+    color: var(--primary);
+}
+
+.stat-icon.success {
+    background-color: var(--success-light);
+    color: var(--success);
+}
+
+.stat-icon.danger {
+    background-color: var(--danger-light);
+    color: var(--danger);
+}
+
+.stat-icon.warning {
+    background-color: var(--warning-light);
+    color: var(--warning);
+}
+
+.stat-info {
+    flex: 1;
+}
+
+.stat-title {
+    font-size: 0.95rem;
+    color: var(--text-muted);
+    font-weight: 500;
+    margin-bottom: 5px;
+}
+
+.stat-value {
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: var(--text-main);
+}
+
+/* ================= 数据表格 (Data Table) ================= */
+.table-responsive {
+    overflow-x: auto;
+}
+
+.table {
+    width: 100%;
+    margin-bottom: 0;
+    color: var(--text-main);
+    border-collapse: collapse;
+}
+
+.table th,
+.table td {
+    padding: 1rem 1.5rem;
+    vertical-align: middle;
+    border-bottom: 1px dashed var(--border-color);
+}
+
+.table th {
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.table tbody tr {
+    transition: background-color 0.2s ease;
+}
+
+.table tbody tr:hover {
+    background-color: #FAFAFA;
+}
+
+.table td {
+    font-size: 0.95rem;
+    font-weight: 500;
+}
+
+/* ================= 标签 (Badges/Tags) ================= */
+.badge {
+    padding: 0.4rem 0.65rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    display: inline-block;
+}
+
+.badge-light-primary {
+    background-color: var(--primary-light);
+    color: var(--primary);
+}
+
+.badge-light-success {
+    background-color: var(--success-light);
+    color: var(--success);
+}
+
+.badge-light-danger {
+    background-color: var(--danger-light);
+    color: var(--danger);
+}
+
+.badge-light-dark {
+    background-color: #F4F6FA;
+    color: var(--text-muted);
+}
+
+/* ================= 搜索与工具栏 ================= */
+.toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    gap: 15px;
+}
+
+.search-input {
+    display: flex;
+    align-items: center;
+    background-color: #F5F8FA;
+    border-radius: 6px;
+    padding: 0.5rem 1rem;
+    width: 300px;
+    border: 1px solid transparent;
+    transition: all 0.2s;
+}
+
+.search-input:focus-within {
+    border-color: var(--primary);
+    background-color: #fff;
+}
+
+.search-input input {
+    border: none;
+    background: transparent;
+    outline: none;
+    width: 100%;
+    padding-left: 10px;
+    font-size: 0.95rem;
+    color: var(--text-main);
+}
+
+/* ================= 表单与模态框 ================= */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.4);
+    z-index: 1050;
+    display: none;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-overlay.active {
+    display: flex;
+}
+
+.modal-dialog {
+    background-color: #fff;
+    border-radius: 12px;
+    width: 100%;
+    max-width: 600px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+    transform: translateY(-20px);
+    animation: modalIn 0.3s forwards;
+}
+
+@keyframes modalIn {
+    to {
+        transform: translateY(0);
+    }
+}
+
+.modal-header {
+    padding: 20px 25px;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-header h3 {
+    margin: 0;
+    font-size: 1.25rem;
+}
+
+.modal-body {
+    padding: 25px;
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+.modal-footer {
+    padding: 20px 25px;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.form-group {
+    margin-bottom: 1rem;
+}
+
+.form-label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    color: var(--text-main);
+    font-size: 0.9rem;
+}
+
+.form-control {
+    display: block;
+    width: 100%;
+    padding: 0.75rem 1rem;
+    font-size: 1rem;
+    font-weight: 400;
+    line-height: 1.5;
+    color: var(--text-main);
+    background-color: #ffffff;
+    background-clip: padding-box;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+}
+
+.form-control:focus {
+    outline: 0;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 0.2rem rgba(0, 158, 247, 0.25);
+}
+
+/* ======= 分页器 ======= */
+.pagination {
+    display: flex;
+    gap: 5px;
+    justify-content: flex-end;
+    margin-top: 20px;
+}
+
+.page-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 32px;
+    height: 32px;
+    padding: 0 5px;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-muted);
+    font-weight: 500;
+    text-decoration: none;
+    border: none;
+    cursor: pointer;
+}
+
+.page-btn:hover:not([disabled]) {
+    background-color: var(--primary-light);
+    color: var(--primary);
+}
+
+.page-btn.active {
+    background-color: var(--primary);
+    color: white;
+}
+
+.page-btn[disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+
+.table th, .table td { text-align: left; }
+.table th:last-child, .table td:last-child { text-align: right; }

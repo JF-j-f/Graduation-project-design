@@ -265,7 +265,7 @@
                             <span>👤 管理员</span>
                             <span class="admin-badge">ADMIN</span>
                             <a href="admin?action=dashboard" class="logout-btn" style="background: #28a745;">返回前台</a>
-                            <a href="${pageContext.request.contextPath}/logout" class="logout-btn">退出登录</a>
+                                    <a href="${pageContext.request.contextPath}/admin?action=dashboard" class="btn btn-sm btn-light">返回仪表盘</a>
                         </div>
                     </div>
                 </header>

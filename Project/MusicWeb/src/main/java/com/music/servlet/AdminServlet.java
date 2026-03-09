@@ -6,7 +6,7 @@ import com.music.dao.UserDAO;
 import com.music.dao.SongDAO;
 import com.music.javabean.User;
 import com.music.javabean.Song;
-import com.music.javabean.Favorite;
+import com.music.javabean.Playlist;
 import com.music.javabean.Appeal;
 import com.music.util.EmailUtil;
 
@@ -44,7 +44,8 @@ public class AdminServlet extends HttpServlet {
         // 检查用户是否登录
         HttpSession session = request.getSession(false);
         if (session == null || session.getAttribute("user") == null) {
-            response.sendRedirect("jsp/index.jsp?message=请先登录&messageType=error");
+            response.sendRedirect(
+                    "jsp/index.jsp?message=" + java.net.URLEncoder.encode("请先登录", "UTF-8") + "&messageType=error");
             return;
         }
 
@@ -53,7 +54,8 @@ public class AdminServlet extends HttpServlet {
 
         // 检查是否为管理员
         if (!adminDAO.isAdmin(currentUser.getUsername())) {
-            response.sendRedirect("jsp/user.jsp?message=权限不足&messageType=error");
+            response.sendRedirect(
+                    "jsp/user.jsp?message=" + java.net.URLEncoder.encode("权限不足", "UTF-8") + "&messageType=error");
             return;
         }
 
@@ -92,9 +94,21 @@ public class AdminServlet extends HttpServlet {
                 case "deleteSong":
                     deleteSong(request, response);
                     return;
-                case "favorites":
-                    showFavorites(request, response);
+                case "editSong":
+                    editSong(request, response);
+                    return;
+                case "playlists":
+                    showPlaylists(request, response);
                     break;
+                case "getPlaylistSongs":
+                    getPlaylistSongs(request, response);
+                    return;
+                case "deletePlaylist":
+                    deletePlaylist(request, response);
+                    return;
+                case "removeSongFromPlaylist":
+                    removeSongFromPlaylist(request, response);
+                    return;
                 case "appeals":
                     showAppeals(request, response);
                     break;
@@ -114,8 +128,8 @@ public class AdminServlet extends HttpServlet {
         } catch (Exception e) {
             System.err.println("管理员后台操作失败: " + e.getMessage());
             e.printStackTrace();
-            request.setAttribute("error", "系统错误，请稍后重试");
-            request.getRequestDispatcher("/admin/admin.jsp").forward(request, response);
+            request.setAttribute("error", "系统错误，请稍后重试: " + e.getMessage());
+            request.getRequestDispatcher("/admin/dashboard.jsp").forward(request, response);
         }
     }
 
@@ -124,6 +138,9 @@ public class AdminServlet extends HttpServlet {
      */
     private void showDashboard(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
+
+        // 每次访问仪表盘时，静默触发一次 30 天过期用户物理清理
+        adminDAO.hardDeleteExpiredUsers(30);
 
         Map<String, Integer> stats = adminDAO.getDatabaseStats();
         request.setAttribute("stats", stats);
@@ -146,32 +163,58 @@ public class AdminServlet extends HttpServlet {
      */
     private void showSongs(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
+        
+        int page = 1;
+        int pageSize = 25;
+        String pageStr = request.getParameter("page");
+        if (pageStr != null && !pageStr.trim().isEmpty()) {
+            try {
+                page = Integer.parseInt(pageStr);
+                if (page < 1) page = 1;
+            } catch (NumberFormatException e) {
+                page = 1;
+            }
+        }
+        
+        String searchQuery = request.getParameter("search");
 
-        List<Song> songs = adminDAO.getAllSongs();
+        int totalSongs = adminDAO.getTotalSongsCount(searchQuery);
+        int totalPages = (int) Math.ceil((double) totalSongs / pageSize);
+        if (totalPages == 0) totalPages = 1;
+        if (page > totalPages) page = totalPages;
+
+        List<Song> songs = adminDAO.getSongsByPage(page, pageSize, searchQuery);
+
         request.setAttribute("songs", songs);
+        request.setAttribute("currentPage", page);
+        request.setAttribute("totalPages", totalPages);
+        request.setAttribute("totalCount", totalSongs);
         request.getRequestDispatcher("/admin/songs.jsp").forward(request, response);
     }
 
     /**
-     * 显示收藏记录
+     * 显示歌单列表
      */
-    private void showFavorites(HttpServletRequest request, HttpServletResponse response)
+    private void showPlaylists(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
 
-        List<Favorite> favorites = adminDAO.getAllFavorites();
-        request.setAttribute("favorites", favorites);
-        request.getRequestDispatcher("/admin/favorites.jsp").forward(request, response);
+        List<Playlist> playlists = adminDAO.getAllPlaylistsWithUser();
+        request.setAttribute("playlists", playlists);
+        request.getRequestDispatcher("/admin/playlists.jsp").forward(request, response);
     }
 
     /**
-     * 显示用户详情
+     * 显示用户详情的独立视图
+     * 
+     * @设计意图 依据KISS原则，严格接收且仅接收 userId 参数以避免歧义。任何空缺请求将被拦截并安全编码重定向。
      */
     private void showUserDetails(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
 
         String userIdStr = request.getParameter("userId");
         if (userIdStr == null || userIdStr.trim().isEmpty()) {
-            response.sendRedirect("admin?action=users&message=用户ID不能为空&messageType=error");
+            response.sendRedirect("admin?action=users&message=" + java.net.URLEncoder.encode("用户ID不能为空", "UTF-8")
+                    + "&messageType=error");
             return;
         }
 
@@ -179,14 +222,22 @@ public class AdminServlet extends HttpServlet {
             int userId = Integer.parseInt(userIdStr);
             User user = adminDAO.getUserById(userId);
             if (user == null) {
-                response.sendRedirect("admin?action=users&message=用户不存在&messageType=error");
+                response.sendRedirect("admin?action=users&message=" + java.net.URLEncoder.encode("用户不存在", "UTF-8")
+                        + "&messageType=error");
                 return;
             }
 
             request.setAttribute("user", user);
+            // 这里为了让深层档案不白屏，传入部分依赖
+            request.setAttribute("playlists", adminDAO.getUserPlaylists(userId));
+            request.setAttribute("playlistSongCount", adminDAO.getUserTotalPlaylistSongCount(userId));
+            request.setAttribute("favoriteCount", adminDAO.getUserFavoriteCount(userId));
+            request.setAttribute("playDuration", adminDAO.getUserPlayDuration(userId));
+
             request.getRequestDispatcher("/admin/userDetails.jsp").forward(request, response);
         } catch (NumberFormatException e) {
-            response.sendRedirect("admin?action=users&message=用户ID格式错误&messageType=error");
+            response.sendRedirect("admin?action=users&message=" + java.net.URLEncoder.encode("用户ID格式错误", "UTF-8")
+                    + "&messageType=error");
         }
     }
 
@@ -195,75 +246,85 @@ public class AdminServlet extends HttpServlet {
      */
     private void freezeUser(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
+        String userIdStr = request.getParameter("userId");
         try {
-            String userIdStr = request.getParameter("userId");
             String frozenUntil = request.getParameter("frozenUntil");
             String reason = request.getParameter("reason");
 
             if (userIdStr == null || frozenUntil == null || reason == null) {
-                response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+                response.sendRedirect("admin?action=users&message=" + java.net.URLEncoder.encode("参数不完整", "UTF-8")
+                        + "&messageType=error");
                 return;
             }
 
             int userId = Integer.parseInt(userIdStr);
             boolean success = adminDAO.freezeUser(userId, frozenUntil, reason);
             if (success) {
-                response.setStatus(HttpServletResponse.SC_OK);
+                response.sendRedirect("admin?action=userDetails&userId=" + userId + "&message="
+                        + java.net.URLEncoder.encode("账号已冻结", "UTF-8") + "&messageType=success");
             } else {
-                response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+                response.sendRedirect("admin?action=userDetails&userId=" + userId + "&message="
+                        + java.net.URLEncoder.encode("冻结操作失败", "UTF-8") + "&messageType=error");
             }
         } catch (Exception e) {
-            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            response.sendRedirect("admin?action=userDetails&userId=" + userIdStr + "&message="
+                    + java.net.URLEncoder.encode("系统内部出现违规调用", "UTF-8") + "&messageType=error");
         }
     }
 
     /**
-     * 解冻用户
+     * 解冻用户（也可做软删实体召回用途）
      */
     private void unfreezeUser(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
+        String userIdStr = request.getParameter("userId");
         try {
-            String userIdStr = request.getParameter("userId");
-
             if (userIdStr == null) {
-                response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+                response.sendRedirect("admin?action=users&message=" + java.net.URLEncoder.encode("缺少UID标记", "UTF-8")
+                        + "&messageType=error");
                 return;
             }
 
             int userId = Integer.parseInt(userIdStr);
             boolean success = adminDAO.unfreezeUser(userId);
             if (success) {
-                response.setStatus(HttpServletResponse.SC_OK);
+                response.sendRedirect("admin?action=userDetails&userId=" + userId + "&message="
+                        + java.net.URLEncoder.encode("账号管控已解除", "UTF-8") + "&messageType=success");
             } else {
-                response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+                response.sendRedirect("admin?action=userDetails&userId=" + userId + "&message="
+                        + java.net.URLEncoder.encode("解冻操作失效", "UTF-8") + "&messageType=error");
             }
         } catch (Exception e) {
-            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            response.sendRedirect("admin?action=userDetails&userId=" + userIdStr + "&message="
+                    + java.net.URLEncoder.encode("系统内部出现违规调用", "UTF-8") + "&messageType=error");
         }
     }
 
     /**
-     * 删除用户
+     * 软删除用户
      */
     private void deleteUser(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
+        String userIdStr = request.getParameter("userId");
         try {
-            String userIdStr = request.getParameter("userId");
-
             if (userIdStr == null) {
-                response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+                response.sendRedirect("admin?action=users&message=" + java.net.URLEncoder.encode("缺少UID标记", "UTF-8")
+                        + "&messageType=error");
                 return;
             }
 
             int userId = Integer.parseInt(userIdStr);
             boolean success = adminDAO.deleteUser(userId);
             if (success) {
-                response.setStatus(HttpServletResponse.SC_OK);
+                response.sendRedirect("admin?action=userDetails&userId=" + userId + "&message="
+                        + java.net.URLEncoder.encode("账号已被移入保护期（30天后面临粉碎清理）", "UTF-8") + "&messageType=success");
             } else {
-                response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+                response.sendRedirect("admin?action=userDetails&userId=" + userId + "&message="
+                        + java.net.URLEncoder.encode("删除操作失败", "UTF-8") + "&messageType=error");
             }
         } catch (Exception e) {
-            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            response.sendRedirect("admin?action=userDetails&userId=" + userIdStr + "&message="
+                    + java.net.URLEncoder.encode("系统内部出现违规调用", "UTF-8") + "&messageType=error");
         }
     }
 
@@ -397,12 +458,14 @@ public class AdminServlet extends HttpServlet {
             song.setAlbum(album);
             song.setDuration(durationStr != null && !durationStr.trim().isEmpty() ? Integer.parseInt(durationStr) : 0);
             song.setGenre(genre);
-            song.setReleaseYear(releaseYearStr != null && !releaseYearStr.trim().isEmpty() ? Integer.parseInt(releaseYearStr) : 0);
+            song.setReleaseYear(
+                    releaseYearStr != null && !releaseYearStr.trim().isEmpty() ? Integer.parseInt(releaseYearStr) : 0);
             song.setFilePath(filePath);
             song.setCoverImage(coverImage);
 
             SongDAO songDAO = new SongDAO();
             if (songDAO.addSong(song)) {
+                com.music.dao.RedisUtil.clearAdminSongsCache();
                 response.setStatus(HttpServletResponse.SC_OK);
             } else {
                 response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
@@ -426,12 +489,121 @@ public class AdminServlet extends HttpServlet {
             int songId = Integer.parseInt(songIdStr);
             SongDAO songDAO = new SongDAO();
             if (songDAO.deleteSong(songId)) {
+                com.music.dao.RedisUtil.clearAdminSongsCache();
                 response.setStatus(HttpServletResponse.SC_OK);
             } else {
                 response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
             }
         } catch (Exception e) {
             System.err.println("删除歌曲失败: " + e.getMessage());
+            e.printStackTrace();
+            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    private void editSong(HttpServletRequest request, HttpServletResponse response)
+            throws ServletException, IOException {
+        try {
+            String idStr = request.getParameter("id");
+            if (idStr == null || idStr.trim().isEmpty()) {
+                response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+                return;
+            }
+
+            Song song = new Song();
+            song.setId(Integer.parseInt(idStr));
+            song.setTitle(request.getParameter("title"));
+            song.setArtist(request.getParameter("artist"));
+            song.setAlbum(request.getParameter("album"));
+
+            String durationStr = request.getParameter("duration");
+            song.setDuration(durationStr != null && !durationStr.isEmpty() ? Integer.parseInt(durationStr) : 0);
+
+            song.setGenre(request.getParameter("genre"));
+
+            String releaseYearStr = request.getParameter("releaseYear");
+            song.setReleaseYear(
+                    releaseYearStr != null && !releaseYearStr.isEmpty() ? Integer.parseInt(releaseYearStr) : 0);
+
+            if (adminDAO.updateSongAdmin(song)) {
+                response.setStatus(HttpServletResponse.SC_OK);
+            } else {
+                response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            }
+        } catch (Exception e) {
+            System.err.println("编辑歌曲失败: " + e.getMessage());
+            e.printStackTrace();
+            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    private void getPlaylistSongs(HttpServletRequest request, HttpServletResponse response)
+            throws ServletException, IOException {
+        try {
+            String playlistIdStr = request.getParameter("playlistId");
+            if (playlistIdStr == null || playlistIdStr.trim().isEmpty()) {
+                response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+                return;
+            }
+
+            int playlistId = Integer.parseInt(playlistIdStr);
+            List<Song> songs = adminDAO.getPlaylistSongsForAdmin(playlistId);
+
+            response.setContentType("application/json;charset=UTF-8");
+            com.google.gson.Gson gson = new com.google.gson.Gson();
+            response.getWriter().write(gson.toJson(songs));
+        } catch (Exception e) {
+            System.err.println("获取歌单歌曲失败: " + e.getMessage());
+            e.printStackTrace();
+            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    private void deletePlaylist(HttpServletRequest request, HttpServletResponse response)
+            throws ServletException, IOException {
+        try {
+            String playlistIdStr = request.getParameter("playlistId");
+            if (playlistIdStr == null || playlistIdStr.trim().isEmpty()) {
+                response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+                return;
+            }
+
+            int playlistId = Integer.parseInt(playlistIdStr);
+            if (adminDAO.deletePlaylistAdmin(playlistId)) {
+                response.setStatus(HttpServletResponse.SC_OK);
+            } else {
+                // Return 403 Forbidden if it was a default playlist they tried to delete, or
+                // 500 if error
+                response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+            }
+        } catch (Exception e) {
+            System.err.println("删除歌单失败: " + e.getMessage());
+            e.printStackTrace();
+            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    private void removeSongFromPlaylist(HttpServletRequest request, HttpServletResponse response)
+            throws ServletException, IOException {
+        try {
+            String playlistIdStr = request.getParameter("playlistId");
+            String songIdStr = request.getParameter("songId");
+            if (playlistIdStr == null || songIdStr == null) {
+                response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+                return;
+            }
+
+            int playlistId = Integer.parseInt(playlistIdStr);
+            int songId = Integer.parseInt(songIdStr);
+
+            com.music.dao.PlaylistDAO playlistDAO = new com.music.dao.PlaylistDAO();
+            if (playlistDAO.removeSongFromPlaylist(playlistId, songId)) {
+                response.setStatus(HttpServletResponse.SC_OK);
+            } else {
+                response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            }
+        } catch (Exception e) {
+            System.err.println("从歌单移除歌曲失败: " + e.getMessage());
             e.printStackTrace();
             response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
         }
@@ -458,10 +630,13 @@ public class AdminServlet extends HttpServlet {
                 response.setContentType("application/json");
                 response.setCharacterEncoding("UTF-8");
                 String json = String.format(
-                    "{\"reason\": \"%s\", \"adminReply\": \"%s\"}",
-                    appeal.getReason() != null ? appeal.getReason().replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "") : "",
-                    appeal.getAdminReply() != null ? appeal.getAdminReply().replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "") : ""
-                );
+                        "{\"reason\": \"%s\", \"adminReply\": \"%s\"}",
+                        appeal.getReason() != null
+                                ? appeal.getReason().replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "")
+                                : "",
+                        appeal.getAdminReply() != null
+                                ? appeal.getAdminReply().replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "")
+                                : "");
                 response.getWriter().write(json);
             } else {
                 response.setStatus(HttpServletResponse.SC_NOT_FOUND);
