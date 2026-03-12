@@ -337,9 +337,51 @@ public class PlayHistoryDAO {
         }
     }
 
+    // ============================================
+    // v4.0 新增：更新实际收听时长（前端切歌/歌曲结束时上报）
+    // ============================================
+
+    /**
+     * 更新用户最近一条播放历史记录的收听时长。
+     * 使用 GREATEST 确保不会用更小的值覆盖已有数据（防止重复上报时缩小）。
+     *
+     * @param userId       用户ID
+     * @param songId       歌曲ID（本地 DB ID）
+     * @param playDuration 实际收听秒数
+     * @return 是否更新成功
+     */
+    public boolean updatePlayDuration(int userId, int songId, int playDuration) {
+        Connection conn = null;
+        PreparedStatement pstmt = null;
+
+        try {
+            conn = DBUtil.getConnection();
+            // 只更新该用户最近一条匹配记录，GREATEST 保证单调递增
+            String sql = "UPDATE play_history SET play_duration = GREATEST(play_duration, ?) " +
+                         "WHERE user_id = ? AND song_id = ? " +
+                         "ORDER BY id DESC LIMIT 1";
+            pstmt = conn.prepareStatement(sql);
+            pstmt.setInt(1, playDuration);
+            pstmt.setInt(2, userId);
+            pstmt.setInt(3, songId);
+
+            int result = pstmt.executeUpdate();
+            System.out.println("🕒 [DEBUG] 更新收听时长 - 用户ID: " + userId +
+                    ", 歌曲ID: " + songId + ", 时长: " + playDuration + "s, 结果: " + (result > 0));
+            return result > 0;
+        } catch (SQLException e) {
+            System.err.println("❌ [ERROR] 更新收听时长失败 - 用户ID: " + userId + ", 歌曲ID: " + songId);
+            System.err.println("错误信息: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        } finally {
+            DBUtil.close(conn, pstmt, null);
+        }
+    }
+
     /**
      * 格式化收听时长为友好显示
-     * 
+     *
      * @param totalSeconds 总秒数
      * @return 格式化字符串，如 "2.5h" 或 "45m"
      */
