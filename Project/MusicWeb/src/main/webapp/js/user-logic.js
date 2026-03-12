@@ -435,3 +435,44 @@ var tasteModal = (function () {
     // 暴露公共接口
     return { open: open, close: close, addArtist: addArtist, removeArtist: removeArtist };
 })();
+
+/* ============================================================
+   v4.0: 一键播放每日推荐
+   将推荐列表全部歌曲加入队列并从第一首开始播放
+   ============================================================ */
+document.addEventListener('DOMContentLoaded', function () {
+    var playAllBtn = document.getElementById('play-all-recommend-btn');
+    if (!playAllBtn) return;
+
+    playAllBtn.addEventListener('click', function () {
+        if (typeof player === 'undefined') {
+            console.error('[一键播放] 播放器未初始化');
+            return;
+        }
+        var playBtns = document.querySelectorAll('#recommend-list .play-btn');
+        if (!playBtns.length) {
+            console.warn('[一键播放] 推荐列表为空');
+            return;
+        }
+
+        // 直接重置队列（不弹 confirm）
+        player.playQueue = [];
+        player.currentIndex = -1;
+
+        // 收集全部推荐歌曲并加入队列
+        playBtns.forEach(function (btn) {
+            var song = {
+                id:       parseInt(btn.dataset.songId),
+                title:    btn.dataset.songTitle   || '未知歌曲',
+                artist:   btn.dataset.songArtist  || '未知歌手',
+                album:    btn.dataset.songAlbum   || '',
+                duration: parseInt(btn.dataset.songDuration) || 0
+            };
+            player.playQueue.push(song);
+        });
+
+        // 从第一首开始播放
+        player.playQueueItem(0);
+        player.updateQueueUI && player.updateQueueUI();
+    });
+});

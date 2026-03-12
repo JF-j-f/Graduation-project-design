@@ -24,7 +24,7 @@ import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
-import com.music.dao.DBUtil;
+import com.music.javabean.DBUtil;
 
 /**
  * 用户偏好接口 (v4.0)

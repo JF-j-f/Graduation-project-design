@@ -2,6 +2,32 @@
 
 本文档记录了 MusicWeb 项目的所有更新历史。
 
+## v4.2.0 (2026-03-12) - 个性化推荐反馈链路修复与口味反馈
+
+### 🚀 新增功能
+
+- **收听时长实时上报**：`player.js` 在每次切歌或自然播完时，通过新增的 `_reportPlayDuration()` 方法上报实际收听秒数至 `POST /api/updatePlayDuration`（`UpdatePlayDurationServlet`）；`PlayHistoryDAO` 新增 `updatePlayDuration()` 方法，采用 `GREATEST` 策略更新 `play_history.play_duration`，修复了该字段长期为 0 的问题。
+
+- **用户口味反馈接口**：新增 `UserPreferenceServlet`（`GET/POST /api/userPreference`），支持读取和写入用户偏好；新增数据库表 `user_preference_feedback`，采用 `ON DUPLICATE KEY UPDATE` 策略归档每日显式满意度（very_satisfied / satisfied / neutral / dissatisfied）作为训练信号。
+
+- **每日推荐区域新增交互按钮**：`user.jsp` 添加"▶ 一键播放"按钮（将20首推荐歌曲全部入队顺序播放）与"反馈"按钮（弹出偏好设置 Modal，支持满意度打分、流派多选、艺术家标签输入）。
+
+### 🐛 Bug 修复
+
+- **`UserPreferenceServlet` 编译失败**：修正错误的包引用 `com.music.dao.DBUtil` → `com.music.javabean.DBUtil`，消除 `找不到符号` 编译错误。
+
+- **每日推荐标题按钮垂直偏移**：`section-title` 类的 `margin-top: 2rem` 撑高 flex 容器导致按钮视觉偏上；将 h2 内联样式由 `margin-bottom: 0` 改为 `margin: 0` 彻底清除外边距影响。
+
+- **Unblock 解灰服务在工作树下模块缺失**：工作树 checkout 时 unblock 目录内容未随 submodule 引用复制，修复后从主仓库补全文件，`src/app.js` 路径恢复正常。
+
+### ⚡ 性能优化
+
+- **一键启动脚本 `run_services.bat` 重写**：废弃固定 `timeout` 盲等机制，改为逐服务 `netstat` 端口就绪检测（Redis 15s / QQ API 30s / Unblock 15s / Node.js 20s）；任一服务超时未进入 `LISTENING` 状态则立即终止后续启动并提示运行 `stop_services.bat` 清理残留进程。
+
+- **敏感凭证移出版本库**：将运行时动态生成的 `qq_credential_guest.json` 从 git 追踪中移除，避免 access_token 等敏感字段随提交历史扩散。
+
+---
+
 ## v4.1.2 (2026-03-09) - 管理员后台深度功能修复与 UI 优化
 
 ### 🐛 Bug 修复

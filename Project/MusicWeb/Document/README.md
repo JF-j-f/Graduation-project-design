@@ -88,7 +88,9 @@ MusicWeb/
 │       │   │   ├── SearchServlet.java            # 混合搜索接口
 │       │   │   ├── TestDBServlet.java            # 数据库连接测试接口
 │       │   │   ├── UniversalPlayHistoryServlet.java # 通用播放历史接口
+│       │   │   ├── UpdatePlayDurationServlet.java # 播放时长上报接口
 │       │   │   ├── UpdateProfileServlet.java     # 用户资料更新接口
+│       │   │   ├── UserPreferenceServlet.java    # 用户口味偏好接口
 │       │   │   ├── UserLoginServlet.java         # 用户登录接口
 │       │   │   ├── UserPlaylistsServlet.java     # 用户歌单列表接口
 │       │   │   └── UserRegisterServlet.java      # 用户注册接口
@@ -275,7 +277,19 @@ MusicWeb/
 - `created_at` (TIMESTAMP): 创建时间
 - `updated_at` (TIMESTAMP): 更新时间
 
-#### 8. 推荐表 (`recommendations`)
+#### 8. 用户口味反馈表 (`user_preference_feedback`)
+
+归档用户每日对推荐结果的显式满意度，作为次日推荐调分的训练信号。同一用户同一天多次提交则覆盖，不同天新增一行。
+
+- `id` (INT): 主键，自增
+- `user_id` (INT): 用户ID
+- `feedback_date` (DATE): 反馈日期，与 user_id 构成唯一约束
+- `satisfaction` (ENUM): 满意度（`very_satisfied`/`satisfied`/`neutral`/`dissatisfied`）
+- `genres_added` (VARCHAR): 本次新增流派偏好（分号分隔）
+- `artists_added` (VARCHAR): 本次新增艺术家偏好（分号分隔）
+- `created_at` (TIMESTAMP): 记录时间
+
+#### 9. 推荐表 (`recommendations`)
 
 基于算法生成的个性化推荐。
 
@@ -447,7 +461,19 @@ MusicWeb/
 - MySQL 8.4
 - Apache Tomcat 10.x
 
-### 部署步骤
+### 一键启动（推荐）
+
+运行 `scripts/run_services.bat` 可按顺序启动全部5项服务，每项服务均通过端口就绪检测后才启动下一项，任一服务超时则自动终止并提示：
+
+1. **Redis**（端口 6379，超时 15s）
+2. **Python QQ Music API**（端口 8000，超时 30s）
+3. **Unblock 解灰服务**（端口 8081，超时 15s）
+4. **Node.js 音乐 API**（端口 3000，超时 20s）
+5. **Java Web 应用 / Tomcat**（端口 8082，由 Maven 自身控制）
+
+停止所有服务：运行 `scripts/stop_services.bat`
+
+### 手动部署步骤
 
 1. 创建数据库 `musicweb`
 2. 执行 SQL 脚本创建表结构
@@ -580,8 +606,8 @@ MusicWeb/
 
 **初创时间**: 2025年11月
 
-**最新版本**: v4.1.2
+**最新版本**: v4.2.0
 
 ---
 
-*本文档最后更新时间：2026年3月9日 17:35*
+*本文档最后更新时间：2026年3月12日*
