@@ -97,15 +97,20 @@ def load_resources():
     return index, map_data, song_encoder, mysql2faiss, faiss2mysql
 
 def update_feedback(db):
-    """回收昨日推荐反馈，计算反馈得分和冷却名单"""
-    print("\n🔄 [Step 1] 回收昨日推荐反馈...")
+    """回收近期推荐反馈，计算反馈得分和冷却名单
+    开发模式：回收窗口为过去 7 天，便于立即验证效果。
+    生产环境建议改回 yesterday = today - 1 day。
+    """
+    print("\n🔄 [Step 1] 回收近期推荐反馈 (最近7天)...")
     try:
         with db.cursor() as cur:
-            yesterday = (datetime.date.today() - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+            today     = datetime.date.today().strftime("%Y-%m-%d")
+            lookback  = (datetime.date.today() - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
 
             # ===================================================================
             # 步骤A: 从 play_history 同步 was_played 和 play_completion
             # 利用 play_duration / songs.duration 计算真实完播率
+            # 覆盖 lookback ~ today 所有记录（开发模式）
             # ===================================================================
             cur.execute("""
                 UPDATE recommendation_feedback rf
@@ -114,14 +119,14 @@ def update_feedback(db):
                            LEAST(1.0, MAX(ph.play_duration) / s.duration) AS completion
                     FROM play_history ph
                     JOIN songs s ON s.id = ph.song_id
-                    WHERE DATE(ph.play_time) = %s
+                    WHERE DATE(ph.play_time) BETWEEN %s AND %s
                       AND ph.play_duration > 0
                       AND s.duration > 0
                     GROUP BY ph.user_id, ph.song_id
                 ) AS played ON rf.user_id = played.user_id AND rf.song_id = played.song_id
                 SET rf.was_played = 1, rf.play_completion = played.completion
-                WHERE rf.recommend_date = %s
-            """, (yesterday, yesterday))
+                WHERE rf.recommend_date BETWEEN %s AND %s
+            """, (lookback, today, lookback, today))
             print(f"   ✅ 步骤A - 同步播放完播率: {cur.rowcount} 条")
 
             # ===================================================================
@@ -133,32 +138,31 @@ def update_feedback(db):
                 JOIN user_playlists up ON up.id = ps.playlist_id
                     AND up.user_id = rf.user_id AND up.is_default = 1
                 SET rf.was_favorited = 1
-                WHERE rf.recommend_date = %s
-            """, (yesterday,))
+                WHERE rf.recommend_date BETWEEN %s AND %s
+            """, (lookback, today))
             print(f"   ✅ 步骤B - 同步收藏状态: {cur.rowcount} 条")
 
             # ===================================================================
             # 步骤C: 读取已同步的反馈，计算行为评分
             # ===================================================================
-            # 获取昨日所有的反馈记录
             cur.execute("""
                 SELECT id, user_id, was_played, play_completion, was_favorited, consecutive_ignore_days
                 FROM recommendation_feedback
-                WHERE recommend_date = %s
-            """, (yesterday,))
+                WHERE recommend_date BETWEEN %s AND %s
+            """, (lookback, today))
             feedbacks = cur.fetchall()
 
             if not feedbacks:
-                print("   ℹ️ 昨日没有推荐记录，跳过反馈回收。")
+                print("   ℹ️ 近期没有推荐记录，跳过反馈回收。")
                 return
 
-            # 查询昨日活跃用户
+            # 查询近期活跃用户
             cur.execute("""
                 SELECT DISTINCT user_id FROM play_history
-                WHERE DATE(play_time) = %s
-            """, (yesterday,))
+                WHERE DATE(play_time) BETWEEN %s AND %s
+            """, (lookback, today))
             active_users = set(row['user_id'] for row in cur.fetchall())
-            print(f"   ✅ 步骤C - 昨日活跃用户数: {len(active_users)}")
+            print(f"   ✅ 步骤C - 近期活跃用户数: {len(active_users)}")
 
             update_data = []
             for fb in feedbacks:
@@ -228,10 +232,10 @@ def update_feedback(db):
                 'dissatisfied':   -2.0
             }
             cur.execute("""
-                SELECT user_id, satisfaction
+                SELECT user_id, satisfaction, feedback_date
                 FROM user_preference_feedback
-                WHERE feedback_date = %s
-            """, (yesterday,))
+                WHERE feedback_date BETWEEN %s AND %s
+            """, (lookback, today))
             explicit_feedbacks = cur.fetchall()
             if explicit_feedbacks:
                 satisfaction_updates = 0
@@ -242,11 +246,11 @@ def update_feedback(db):
                             UPDATE recommendation_feedback
                             SET feedback_score = feedback_score + %s
                             WHERE user_id = %s AND recommend_date = %s
-                        """, (delta, row['user_id'], yesterday))
+                        """, (delta, row['user_id'], row['feedback_date']))
                         satisfaction_updates += cur.rowcount
                 print(f"   ✅ 步骤D - 应用显式满意度评分: 影响 {satisfaction_updates} 条推荐记录")
             else:
-                print(f"   ℹ️ 步骤D - 昨日无显式满意度反馈")
+                print(f"   ℹ️ 步骤D - 近期无显式满意度反馈")
 
             db.commit()
             print(f"   ✅ 反馈回收完成。")

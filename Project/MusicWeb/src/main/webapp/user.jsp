@@ -333,13 +333,14 @@
                                                                             <section id="discover"
                                                                                 style="margin-top: 3rem;">
                                                                                 <div
-                                                                                    style="display: flex; align-items: flex-end; gap: 1rem; margin-bottom: 1rem;">
+                                                                                    style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem;">
                                                                                     <h2 class="section-title"
                                                                                         style="margin-bottom: 0;">每日推荐
                                                                                     </h2>
+                                                                                    <!-- 刷新按钮 -->
                                                                                     <button id="refresh-recommend-btn"
                                                                                         title="换一批"
-                                                                                        style="background: rgba(255, 255, 255, 0.15); color: white; border: none; border-radius: 50%; width: 32px; height: 32px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.3s ease; backdrop-filter: blur(4px); margin-top: 4px;"
+                                                                                        style="background: rgba(255, 255, 255, 0.15); color: white; border: none; border-radius: 50%; width: 32px; height: 32px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.3s ease; backdrop-filter: blur(4px); flex-shrink: 0;"
                                                                                         onmouseover="this.style.background='rgba(255, 255, 255, 0.25)'; this.style.transform='rotate(90deg)';"
                                                                                         onmouseout="this.style.background='rgba(255, 255, 255, 0.15)'; this.style.transform='rotate(0deg)';">
                                                                                         <svg viewBox="0 0 24 24"
@@ -356,13 +357,21 @@
                                                                                             </path>
                                                                                         </svg>
                                                                                     </button>
-                                                                                    <!-- v4.0: 调整口味按钮 -->
+                                                                                    <!-- v4.0: 一键播放按钮 -->
+                                                                                    <button id="play-all-recommend-btn"
+                                                                                        title="将每日推荐全部加入队列并播放"
+                                                                                        style="background: rgba(255, 255, 255, 0.15); color: rgba(255,255,255,0.9); border: none; border-radius: 16px; padding: 4px 12px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 5px; transition: all 0.3s ease; backdrop-filter: blur(4px); flex-shrink: 0;"
+                                                                                        onmouseover="this.style.background='rgba(255,255,255,0.28)'"
+                                                                                        onmouseout="this.style.background='rgba(255,255,255,0.15)'">
+                                                                                        ▶ 一键播放
+                                                                                    </button>
+                                                                                    <!-- v4.0: 反馈按钮（右侧对齐） -->
                                                                                     <button id="taste-feedback-btn"
-                                                                                        title="调整口味"
-                                                                                        style="background: rgba(255, 255, 255, 0.12); color: rgba(255,255,255,0.85); border: 1px solid rgba(255,255,255,0.2); border-radius: 16px; padding: 4px 12px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 5px; transition: all 0.3s ease; backdrop-filter: blur(4px); margin-top: 4px;"
+                                                                                        title="调整口味偏好"
+                                                                                        style="background: rgba(255, 255, 255, 0.12); color: rgba(255,255,255,0.85); border: 1px solid rgba(255,255,255,0.2); border-radius: 16px; padding: 4px 12px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 5px; transition: all 0.3s ease; backdrop-filter: blur(4px); margin-left: auto; flex-shrink: 0;"
                                                                                         onmouseover="this.style.background='rgba(255,255,255,0.22)'"
                                                                                         onmouseout="this.style.background='rgba(255,255,255,0.12)'">
-                                                                                        🎛 调整口味
+                                                                                        🎛 反馈
                                                                                     </button>
                                                                                 </div>
 
