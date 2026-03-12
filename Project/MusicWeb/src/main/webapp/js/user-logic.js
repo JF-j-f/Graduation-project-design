@@ -249,3 +249,189 @@ window.hideCreatePlaylistModal = function () {
     document.getElementById('createPlaylistModal').style.display = 'none';
     document.getElementById('createPlaylistForm').reset();
 };
+
+/* ============================================================
+   v4.0: 调整口味 Modal 逻辑
+   ============================================================ */
+var tasteModal = (function () {
+    var overlay         = null;
+    var selectedSati    = null;   // 当前选中满意度
+    var selectedGenres  = new Set();
+    var artistList      = [];     // 当前艺术家列表
+
+    // ── 初始化 ──────────────────────────────────────────────
+    function init() {
+        overlay = document.getElementById('taste-modal-overlay');
+        if (!overlay) return;
+
+        // 绑定打开按钮
+        var btn = document.getElementById('taste-feedback-btn');
+        if (btn) btn.addEventListener('click', open);
+
+        // 满意度按钮
+        document.querySelectorAll('.sati-btn').forEach(function (b) {
+            b.addEventListener('click', function () {
+                selectedSati = this.dataset.val;
+                document.querySelectorAll('.sati-btn').forEach(function (x) {
+                    x.style.background = 'transparent';
+                    x.style.color = 'rgba(255,255,255,0.8)';
+                    x.style.borderColor = 'rgba(255,255,255,0.2)';
+                });
+                this.style.background = 'rgba(102,126,234,0.5)';
+                this.style.color = '#fff';
+                this.style.borderColor = 'rgba(102,126,234,0.8)';
+            });
+        });
+
+        // 流派 Tag 按钮
+        document.querySelectorAll('.genre-tag').forEach(function (t) {
+            t.addEventListener('click', function () {
+                var genre = this.dataset.genre;
+                if (selectedGenres.has(genre)) {
+                    selectedGenres.delete(genre);
+                    this.style.background = 'transparent';
+                    this.style.color = 'rgba(255,255,255,0.75)';
+                    this.style.borderColor = 'rgba(255,255,255,0.18)';
+                } else {
+                    selectedGenres.add(genre);
+                    this.style.background = 'rgba(102,126,234,0.45)';
+                    this.style.color = '#fff';
+                    this.style.borderColor = 'rgba(102,126,234,0.7)';
+                }
+            });
+        });
+
+        // 提交按钮
+        var submitBtn = document.getElementById('taste-submit-btn');
+        if (submitBtn) submitBtn.addEventListener('click', submit);
+
+        // 点击遮罩关闭
+        overlay.addEventListener('click', function (e) {
+            if (e.target === overlay) close();
+        });
+    }
+
+    // ── 打开 Modal，并从后端加载已有偏好 ─────────────────────
+    function open() {
+        if (!overlay) return;
+        overlay.style.display = 'flex';
+        // 重置状态
+        selectedSati = null;
+        selectedGenres.clear();
+        artistList = [];
+        document.querySelectorAll('.sati-btn').forEach(function (b) {
+            b.style.background = 'transparent'; b.style.color = 'rgba(255,255,255,0.8)';
+            b.style.borderColor = 'rgba(255,255,255,0.2)';
+        });
+        document.querySelectorAll('.genre-tag').forEach(function (t) {
+            t.style.background = 'transparent'; t.style.color = 'rgba(255,255,255,0.75)';
+            t.style.borderColor = 'rgba(255,255,255,0.18)';
+        });
+        renderArtistChips();
+
+        // 加载已有偏好并预填
+        fetch('api/userPreference').then(function (r) { return r.json(); }).then(function (data) {
+            if (!data.success) return;
+            // 预选流派
+            if (data.preferredGenres) {
+                data.preferredGenres.split(';').forEach(function (g) {
+                    var g2 = g.trim();
+                    var tag = document.querySelector('.genre-tag[data-genre="' + g2 + '"]');
+                    if (tag) {
+                        selectedGenres.add(g2);
+                        tag.style.background = 'rgba(102,126,234,0.45)';
+                        tag.style.color = '#fff';
+                        tag.style.borderColor = 'rgba(102,126,234,0.7)';
+                    }
+                });
+            }
+            // 预填艺术家
+            if (data.preferredArtists) {
+                data.preferredArtists.split(';').forEach(function (a) {
+                    var a2 = a.trim(); if (a2 && !artistList.includes(a2)) artistList.push(a2);
+                });
+                renderArtistChips();
+            }
+        }).catch(function () {});
+    }
+
+    function close() {
+        if (overlay) overlay.style.display = 'none';
+    }
+
+    // ── 艺术家 Chip ───────────────────────────────────────────
+    function addArtist() {
+        var input = document.getElementById('artist-input');
+        var val = input.value.trim();
+        if (val && !artistList.includes(val)) { artistList.push(val); renderArtistChips(); }
+        input.value = '';
+    }
+
+    function renderArtistChips() {
+        var container = document.getElementById('artist-chips');
+        if (!container) return;
+        container.innerHTML = artistList.map(function (a, i) {
+            return '<span style="display:inline-flex;align-items:center;gap:5px;background:rgba(118,75,162,0.4);'
+                + 'border:1px solid rgba(118,75,162,0.6);border-radius:14px;padding:4px 10px;font-size:12px;color:#fff;">'
+                + escHtml(a)
+                + '<span onclick="tasteModal.removeArtist(' + i + ')" style="cursor:pointer;opacity:0.7;font-size:14px;line-height:1;">&times;</span>'
+                + '</span>';
+        }).join('');
+    }
+
+    function removeArtist(index) {
+        artistList.splice(index, 1);
+        renderArtistChips();
+    }
+
+    // ── 提交 ─────────────────────────────────────────────────
+    function submit() {
+        if (!selectedSati) {
+            showToast('请先选择满意度 😊', '#e74c3c');
+            return;
+        }
+        var payload = {
+            satisfaction: selectedSati,
+            genres:  Array.from(selectedGenres),
+            artists: artistList.slice()
+        };
+        document.getElementById('taste-submit-btn').disabled = true;
+        fetch('api/userPreference', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        }).then(function (r) { return r.json(); })
+          .then(function (data) {
+              document.getElementById('taste-submit-btn').disabled = false;
+              if (data.success) {
+                  close();
+                  showToast('✅ 偏好已更新，明日推荐将更贴合您的口味');
+              } else {
+                  showToast('❌ 保存失败：' + (data.message || '未知错误'), '#e74c3c');
+              }
+          }).catch(function () {
+              document.getElementById('taste-submit-btn').disabled = false;
+              showToast('❌ 网络错误，请稍后重试', '#e74c3c');
+          });
+    }
+
+    // ── Toast 通知 ────────────────────────────────────────────
+    function showToast(msg, color) {
+        color = color || 'rgba(40,40,60,0.95)';
+        var el = document.createElement('div');
+        el.textContent = msg;
+        el.style.cssText = 'position:fixed;top:24px;right:24px;background:' + color
+            + ';color:#fff;padding:12px 20px;border-radius:10px;z-index:99999;font-size:14px;'
+            + 'box-shadow:0 4px 20px rgba(0,0,0,0.4);transition:opacity 0.3s;';
+        document.body.appendChild(el);
+        setTimeout(function () { el.style.opacity = '0'; setTimeout(function () { el.remove(); }, 300); }, 3000);
+    }
+
+    function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    // 页面加载完成后初始化
+    document.addEventListener('DOMContentLoaded', init);
+
+    // 暴露公共接口
+    return { open: open, close: close, addArtist: addArtist, removeArtist: removeArtist };
+})();

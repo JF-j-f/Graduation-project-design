@@ -356,6 +356,14 @@
                                                                                             </path>
                                                                                         </svg>
                                                                                     </button>
+                                                                                    <!-- v4.0: 调整口味按钮 -->
+                                                                                    <button id="taste-feedback-btn"
+                                                                                        title="调整口味"
+                                                                                        style="background: rgba(255, 255, 255, 0.12); color: rgba(255,255,255,0.85); border: 1px solid rgba(255,255,255,0.2); border-radius: 16px; padding: 4px 12px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 5px; transition: all 0.3s ease; backdrop-filter: blur(4px); margin-top: 4px;"
+                                                                                        onmouseover="this.style.background='rgba(255,255,255,0.22)'"
+                                                                                        onmouseout="this.style.background='rgba(255,255,255,0.12)'">
+                                                                                        🎛 调整口味
+                                                                                    </button>
                                                                                 </div>
 
                                                                                 <div class="song-list"
@@ -651,6 +659,53 @@
                                                                                 <div class="queue-empty">
                                                                                     播放队列为空<br />点击歌曲添加到队列</div>
                                                                             </div>
+                                                                        </div>
+
+                                                                        <!-- v4.0: 调整口味 Modal -->
+                                                                        <div id="taste-modal-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.65); backdrop-filter:blur(6px); z-index:9000; justify-content:center; align-items:center;">
+                                                                          <div id="taste-modal" style="background:rgba(28,28,38,0.97); border:1px solid rgba(255,255,255,0.12); border-radius:20px; padding:32px 36px; width:520px; max-width:92vw; max-height:85vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,0.6); color:#fff;">
+                                                                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:24px;">
+                                                                              <h3 style="margin:0; font-size:18px; font-weight:600;">🎛 调整口味偏好</h3>
+                                                                              <button onclick="tasteModal.close()" style="background:none; border:none; color:rgba(255,255,255,0.5); font-size:22px; cursor:pointer; line-height:1; padding:0;">&times;</button>
+                                                                            </div>
+
+                                                                            <!-- 满意度 -->
+                                                                            <div style="margin-bottom:22px;">
+                                                                              <div style="font-size:13px; color:rgba(255,255,255,0.55); margin-bottom:10px; letter-spacing:0.5px;">今日推荐满意度</div>
+                                                                              <div id="satisfaction-group" style="display:flex; gap:8px; flex-wrap:wrap;">
+                                                                                <button class="sati-btn" data-val="very_satisfied" style="padding:7px 16px; border-radius:20px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:rgba(255,255,255,0.8); cursor:pointer; font-size:13px; transition:all 0.2s;">😍 十分满意</button>
+                                                                                <button class="sati-btn" data-val="satisfied"      style="padding:7px 16px; border-radius:20px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:rgba(255,255,255,0.8); cursor:pointer; font-size:13px; transition:all 0.2s;">😊 满意</button>
+                                                                                <button class="sati-btn" data-val="neutral"        style="padding:7px 16px; border-radius:20px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:rgba(255,255,255,0.8); cursor:pointer; font-size:13px; transition:all 0.2s;">😐 一般</button>
+                                                                                <button class="sati-btn" data-val="dissatisfied"   style="padding:7px 16px; border-radius:20px; border:1px solid rgba(255,255,255,0.2); background:transparent; color:rgba(255,255,255,0.8); cursor:pointer; font-size:13px; transition:all 0.2s;">😞 不满意</button>
+                                                                              </div>
+                                                                            </div>
+
+                                                                            <!-- 流派偏好 -->
+                                                                            <div style="margin-bottom:22px;">
+                                                                              <div style="font-size:13px; color:rgba(255,255,255,0.55); margin-bottom:10px; letter-spacing:0.5px;">流派偏好 <span style="font-size:11px;color:rgba(255,255,255,0.35);">（可多选）</span></div>
+                                                                              <div id="genre-tags" style="display:flex; gap:8px; flex-wrap:wrap;">
+                                                                                <% String[] genreOptions = {"流行","华语","英语","日语","韩语","摇滚","电子","古典","R&B","嘻哈","民谣","轻音乐"}; for(String g : genreOptions) { %>
+                                                                                  <button class="genre-tag" data-genre="<%= g %>" style="padding:5px 14px; border-radius:16px; border:1px solid rgba(255,255,255,0.18); background:transparent; color:rgba(255,255,255,0.75); cursor:pointer; font-size:12px; transition:all 0.2s;"><%= g %></button>
+                                                                                <% } %>
+                                                                              </div>
+                                                                            </div>
+
+                                                                            <!-- 艺术家偏好 -->
+                                                                            <div style="margin-bottom:28px;">
+                                                                              <div style="font-size:13px; color:rgba(255,255,255,0.55); margin-bottom:10px; letter-spacing:0.5px;">艺术家偏好 <span style="font-size:11px;color:rgba(255,255,255,0.35);">（回车添加）</span></div>
+                                                                              <div id="artist-chips" style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px;"></div>
+                                                                              <input id="artist-input" type="text" placeholder="输入艺术家名称，回车添加…"
+                                                                                style="width:100%; box-sizing:border-box; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.15); border-radius:10px; padding:9px 14px; color:#fff; font-size:13px; outline:none;"
+                                                                                onkeydown="if(event.key==='Enter'){tasteModal.addArtist();event.preventDefault();}">
+                                                                            </div>
+
+                                                                            <!-- 提交按钮 -->
+                                                                            <button id="taste-submit-btn"
+                                                                              style="width:100%; padding:12px; border-radius:12px; border:none; background:linear-gradient(135deg,#667eea,#764ba2); color:#fff; font-size:15px; font-weight:600; cursor:pointer; transition:opacity 0.2s;"
+                                                                              onmouseover="this.style.opacity='0.88'" onmouseout="this.style.opacity='1'">
+                                                                              保存偏好
+                                                                            </button>
+                                                                          </div>
                                                                         </div>
 
                                                                         <script

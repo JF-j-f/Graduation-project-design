@@ -219,6 +219,23 @@ CREATE TABLE `users` (
   UNIQUE KEY `username` (`username`)
 ) ENGINE=InnoDB AUTO_INCREMENT=10005 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户信息表';
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- v4.0: 用户对每日推荐的显式满意度反馈记录（可作训练数据）
+--
+CREATE TABLE IF NOT EXISTS `user_preference_feedback` (
+  `id`           INT AUTO_INCREMENT PRIMARY KEY,
+  `user_id`      INT NOT NULL,
+  `feedback_date` DATE NOT NULL,
+  `satisfaction` ENUM('very_satisfied','satisfied','neutral','dissatisfied') NOT NULL,
+  `genres_added`  VARCHAR(200) DEFAULT NULL COMMENT '本次新增流派偏好（分号分隔）',
+  `artists_added` VARCHAR(200) DEFAULT NULL COMMENT '本次新增艺术家偏好（分号分隔）',
+  `created_at`   TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY `uk_user_date` (`user_id`, `feedback_date`),
+  FOREIGN KEY (`user_id`) REFERENCES `users`(`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='用户对每日推荐的显式满意度反馈记录（可作训练数据）';
+
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;

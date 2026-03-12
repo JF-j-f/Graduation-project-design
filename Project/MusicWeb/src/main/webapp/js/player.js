@@ -25,6 +25,10 @@ class AudioPlayer {
         this.playHistoryTimer = null;
         this.playHistoryRecorded = false;
 
+        // v4.0: 收听时长追踪
+        this.playStartTime = null;
+        this.currentLocalSongId = null;
+
         // 初始化
         this.init();
     }
@@ -85,6 +89,9 @@ class AudioPlayer {
 
     // 添加歌曲到队列并播放
     playSong(song) {
+        // v4.0: 上报上一首歌的收听时长（兜底：覆盖所有页面的切歌场景）
+        this._reportPlayDuration();
+
         // 使用 externalId 检查是否已在队列中（外部歌曲）
         const songKey = song.externalId || song.id;
         const existingIndex = this.playQueue.findIndex(s => (s.externalId || s.id) === songKey);
@@ -212,6 +219,10 @@ class AudioPlayer {
 
     // 执行播放并记录历史
     playAudio(song) {
+        // v4.0: 记录新歌开始时间和本地 ID（外部歌曲 ID 将在 recordUniversalPlayHistory 回调中补充）
+        this.playStartTime = Date.now();
+        this.currentLocalSongId = song.id || null;
+
         // v3.1.0: 清除之前的计时器
         this.clearPlayHistoryTimer();
         this.playHistoryRecorded = false;
@@ -231,6 +242,19 @@ class AudioPlayer {
             console.error('播放失败:', error);
             this.showNotification('播放失败，可能需要VIP或歌曲已下架');
         });
+    }
+
+    // v4.0: 上报实际收听时长（切歌/结束时调用，幂等：playStartTime 清零后第二次调用为 no-op）
+    _reportPlayDuration() {
+        if (!this.currentLocalSongId || !this.playStartTime) return;
+        const playDuration = Math.floor((Date.now() - this.playStartTime) / 1000);
+        this.playStartTime = null; // 重置，防止重复上报
+        if (playDuration < 1) return; // 不上报极短播放（< 1 秒）
+        fetch('api/updatePlayDuration', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({songId: this.currentLocalSongId, playDuration})
+        }).catch(() => {}); // 静默失败，不影响主流程
     }
 
     // v3.1.0: 清除播放历史计时器
@@ -259,6 +283,7 @@ class AudioPlayer {
     // 播放上一曲
     playPrevious() {
         if (this.playQueue.length === 0) return;
+        this._reportPlayDuration(); // v4.0: 上报当前歌曲收听时长
 
         if (this.playMode === 'random') {
             this.currentIndex = Math.floor(Math.random() * this.playQueue.length);
@@ -272,6 +297,7 @@ class AudioPlayer {
     // 播放下一曲
     playNext() {
         if (this.playQueue.length === 0) return;
+        this._reportPlayDuration(); // v4.0: 上报当前歌曲收听时长
 
         if (this.playMode === 'random') {
             this.currentIndex = Math.floor(Math.random() * this.playQueue.length);
@@ -445,6 +471,8 @@ class AudioPlayer {
             .then(data => {
                 if (data.success) {
                     console.log('✅ [播放历史] 记录成功, songId:', data.songId);
+                    // v4.0: 外部歌曲写入 DB 后，获取其本地 ID 用于时长上报
+                    if (data.songId) this.currentLocalSongId = data.songId;
                 } else {
                     console.error('❌ [播放历史] 记录失败:', data.message);
                 }
@@ -507,14 +535,16 @@ class AudioPlayer {
     // 歌曲播放结束
     onSongEnded() {
         if (this.playMode === 'single') {
-            // 单曲循环
+            // 单曲循环：上报本次完整播放，然后重置计时器继续追踪下一轮
+            this._reportPlayDuration();
+            this.playStartTime = Date.now(); // 重置计时器，开始追踪下一次循环
             this.audio.currentTime = 0;
             this.audio.play();
         } else if (this.playMode === 'loop' || this.playMode === 'order') {
-            // 列表循环或顺序播放
+            // 列表循环或顺序播放（playNext 内部已调用 _reportPlayDuration）
             this.playNext();
         } else if (this.playMode === 'random') {
-            // 随机播放
+            // 随机播放（playNext 内部已调用 _reportPlayDuration）
             this.playNext();
         }
     }
@@ -571,6 +601,7 @@ class AudioPlayer {
 
     // 播放队列中的指定项
     playQueueItem(index) {
+        this._reportPlayDuration(); // v4.0: 上报当前歌曲收听时长
         this.currentIndex = index;
         this.loadAndPlay();
         this.updateQueueUI();

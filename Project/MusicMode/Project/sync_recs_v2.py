@@ -102,26 +102,63 @@ def update_feedback(db):
     try:
         with db.cursor() as cur:
             yesterday = (datetime.date.today() - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
-            
+
+            # ===================================================================
+            # 步骤A: 从 play_history 同步 was_played 和 play_completion
+            # 利用 play_duration / songs.duration 计算真实完播率
+            # ===================================================================
+            cur.execute("""
+                UPDATE recommendation_feedback rf
+                JOIN (
+                    SELECT ph.user_id, ph.song_id,
+                           LEAST(1.0, MAX(ph.play_duration) / s.duration) AS completion
+                    FROM play_history ph
+                    JOIN songs s ON s.id = ph.song_id
+                    WHERE DATE(ph.play_time) = %s
+                      AND ph.play_duration > 0
+                      AND s.duration > 0
+                    GROUP BY ph.user_id, ph.song_id
+                ) AS played ON rf.user_id = played.user_id AND rf.song_id = played.song_id
+                SET rf.was_played = 1, rf.play_completion = played.completion
+                WHERE rf.recommend_date = %s
+            """, (yesterday, yesterday))
+            print(f"   ✅ 步骤A - 同步播放完播率: {cur.rowcount} 条")
+
+            # ===================================================================
+            # 步骤B: 从 playlist_songs（默认歌单）同步 was_favorited
+            # ===================================================================
+            cur.execute("""
+                UPDATE recommendation_feedback rf
+                JOIN playlist_songs ps ON ps.song_id = rf.song_id
+                JOIN user_playlists up ON up.id = ps.playlist_id
+                    AND up.user_id = rf.user_id AND up.is_default = 1
+                SET rf.was_favorited = 1
+                WHERE rf.recommend_date = %s
+            """, (yesterday,))
+            print(f"   ✅ 步骤B - 同步收藏状态: {cur.rowcount} 条")
+
+            # ===================================================================
+            # 步骤C: 读取已同步的反馈，计算行为评分
+            # ===================================================================
             # 获取昨日所有的反馈记录
             cur.execute("""
-                SELECT id, user_id, was_played, play_completion, was_favorited, consecutive_ignore_days 
-                FROM recommendation_feedback 
+                SELECT id, user_id, was_played, play_completion, was_favorited, consecutive_ignore_days
+                FROM recommendation_feedback
                 WHERE recommend_date = %s
             """, (yesterday,))
             feedbacks = cur.fetchall()
-            
+
             if not feedbacks:
                 print("   ℹ️ 昨日没有推荐记录，跳过反馈回收。")
                 return
 
             # 查询昨日活跃用户
             cur.execute("""
-                SELECT DISTINCT user_id FROM play_history 
+                SELECT DISTINCT user_id FROM play_history
                 WHERE DATE(play_time) = %s
             """, (yesterday,))
             active_users = set(row['user_id'] for row in cur.fetchall())
-            print(f"   ✅ 昨日活跃用户数: {len(active_users)}")
+            print(f"   ✅ 步骤C - 昨日活跃用户数: {len(active_users)}")
 
             update_data = []
             for fb in feedbacks:
@@ -131,11 +168,11 @@ def update_feedback(db):
                 comp = fb['play_completion'] or 0.0
                 was_fav = fb['was_favorited']
                 ignore_days = fb['consecutive_ignore_days'] or 0
-                
+
                 score_delta = 0.0
                 cooldown = "NULL"
                 new_ignore = ignore_days
-                
+
                 if uid in active_users:
                     if was_played == 0:
                         score_delta -= 0.1
@@ -146,44 +183,77 @@ def update_feedback(db):
                     else:
                         new_ignore = 0  # 重置
                         if comp < 0.2:
-                            score_delta -= 0.3
+                            score_delta -= 0.3   # 跳曲
                         elif comp > 0.8:
-                            score_delta += 0.5
+                            score_delta += 0.5   # 完整听完
                         else:
-                            score_delta += 0.3
-                            
+                            score_delta += 0.3   # 一般播放
+
                     if was_fav:
-                        score_delta += 1.0
+                        score_delta += 1.0       # 收藏
                 else:
                     # 未登录，不惩罚也不加分
                     pass
-                
+
                 # 累加分数并写入
                 update_data.append((score_delta, new_ignore, cooldown, fid))
 
-            # 批量更新
+            # 批量更新行为评分
             updated = 0
             for item in update_data:
-                # 注意：cooldown 可能为空
                 cd_val = item[2]
                 if cd_val == "NULL":
                     cur.execute("""
-                        UPDATE recommendation_feedback 
+                        UPDATE recommendation_feedback
                         SET feedback_score = feedback_score + %s, consecutive_ignore_days = %s
                         WHERE id = %s
                     """, (item[0], item[1], item[3]))
                 else:
                     cur.execute(f"""
-                        UPDATE recommendation_feedback 
+                        UPDATE recommendation_feedback
                         SET feedback_score = feedback_score + %s, consecutive_ignore_days = %s, cooldown_until = {cd_val}
                         WHERE id = %s
                     """, (item[0], item[1], item[3]))
                 updated += 1
-                
+            print(f"   ✅ 步骤C - 更新行为评分: {updated} 条")
+
+            # ===================================================================
+            # 步骤D: 应用显式满意度评分（来自 user_preference_feedback 表）
+            # 权重远高于隐式行为：+3.0 / +1.5 / 0 / -2.0
+            # ===================================================================
+            satisfaction_map = {
+                'very_satisfied':  3.0,
+                'satisfied':       1.5,
+                'neutral':         0.0,
+                'dissatisfied':   -2.0
+            }
+            cur.execute("""
+                SELECT user_id, satisfaction
+                FROM user_preference_feedback
+                WHERE feedback_date = %s
+            """, (yesterday,))
+            explicit_feedbacks = cur.fetchall()
+            if explicit_feedbacks:
+                satisfaction_updates = 0
+                for row in explicit_feedbacks:
+                    delta = satisfaction_map.get(row['satisfaction'], 0.0)
+                    if delta != 0:
+                        cur.execute("""
+                            UPDATE recommendation_feedback
+                            SET feedback_score = feedback_score + %s
+                            WHERE user_id = %s AND recommend_date = %s
+                        """, (delta, row['user_id'], yesterday))
+                        satisfaction_updates += cur.rowcount
+                print(f"   ✅ 步骤D - 应用显式满意度评分: 影响 {satisfaction_updates} 条推荐记录")
+            else:
+                print(f"   ℹ️ 步骤D - 昨日无显式满意度反馈")
+
             db.commit()
-            print(f"   ✅ 更新了 {updated} 条反馈记录。")
+            print(f"   ✅ 反馈回收完成。")
     except Exception as e:
         print(f"   ❌ 反馈回收失败: {e}")
+        import traceback
+        traceback.print_exc()
         db.rollback()
 
 def find_genre_proxy(cur, genre_str, mysql2faiss, index, genre_cache, max_proxies=1):
@@ -222,18 +292,40 @@ def get_user_profile(db, user_id, mysql2faiss, index, genre_cache, song_meta_cac
     weights = []
 
     with db.cursor() as cur:
-        # 1. 播放历史
-        cur.execute("SELECT song_id, play_time FROM play_history WHERE user_id = %s", (user_id,))
+        # 1. 播放历史（含完播率加权）
+        cur.execute("""
+            SELECT ph.song_id, ph.play_time,
+                   CASE
+                       WHEN s.duration > 0 THEN LEAST(1.0, ph.play_duration / s.duration)
+                       ELSE 0.5
+                   END AS completion
+            FROM play_history ph
+            LEFT JOIN songs s ON s.id = ph.song_id
+            WHERE ph.user_id = %s
+        """, (user_id,))
         for row in cur.fetchall():
             sid = row['song_id']
             ptime = row['play_time']
+            completion = row['completion'] if row['completion'] is not None else 0.5
+
+            # 时间衰减基础权重
             if ptime >= yesterday:
-                w = WEIGHTS['play_yesterday']
+                base_w = WEIGHTS['play_yesterday']
             elif ptime >= seven_days:
-                w = WEIGHTS['play_7days']
+                base_w = WEIGHTS['play_7days']
             else:
-                w = WEIGHTS['play_older']
-                
+                base_w = WEIGHTS['play_older']
+
+            # 完播率修正系数：跳曲×0.5，完整听完×1.5，其余×1.0
+            if completion < 0.2:
+                completion_factor = 0.5
+            elif completion > 0.8:
+                completion_factor = 1.5
+            else:
+                completion_factor = 1.0
+
+            w = base_w * completion_factor
+
             if sid in mysql2faiss:
                 vec = index.reconstruct(mysql2faiss[sid])
                 vectors.append(vec)
@@ -251,7 +343,7 @@ def get_user_profile(db, user_id, mysql2faiss, index, genre_cache, song_meta_cac
                     for pvec in proxies:
                         vectors.append(pvec)
                         weights.append(w * 0.5)  # 代理权重打折
-                
+
         # 2. 收藏（数据来源：playlist_songs 默认歌单，已废弃 favorites 表）
         cur.execute(
             "SELECT ps.song_id FROM playlist_songs ps "
@@ -276,10 +368,10 @@ def get_user_profile(db, user_id, mysql2faiss, index, genre_cache, song_meta_cac
                     for pvec in proxies:
                         vectors.append(pvec)
                         weights.append(WEIGHTS['favorite_default'] * 0.5)
-                
+
         # 3. 自建歌单
         cur.execute("""
-            SELECT ps.song_id 
+            SELECT ps.song_id
             FROM playlist_songs ps
             JOIN user_playlists up ON ps.playlist_id = up.id
             WHERE up.user_id = %s
@@ -290,39 +382,46 @@ def get_user_profile(db, user_id, mysql2faiss, index, genre_cache, song_meta_cac
                 vectors.append(index.reconstruct(mysql2faiss[sid]))
                 weights.append(WEIGHTS['playlist_custom'])
 
-        # 4. 冷启动兜底：用户无任何行为时，读取注册偏好标签
-        if not vectors:
-            cur.execute("SELECT preferred_genres, preferred_artists FROM users WHERE id = %s", (user_id,))
-            pref = cur.fetchone()
-            if pref:
-                # 用 genre 偏好找代理
-                if pref.get('preferred_genres'):
-                    for gid in pref['preferred_genres'].split(','):
-                        gid = gid.strip()
-                        if gid:
-                            cur.execute("""
-                                SELECT id FROM songs 
-                                WHERE genre_ids LIKE %s AND kkbox_id IS NOT NULL AND kkbox_id != ''
-                                ORDER BY popularity DESC LIMIT 3
-                            """, (f"%{gid}%",))
-                            for row in cur.fetchall():
-                                if row['id'] in mysql2faiss:
-                                    vectors.append(index.reconstruct(mysql2faiss[row['id']]))
-                                    weights.append(0.5)
-                # 用 artist 偏好找代理
-                if pref.get('preferred_artists'):
-                    for art in pref['preferred_artists'].split(','):
-                        art = art.strip()
-                        if art:
-                            cur.execute("""
-                                SELECT id FROM songs 
-                                WHERE artist LIKE %s AND kkbox_id IS NOT NULL AND kkbox_id != ''
-                                ORDER BY popularity DESC LIMIT 3
-                            """, (f"%{art}%",))
-                            for row in cur.fetchall():
-                                if row['id'] in mysql2faiss:
-                                    vectors.append(index.reconstruct(mysql2faiss[row['id']]))
-                                    weights.append(0.6)
+        # 4. 用户偏好标签补充（preferred_genres / preferred_artists）
+        # 无论有无行为数据都作为低权重补充，对稀疏数据用户尤为重要
+        # preferred_genres 格式: '流行;日语;英语'（分号分隔，混合 genre 和 language 值）
+        # preferred_artists 格式: '周杰伦;陈粒'（分号分隔，对应 songs.artist）
+        cur.execute("SELECT preferred_genres, preferred_artists FROM users WHERE id = %s", (user_id,))
+        pref = cur.fetchone()
+        if pref:
+            pref_weight = 0.2  # 低权重，作为行为数据的补充
+            if pref.get('preferred_genres'):
+                for token in pref['preferred_genres'].split(';'):
+                    token = token.strip()
+                    if not token:
+                        continue
+                    # 同时匹配 songs.genre 和 songs.language
+                    cur.execute("""
+                        SELECT id FROM songs
+                        WHERE (genre LIKE %s OR language LIKE %s)
+                          AND kkbox_id IS NOT NULL AND kkbox_id != ''
+                        ORDER BY popularity DESC LIMIT 50
+                    """, (f"%{token}%", f"%{token}%"))
+                    for song_row in cur.fetchall():
+                        if song_row['id'] in mysql2faiss:
+                            vectors.append(index.reconstruct(mysql2faiss[song_row['id']]))
+                            weights.append(pref_weight)
+
+            if pref.get('preferred_artists'):
+                for artist in pref['preferred_artists'].split(';'):
+                    artist = artist.strip()
+                    if not artist:
+                        continue
+                    cur.execute("""
+                        SELECT id FROM songs
+                        WHERE artist LIKE %s
+                          AND kkbox_id IS NOT NULL AND kkbox_id != ''
+                        ORDER BY popularity DESC LIMIT 50
+                    """, (f"%{artist}%",))
+                    for song_row in cur.fetchall():
+                        if song_row['id'] in mysql2faiss:
+                            vectors.append(index.reconstruct(mysql2faiss[song_row['id']]))
+                            weights.append(pref_weight)
 
     if not vectors:
         return None  # 真的什么都没有
