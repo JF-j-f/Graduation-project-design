@@ -5,7 +5,7 @@ echo     MusicWeb Daily Recommendation Task
 echo     Start Time: %date% %time%
 echo ===================================================
 
-cd /d E:\Graduation-project-design\Project\MusicMode\Project
+cd /d "%~dp0..\Project"
 set PYTHONIOENCODING=utf-8
 set PYTHONUTF8=1
 
