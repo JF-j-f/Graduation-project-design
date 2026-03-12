@@ -19,6 +19,10 @@ import pymysql
 import datetime
 import faiss
 
+# Windows cmd.exe 默认使用 GBK 编码，强制 stdout/stderr 使用 UTF-8 以支持 emoji 输出
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 # ============================================
 # 配置
 # ============================================
