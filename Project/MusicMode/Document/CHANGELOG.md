@@ -2,6 +2,29 @@
 
 本文档记录 MusicMode 项目的所有更新历史。
 
+## v2.1.0 (2026-03-12) - 推荐反馈闭环修复与效果评估
+
+### 🚀 新增功能
+
+- **推荐效果评估脚本** (`evaluate_recs.py`)：基于 `recommendation_feedback` 历史数据计算 CTR、平均完播率、收藏率、跳曲率、Precision@10、覆盖度六项指标，结果输出至控制台并写入 `Mode/evaluation_report.txt`。
+
+### ⚡ 优化
+
+- **`sync_recs_v2.py` — `update_feedback()` 数据链路修复**：
+  - 步骤 A：通过 JOIN `play_history` 与 `songs`，将实际播放完成率（`play_duration / duration`）同步至 `recommendation_feedback.was_played` 与 `play_completion`，修复了这两字段长期为 0 的根本原因。
+  - 步骤 B：通过 JOIN `playlist_songs` + `user_playlists`（`is_default=1`），将收藏行为同步至 `was_favorited` 字段，使收藏信号正式纳入评分。
+  - 步骤 D：读取 `user_preference_feedback` 显式满意度，批量施加 +3.0 / +1.5 / 0 / -2.0 分差，高优先级覆盖隐式行为信号。
+
+- **`sync_recs_v2.py` — `get_user_profile()` 画像精度提升**：
+  - 引入完播率修正系数（完播率 <20% → ×0.5；20-80% → ×1.0；>80% → ×1.5），跳曲降权，听完加权。
+  - 读取 `users.preferred_genres` / `preferred_artists`（分号分隔），匹配 `songs.genre` / `songs.language` / `songs.artist`，以权重 0.2 补充用户画像向量，无论行为数据是否为空均生效。
+
+### 🐛 Bug 修复
+
+- **`start_daily_recommend.bat` 路径硬编码**：将 `cd /d E:\Graduation-project-design\...\Project` 改为 `cd /d "%~dp0..\Project"` 相对路径，修复从工作树目录运行时始终跑主仓库旧脚本的问题。
+
+---
+
 ## v2.0.1 (2026-02-26) - 推荐引擎冷启动与覆盖率修复
 
 ### 🐛 修复 (Fixed)

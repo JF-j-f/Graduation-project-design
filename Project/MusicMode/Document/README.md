@@ -57,6 +57,7 @@ MusicMode/
 │   ├── build_faiss_index.py      # FAISS 向量索引构建
 │   ├── sync_recs.py              # 旧版结果同步
 │   ├── sync_recs_v2.py           # 多通道混合推荐脚本
+│   ├── evaluate_recs.py          # 推荐效果评估脚本
 │   └── run_pipeline.py           # 一键运行脚本
 └── Mode/                         # 模型产物
     ├── features.pkl              # 预处理特征
@@ -70,6 +71,7 @@ MusicMode/
     ├── cleaned_train.pkl         # 清洗后的训练数据
     ├── eda_distribution.png      # EDA 分布可视化图
     ├── eda_report.md             # EDA 分析报告
+    ├── evaluation_report.txt     # 推荐效果评估报告
     └── training_progress.png     # 训练过程可视化图
 ```
 
@@ -161,4 +163,4 @@ python update_song_metadata.py
 
 ---
 
-*本文档最后更新时间：2026年3月9日 17:35*
+*本文档最后更新时间：2026年3月12日*
