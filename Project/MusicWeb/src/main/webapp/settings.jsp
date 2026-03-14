@@ -143,6 +143,24 @@
                                         class="form-input" placeholder="请输入手机号码">
                                 </div>
                             </div>
+
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="gender">性别</label>
+                                    <select id="gender" name="gender" class="form-input">
+                                        <option value="">不透露</option>
+                                        <option value="male" <%= "male".equals(user.getGender()) ? "selected" : "" %>>男</option>
+                                        <option value="female" <%= "female".equals(user.getGender()) ? "selected" : "" %>>女</option>
+                                    </select>
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="city">城市</label>
+                                    <input type="text" id="city" name="city"
+                                        value="<%= user.getCity() != null ? user.getCity() : "" %>"
+                                        class="form-input" placeholder="你所在的城市">
+                                </div>
+                            </div>
                         </div>
 
                         <div class="form-actions">

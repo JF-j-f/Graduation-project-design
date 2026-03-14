@@ -369,6 +369,30 @@ public class RedisUtil {
         }
     }
 
+    /** 用户屏蔽列表缓存键前缀 */
+    public static final String KEY_USER_BLOCKS = "musicweb:user:%d:blocks";
+
+    /**
+     * 生成用户屏蔽列表缓存键
+     *
+     * @param userId 用户ID
+     * @return 缓存键
+     */
+    public static String getUserBlocksKey(int userId) {
+        return String.format(KEY_USER_BLOCKS, userId);
+    }
+
+    /**
+     * 清除用户屏蔽列表缓存
+     * 在用户添加/取消屏蔽时调用
+     *
+     * @param userId 用户ID
+     */
+    public static void clearUserBlocksCache(int userId) {
+        delete(getUserBlocksKey(userId));
+        System.out.println("🗑️ [Redis] 已清除用户 " + userId + " 的屏蔽列表缓存");
+    }
+
     /** 用户收藏歌曲缓存键前缀 (v3.3.0) */
     public static final String KEY_USER_FAVORITES = "musicweb:user:%d:favorites";
 

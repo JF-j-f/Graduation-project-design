@@ -59,7 +59,7 @@ public class UserDAO {
 
         try {
             conn = DBUtil.getConnection();
-            String sql = "INSERT INTO users (username, password, email, nickname, phone) VALUES (?, ?, ?, ?, ?)";
+            String sql = "INSERT INTO users (username, password, email, nickname, phone, city, gender) VALUES (?, ?, ?, ?, ?, ?, ?)";
             pstmt = conn.prepareStatement(sql);
 
             // 设置参数前进行空值处理
@@ -68,12 +68,16 @@ public class UserDAO {
                     ? user.getNickname().trim()
                     : "";
             String phone = (user.getPhone() != null && !user.getPhone().trim().isEmpty()) ? user.getPhone().trim() : "";
+            String city = (user.getCity() != null && !user.getCity().trim().isEmpty()) ? user.getCity().trim() : null;
+            String gender = (user.getGender() != null && !user.getGender().trim().isEmpty()) ? user.getGender().trim() : null;
 
             pstmt.setString(1, user.getUsername());
             pstmt.setString(2, user.getPassword());
-            pstmt.setString(3, email); // 使用处理后的email
-            pstmt.setString(4, nickname); // 使用处理后的nickname
-            pstmt.setString(5, phone); // 使用处理后的phone
+            pstmt.setString(3, email);
+            pstmt.setString(4, nickname);
+            pstmt.setString(5, phone);
+            pstmt.setString(6, city);
+            pstmt.setString(7, gender);
 
             return pstmt.executeUpdate() > 0;
         } catch (SQLException e) {
@@ -106,6 +110,8 @@ public class UserDAO {
                 user.setNickname(rs.getString("nickname"));
                 user.setPhone(rs.getString("phone"));
                 user.setCreateTime(rs.getString("create_time"));
+                user.setCity(rs.getString("city"));
+                user.setGender(rs.getString("gender"));
             }
         } catch (SQLException e) {
             e.printStackTrace();
@@ -138,6 +144,8 @@ public class UserDAO {
                 user.setNickname(rs.getString("nickname"));
                 user.setPhone(rs.getString("phone"));
                 user.setCreateTime(rs.getString("create_time"));
+                user.setCity(rs.getString("city"));
+                user.setGender(rs.getString("gender"));
             }
         } catch (SQLException e) {
             e.printStackTrace();
@@ -155,12 +163,14 @@ public class UserDAO {
 
         try {
             conn = DBUtil.getConnection();
-            String sql = "UPDATE users SET email = ?, nickname = ?, phone = ? WHERE id = ?";
+            String sql = "UPDATE users SET email = ?, nickname = ?, phone = ?, city = ?, gender = ? WHERE id = ?";
             pstmt = conn.prepareStatement(sql);
             pstmt.setString(1, user.getEmail());
             pstmt.setString(2, user.getNickname());
             pstmt.setString(3, user.getPhone());
-            pstmt.setInt(4, user.getId());
+            pstmt.setString(4, user.getCity());
+            pstmt.setString(5, user.getGender());
+            pstmt.setInt(6, user.getId());
 
             return pstmt.executeUpdate() > 0;
         } catch (SQLException e) {

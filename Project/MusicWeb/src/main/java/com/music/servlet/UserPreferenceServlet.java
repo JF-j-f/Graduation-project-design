@@ -106,8 +106,13 @@ public class UserPreferenceServlet extends HttpServlet {
             // ① 写入训练数据表（同一用户同一天：覆盖）
             insertOrUpdateFeedback(userId, today, satisfaction, genresStr, artistsStr);
 
-            // ② 合并偏好到 users 表
-            mergeUserPreferences(userId, genresStr, artistsStr);
+            // ② 偏好更新策略：不满意 → 替换（清除旧偏好）；其他 → 追加合并
+            if ("dissatisfied".equals(satisfaction)
+                    && (!genresStr.isEmpty() || !artistsStr.isEmpty())) {
+                replaceUserPreferences(userId, genresStr, artistsStr);
+            } else {
+                mergeUserPreferences(userId, genresStr, artistsStr);
+            }
 
             // ③ 刷新 session 中的 user 对象
             UserDAO userDAO = new UserDAO();
@@ -183,6 +188,22 @@ public class UserPreferenceServlet extends HttpServlet {
             ps.executeUpdate();
             System.out.println("✅ [UserPref] 偏好更新 userId=" + userId
                     + ", genres=" + mergedGenres + ", artists=" + mergedArtists);
+        }
+    }
+
+    // ── 不满意时直接替换偏好（清除旧偏好，只保留用户新填的） ────
+    private void replaceUserPreferences(int userId, String genres, String artists)
+            throws SQLException {
+
+        String sql = "UPDATE users SET preferred_genres=?, preferred_artists=? WHERE id=?";
+        try (Connection conn = DBUtil.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, genres.isEmpty() ? null : genres);
+            ps.setString(2, artists.isEmpty() ? null : artists);
+            ps.setInt(3, userId);
+            ps.executeUpdate();
+            System.out.println("🔄 [UserPref] 不满意→替换偏好 userId=" + userId
+                    + ", genres=" + genres + ", artists=" + artists);
         }
     }
 

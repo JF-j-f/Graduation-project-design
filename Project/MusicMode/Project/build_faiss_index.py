@@ -28,10 +28,11 @@ ENCODER_PATH = os.path.join(MODE_DIR, "encoders.pkl")
 DEEPFM_MODEL_PATH = os.path.join(MODE_DIR, "deepfm_model.pth")
 
 # 输出
-FAISS_INDEX_PATH = os.path.join(MODE_DIR, "song_index.faiss")
-SONG_ID_MAP_PATH = os.path.join(MODE_DIR, "song_id_map.pkl")
+FAISS_INDEX_PATH  = os.path.join(MODE_DIR, "song_index.faiss")
+SONG_ID_MAP_PATH  = os.path.join(MODE_DIR, "song_id_map.pkl")
+MODEL_CONFIG_PATH = os.path.join(MODE_DIR, "model_config.pkl")
 
-# Embedding 维度（4 个特征 × 16 维 = 64 维）
+# Embedding 维度：song+genre+language+artist 各 16 维 = 64 维
 EMBEDDING_DIM = 64
 
 
@@ -42,7 +43,6 @@ def load_model_and_features():
     print("=" * 60)
 
     import torch
-    from deepctr_torch.inputs import SparseFeat
     from deepctr_torch.models import DeepFM
 
     # 加载特征维度
@@ -61,21 +61,34 @@ def load_model_and_features():
         encoders = pickle.load(f)
     print(f"   ✅ 编码器加载完成")
 
-    # 重建模型
+    # 重建模型：优先使用训练时保存的 model_config.pkl
     print("\n   📥 重建 DeepFM 模型...")
-    feature_columns = [
-        SparseFeat('user', features['n_users'], embedding_dim=16),
-        SparseFeat('song', features['n_songs'], embedding_dim=16),
-        SparseFeat('genre', features['n_genres'], embedding_dim=16),
-        SparseFeat('language', features['n_languages'], embedding_dim=16),
-        SparseFeat('artist', features['n_artists'], embedding_dim=16),
-    ]
+    if os.path.exists(MODEL_CONFIG_PATH):
+        with open(MODEL_CONFIG_PATH, 'rb') as f:
+            cfg = pickle.load(f)
+        feature_columns  = cfg['feature_columns']
+        dnn_hidden_units = cfg.get('dnn_hidden_units', (256, 128, 64))
+        dnn_dropout      = cfg.get('dnn_dropout', 0.2)
+        print(f"   ✅ 从 model_config.pkl 加载特征列（{len(feature_columns)} 个）")
+    else:
+        # 回退：硬编码 5 个特征（兼容旧模型）
+        from deepctr_torch.inputs import SparseFeat
+        feature_columns = [
+            SparseFeat('user',     features['n_users'],     embedding_dim=16),
+            SparseFeat('song',     features['n_songs'],     embedding_dim=16),
+            SparseFeat('genre',    features['n_genres'],    embedding_dim=16),
+            SparseFeat('language', features['n_languages'], embedding_dim=16),
+            SparseFeat('artist',   features['n_artists'],   embedding_dim=16),
+        ]
+        dnn_hidden_units = (256, 128, 64)
+        dnn_dropout = 0.2
+        print("   ⚠️  model_config.pkl 不存在，使用 5 特征默认配置")
 
     model = DeepFM(
         linear_feature_columns=feature_columns,
         dnn_feature_columns=feature_columns,
-        dnn_hidden_units=(256, 128, 64),
-        dnn_dropout=0.2,
+        dnn_hidden_units=dnn_hidden_units,
+        dnn_dropout=dnn_dropout,
         device='cpu'
     )
 

@@ -29,12 +29,39 @@ MYSQL_DB = "musicweb"
 MYSQL_USER = "root"
 MYSQL_PASSWORD = "JF123456"
 
-# Genre 映射
+# Genre 映射（v2: 覆盖 KKBOX 全部主要 genre_id，将"其他"从 57% 降至 <10%）
 GENRE_MAP = {
+    # 原有映射
     "465": "流行", "458": "流行", "441": "华语流行", "443": "华语流行",
     "921": "摇滚", "692": "摇滚", "444": "电子", "1259": "嘻哈",
     "726": "R&B", "1152": "古典", "1011": "民谣", "468": "日本音乐",
     "359": "OST", "1043": "OST", "2006": "独立", "247": "拉丁",
+    # v2 新增（采样确认）
+    "958": "古典",       # 176K: Bizet, Chopin, Beethoven
+    "2022": "摇滚",      # 169K: RADWIMPS, ONE OK ROCK, John Mayer (Alt/Indie Rock)
+    "1609": "电子",      # 166K: The Chainsmokers, DJ Snake, Calvin Harris
+    "2122": "爵士",      # 140K: Norah Jones, Tony Bennett, Lisa Ono
+    "786": "轻音乐",     # 43K: Richard Clayderman, Eddy Kim
+    "139": "R&B",        # 35K: The Weeknd, John Legend, Childish Gambino
+    "940": "纯音乐",     # 33K: Yiruma, Kevin Kern (New Age/Piano)
+    "1955": "金属",      # 21K: Korn, AC/DC, Slipknot
+    "691": "流行",       # 19K: Mariah Carey, Justin Bieber (Holiday/Seasonal → 归入流行)
+    "873": "福音",       # 18K: Faith/Gospel/Religious
+    "437": "日本音乐",   # 17K: Hoshino Gen, PIKOTARO (J-Pop)
+    "947": "儿童",       # 17K: Children's lullabies, nursery
+    "275": "乡村",       # 复合 genre_id 中常见，Country
+    "1572": "蓝调",      # Blues (常与 275 组合)
+    "125": "世界音乐",   # World Music
+    "109": "新世纪",     # New Age
+    # v2 第二轮（剩余 >10K）
+    "388": "轻音乐",     # 17K: 睡眠BGM, V.K, Andy Williams (Ambient/Easy Listening)
+    "1616": "电子",      # 14K: Martin Garrix, Bebe Rexha (EDM/Dance)
+    "242": "福音",       # 14K: Citizens & Saints, Gospel
+    "451": "华语流行",   # 13K: Eason Chan 陈奕迅 (Cantopop/Mandopop)
+    "880": "R&B",        # 13K: Mary Mary, Gospel R&B
+    "423": "拉丁",       # 12K: Shakira, Don Omar (Latin Pop/Reggaeton)
+    "829": "流行",       # 12K: 中日流行混合
+    "2130": "摇滚",      # 11K: The Rolling Stones (Classic Rock)
 }
 
 

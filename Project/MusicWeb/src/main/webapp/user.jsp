@@ -331,11 +331,11 @@
 
                                                                             <!-- 推荐歌曲 -->
                                                                             <section id="discover"
-                                                                                style="margin-top: 3rem;">
+                                                                                style="margin-top: 2rem;">
                                                                                 <div
                                                                                     style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem;">
                                                                                     <h2 class="section-title"
-                                                                                        style="margin-bottom: 0;">每日推荐
+                                                                                        style="margin: 0;">每日推荐
                                                                                     </h2>
                                                                                     <!-- 刷新按钮 -->
                                                                                     <button id="refresh-recommend-btn"
@@ -706,6 +706,24 @@
                                                                               <input id="artist-input" type="text" placeholder="输入艺术家名称，回车添加…"
                                                                                 style="width:100%; box-sizing:border-box; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.15); border-radius:10px; padding:9px 14px; color:#fff; font-size:13px; outline:none;"
                                                                                 onkeydown="if(event.key==='Enter'){tasteModal.addArtist();event.preventDefault();}">
+                                                                            </div>
+
+                                                                            <!-- 屏蔽管理 -->
+                                                                            <div style="margin-bottom:22px; border-top:1px solid rgba(255,255,255,0.1); padding-top:18px;">
+                                                                              <div style="font-size:13px; color:rgba(255,80,80,0.75); margin-bottom:10px; letter-spacing:0.5px; font-weight:600;">屏蔽管理</div>
+
+                                                                              <div style="font-size:12px; color:rgba(255,255,255,0.45); margin-bottom:8px;">屏蔽流派（点击屏蔽/取消）</div>
+                                                                              <div id="block-genre-tags" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
+                                                                                <% String[] blockGenreOptions = {"流行","华语","英语","日语","韩语","摇滚","电子","古典","R&B","嘻哈","民谣","轻音乐"}; for(String g : blockGenreOptions) { %>
+                                                                                  <button class="block-genre-tag" data-genre="<%= g %>" style="padding:5px 14px; border-radius:16px; border:1px solid rgba(255,255,255,0.18); background:transparent; color:rgba(255,255,255,0.55); cursor:pointer; font-size:12px; transition:all 0.2s;"><%= g %></button>
+                                                                                <% } %>
+                                                                              </div>
+
+                                                                              <div style="font-size:12px; color:rgba(255,255,255,0.45); margin-bottom:8px;">屏蔽歌手（回车添加）</div>
+                                                                              <div id="block-artist-chips" style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px;"></div>
+                                                                              <input id="block-artist-input" type="text" placeholder="输入要屏蔽的歌手名称，回车添加..."
+                                                                                style="width:100%; box-sizing:border-box; background:rgba(255,80,80,0.07); border:1px solid rgba(255,80,80,0.2); border-radius:10px; padding:9px 14px; color:#fff; font-size:13px; outline:none;"
+                                                                                onkeydown="if(event.key==='Enter'){tasteModal.blockArtist();event.preventDefault();}">
                                                                             </div>
 
                                                                             <!-- 提交按钮 -->

@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-MusicMode 是一个基于大数据技术的**个性化音乐推荐系统后端引擎**，与 MusicWeb（Java 前端）配合使用，实现"千人千面"的音乐推荐体验。项目采用 Python + PySpark 技术栈，负责大规模数据的 ETL 处理、特征工程以及深度学习模型的离线训练。
+MusicMode 是一个基于大数据技术的**个性化音乐推荐系统后端引擎**，与 MusicWeb（Java 前端）配合使用，实现"千人千面"的音乐推荐体验。项目采用 Python + PyTorch 技术栈，负责大规模数据的 ETL 处理、特征工程以及深度学习模型的离线训练。
 
 ### 项目定位
 
@@ -16,7 +16,7 @@ MusicMode 是一个基于大数据技术的**个性化音乐推荐系统后端�
 ### 数据处理
 
 - **Python 3.12** - 主要编程语言
-- **PySpark 4.0.0** - 大规模数据处理（支持 Java 21+）
+- **Pandas 2.2+** - 大规模数据 ETL（分块读取，已替代 PySpark）
 - **Pandas 2.0+** - 数据分析与处理
 - **NumPy 1.24+** - 数值计算
 
@@ -29,7 +29,7 @@ MusicMode 是一个基于大数据技术的**个性化音乐推荐系统后端�
 ### 算法模型
 
 - **DeepCTR-Torch** - 基于 PyTorch 的深度兴趣网络
-- **DeepFM** - 高阶交叉特征排序 (已训练, AUC=0.7933)
+- **DeepFM** - 高阶交叉特征排序 (已训练, AUC=0.8053，GPU AMP 加速)
 - **FAISS** - 高性能向量相似度检索引擎
 - **Spark MLlib ALS** - 协同过滤召回
 
@@ -68,11 +68,12 @@ MusicMode/
     ├── als_model.pkl             # ALS 召回模型
     ├── candidates.pkl            # 候选集缓存
     ├── cleaned_songs.pkl         # 清洗后的歌曲数据
-    ├── cleaned_train.pkl         # 清洗后的训练数据
+    ├── cleaned_train.pkl         # 清洗后的训练数据（KKBOX 6.96M 条）
+    ├── model_config.pkl          # DeepFM 特征列配置（供 build_faiss_index.py 使用）
     ├── eda_distribution.png      # EDA 分布可视化图
     ├── eda_report.md             # EDA 分析报告
     ├── evaluation_report.txt     # 推荐效果评估报告
-    └── training_progress.png     # 训练过程可视化图
+    └── training_progress.png     # 训练过程可视化图（loss/AUC 曲线）
 ```
 
 ## 数据流程
