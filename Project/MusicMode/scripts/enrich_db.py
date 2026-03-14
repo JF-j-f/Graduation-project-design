@@ -3,11 +3,13 @@
 enrich_db.py — 数据库字段扩充主脚本（一次性执行）
 
 功能（按 --step 参数分阶段执行）：
-  --step alter        : 新增字段（play_history.target, source_channel, users.bd, songs.origin_country）
-  --step songs        : songs 表批量补全（ISRC→release_year+origin_country, 语言代码→标签, genre规范化）
-  --step musicbrainz  : 通过 MusicBrainz API 为外部歌曲补全 origin_country（支持断点续跑）
-  --step users        : 更新 users 表（jf/jf2信息, kkbox_%用户 create_time/bd/city/gender）
-  --step play_history : 回填 play_history.target + source_channel（7.37M行，分批5000）
+  --step alter           : 新增字段（play_history.target, source_channel, users.bd, songs.origin_country）
+  --step songs           : songs 表批量补全（ISRC→release_year+origin_country, 语言代码→标签, genre规范化）
+  --step musicbrainz     : 通过 MusicBrainz API 为外部歌曲补全 origin_country（支持断点续跑）
+  --step users           : 更新 users 表（jf/jf2信息, kkbox_%用户 create_time/bd/city/gender）
+  --step play_history    : 回填 play_history.target + source_channel（7.37M行，分批5000）
+  --step enrich_external : 通过网易云(优先)+QQ 为外部歌曲补全全量元数据
+                           （release_year/album/duration/cover_image/popularity/language/genre）
 
 执行顺序（必须按此顺序手动执行）：
   1. python test_api_composer.py         ← 先测试，决定是否加 composer 列
@@ -625,115 +627,435 @@ def step_songs():
 
 
 # ============================================================
-# --step release_year : 通过 QQ/网易云 API 补全外部歌曲 release_year
+# --step enrich_external : 网易云(优先) + QQ API 为外部歌曲补全所有元数据
+# （release_year / album / duration / cover_image / popularity / language / genre）
+# --step release_year    : 同上（旧名称保留兼容）
 # ============================================================
-def step_release_year():
+def step_enrich_external():
     """
-    为外部歌曲（kkbox_id IS NULL）查询 QQ/网易云 API 获取 release_year。
-    前提：qq_api 服务必须运行在 127.0.0.1:8000。
-    支持断点续跑（release_year_progress.json）。
+    为外部歌曲（kkbox_id IS NULL）通过 网易云(优先) + QQ Music(兜底) 同时补全：
+      release_year  — 发行年份
+      album         — 专辑名
+      duration      — 时长（秒）
+      cover_image   — 封面图片 URL
+      popularity    — 热度（0-100）
+      language      — 语言标签
+      genre         — 流派标签
+
+    查询策略：
+      ① 网易云 Node.js API（端口 3000）→ 主力源（release_year/album/duration/cover_image/popularity）
+      ② QQ qqmusic_api（Python 库）→ 兜底 + 补充 genre/language
+
+    只更新数据库中当前为 NULL/0/空字符串 的字段，不覆盖已有有效数据。
+    支持断点续跑（enrich_external_progress.json）。
     """
-    import requests
-    PROGRESS_YEAR_FILE = os.path.join(os.path.dirname(__file__), "release_year_progress.json")
-    QQ_API_BASE = "http://127.0.0.1:8000"
-    RATE_LIMIT_SEC = 0.5   # QQ API 无强制限速，0.5s 保守
+    import asyncio
+    from datetime import datetime as _dt
+
+    PROGRESS_EXT_FILE = os.path.join(os.path.dirname(__file__), "enrich_external_progress.json")
+    NETEASE_BASE = "http://127.0.0.1:3000"
+    NETEASE_SEARCH_PATHS = ["/netease/search", "/search"]
+    NETEASE_DETAIL_PATHS = ["/netease/song/detail", "/song/detail"]
+    RATE_LIMIT_SEC = 0.4   # 每首歌 0.4s，9000首约 60 分钟
+
+    # QQ Music 语言数字代码 → 中文标签（部分平台返回数字）
+    QQ_LANG_MAP = {
+        "0": "国语", "1": "粤语", "2": "英语", "3": "日语",
+        "4": "韩语", "5": "法语", "6": "德语", "7": "西班牙语",
+        "8": "俄语", "9": "意大利语", "10": "葡萄牙语",
+    }
 
     print_sep()
-    print("📅 [Step: release_year] 通过 QQ API 补全外部歌曲 release_year")
+    print("🎵 [Step: enrich_external] 网易云(优先) + QQ API 补全外部歌曲全量元数据")
+    print("   目标字段: release_year / album / duration / cover_image / popularity / language / genre")
     print_sep()
 
-    # 连通性检测
+    # ── 连通性检测 ──────────────────────────────
+    import socket as _sock
     try:
-        resp = requests.get(f"{QQ_API_BASE}/health", timeout=3)
-        if resp.status_code != 200:
-            raise ConnectionError("非 200")
-        print("   ✅ QQ API 服务可达")
-    except Exception as e:
-        print(f"   ❌ QQ API 不可达（{e}）")
-        print("      请先启动服务：uvicorn app:app --host 127.0.0.1 --port 8000")
+        import httpx as _httpx
+    except ImportError:
+        print("   ❌ 缺少 httpx 库，请运行：pip install httpx")
         return
 
-    # 加载断点进度
+    def _tcp_ok(host: str, port: int) -> bool:
+        try:
+            with _sock.create_connection((host, port), timeout=3):
+                return True
+        except Exception:
+            return False
+
+    netease_ok = _tcp_ok("127.0.0.1", 3000)
+    qq_ok = False
+    try:
+        import qqmusic_api   # noqa
+        qq_ok = True
+    except ImportError:
+        pass
+
+    if not netease_ok:
+        print("   ⚠️  网易云 Node.js 服务未运行（端口 3000）")
+        print("      → 命令参考：cd MusicServer && node app.js  (或项目根目录一键启动)")
+    else:
+        print("   ✅ 网易云 API 服务可达（端口 3000）")
+
+    if not qq_ok:
+        print("   ⚠️  QQ API（qqmusic_api）不可用 → pip install qqmusic-api-python")
+    else:
+        print("   ✅ QQ API（qqmusic_api 库）可用")
+
+    if not netease_ok and not qq_ok:
+        print("\n   ❌ 两个 API 均不可用，退出")
+        return
+
+    # ── 断点进度 ────────────────────────────────
     done_ids: set = set()
-    if os.path.exists(PROGRESS_YEAR_FILE):
-        with open(PROGRESS_YEAR_FILE) as f:
+    if os.path.exists(PROGRESS_EXT_FILE):
+        with open(PROGRESS_EXT_FILE) as f:
             done_ids = set(json.load(f).get("done", []))
         print(f"   断点续跑：已处理 {len(done_ids)} 首")
 
-    # 查询需处理歌曲
+    # ── 查询全部外部歌曲（含各字段当前值，判断哪些需要补全） ──────
     engine = get_engine()
     with engine.connect() as c:
         songs_df = pd.read_sql("""
-            SELECT id, title, artist
+            SELECT id, title, artist,
+                   release_year, album, duration, cover_image,
+                   popularity, language, genre
             FROM songs
             WHERE kkbox_id IS NULL
-              AND (release_year IS NULL OR release_year = 0)
             ORDER BY id
         """, c)
-    print(f"   需补全 release_year 的外部歌曲: {len(songs_df):,} 首")
-    if songs_df.empty:
-        print("   🎉 无需处理，全部已有 release_year")
+
+    # 过滤已全部填充的歌曲（即不需要任何更新的行）
+    def _needs_any(row) -> bool:
+        return (
+            not row["release_year"] or int(row["release_year"] or 0) == 0
+            or not str(row["album"] or "").strip()
+            or not row["duration"] or int(row["duration"] or 0) == 0
+            or not str(row["cover_image"] or "").strip()
+            or row["popularity"] is None
+            or not str(row["language"] or "").strip()
+            or not str(row["genre"] or "").strip()
+        )
+
+    songs_to_process = songs_df[songs_df.apply(_needs_any, axis=1)]
+    print(f"\n   外部歌曲总计: {len(songs_df):,} 首")
+    print(f"   至少有一字段待补全: {len(songs_to_process):,} 首\n")
+    if songs_to_process.empty:
+        print("   🎉 所有外部歌曲元数据已完整，无需处理")
         return
 
-    conn = get_conn()
-    try:
-        speed_up_mysql(conn)
-        hit = 0
-        miss = 0
+    # ── 工具函数 ──────────────────────────────────
+    def _valid_year(val) -> Optional[int]:
+        try:
+            y = int(str(val)[:4])
+            return y if 1900 <= y <= 2030 else None
+        except Exception:
+            return None
 
-        for _, row in tqdm(songs_df.iterrows(), total=len(songs_df), desc="QQ API 查询"):
-            song_id = int(row["id"])
-            if song_id in done_ids:
+    def _clean_str(val, max_len: int = 200) -> Optional[str]:
+        """清理字符串，超长截断，空字符串返回 None"""
+        if not val:
+            return None
+        s = str(val).strip()
+        return s[:max_len] if s else None
+
+    # ── 网易云：获取歌曲全量元数据 ─────────────────
+    async def _netease_fetch(client: "_httpx.AsyncClient",
+                             title: str, artist: str) -> dict:
+        """
+        返回从网易云获取的字段 dict（只包含成功获取的字段）：
+          release_year, album, duration, cover_image, popularity
+        """
+        result: dict = {}
+        keyword = f"{artist} {title}"
+
+        for path in NETEASE_SEARCH_PATHS:
+            try:
+                r = await client.get(
+                    f"{NETEASE_BASE}{path}",
+                    params={"keywords": keyword, "limit": 5},
+                    timeout=6.0
+                )
+                if r.status_code != 200:
+                    continue
+                data = r.json()
+                songs = (
+                    data.get("result", {}).get("songs")
+                    or data.get("data", {}).get("songs")
+                    or []
+                )
+                if not songs:
+                    continue
+                s = songs[0]
+                song_id = s.get("id")
+
+                # ── 从搜索结果直接提取 ──
+                al = s.get("al") or {}
+                if al.get("name"):
+                    result["album"] = _clean_str(al["name"], 200)
+                if al.get("picUrl"):
+                    result["cover_image"] = _clean_str(al["picUrl"], 200)
+                if s.get("dt"):
+                    ms = int(s["dt"])
+                    if ms > 0:
+                        result["duration"] = ms // 1000
+                if s.get("pop") is not None:
+                    result["popularity"] = max(0, min(100, int(s["pop"])))
+
+                # publishTime → release_year
+                pt = s.get("publishTime") or al.get("publishTime")
+                if pt:
+                    y = _valid_year(_dt.fromtimestamp(int(pt) / 1000).year)
+                    if y:
+                        result["release_year"] = y
+
+                # ── 若关键字段缺失，再调 detail 端点 ──
+                need_detail = (
+                    "release_year" not in result
+                    or "album" not in result
+                    or "duration" not in result
+                )
+                if need_detail and song_id:
+                    for dpath in NETEASE_DETAIL_PATHS:
+                        try:
+                            rd = await client.get(
+                                f"{NETEASE_BASE}{dpath}",
+                                params={"ids": str(song_id)},
+                                timeout=6.0
+                            )
+                            if rd.status_code != 200:
+                                continue
+                            d = rd.json()
+                            ds_list = d.get("songs", [])
+                            if not ds_list:
+                                continue
+                            ds = ds_list[0]
+                            dal = ds.get("al") or {}
+
+                            if "album" not in result and dal.get("name"):
+                                result["album"] = _clean_str(dal["name"], 200)
+                            if "cover_image" not in result and dal.get("picUrl"):
+                                result["cover_image"] = _clean_str(dal["picUrl"], 200)
+                            if "duration" not in result and ds.get("dt"):
+                                ms = int(ds["dt"])
+                                if ms > 0:
+                                    result["duration"] = ms // 1000
+                            if "popularity" not in result and ds.get("pop") is not None:
+                                result["popularity"] = max(0, min(100, int(ds["pop"])))
+                            if "release_year" not in result:
+                                pt2 = dal.get("publishTime") or ds.get("publishTime")
+                                if pt2:
+                                    y = _valid_year(_dt.fromtimestamp(int(pt2) / 1000).year)
+                                    if y:
+                                        result["release_year"] = y
+                            break
+                        except Exception:
+                            continue
+
+                break   # 第一个可达的搜索 path 成功后退出
+            except Exception:
                 continue
 
-            title  = str(row["title"]).strip()
-            artist = str(row["artist"]).strip()
-            year   = None
+        return result
 
-            try:
-                # 调用 QQ API 搜索
-                params = {"keyword": f"{artist} {title}", "limit": 3}
-                r = requests.get(f"{QQ_API_BASE}/search", params=params, timeout=5)
-                if r.status_code == 200:
-                    results = r.json().get("data", {}).get("list", [])
-                    if results:
-                        # 取第一条结果的 releaseYear
-                        first = results[0]
-                        yr = first.get("releaseYear") or first.get("pubTime", "")
-                        if yr:
-                            y = str(yr)[:4]
-                            if y.isdigit() and 1900 <= int(y) <= 2030:
-                                year = int(y)
-            except Exception:
-                pass
+    # ── QQ Music：获取歌曲全量元数据 ───────────────
+    async def _qq_fetch(title: str, artist: str) -> dict:
+        """
+        返回从 QQ Music 获取的字段 dict：
+          release_year, album, duration, cover_image, language, genre
+        """
+        result: dict = {}
+        try:
+            from qqmusic_api import search as _s, song as _song
+            raw = await asyncio.wait_for(
+                _s.search_by_type(keyword=f"{artist} {title}", num=3, page=1),
+                timeout=8.0
+            )
+            songs_list: list = []
+            if isinstance(raw, list) and raw:
+                first = raw[0]
+                songs_list = first.get("list", []) if isinstance(first, dict) else []
+            elif isinstance(raw, dict):
+                songs_list = raw.get("list", [])
+            if not songs_list:
+                return result
 
-            if year:
-                with conn.cursor() as cur:
-                    cur.execute("UPDATE songs SET release_year=%s WHERE id=%s AND (release_year IS NULL OR release_year=0)",
-                                (year, song_id))
-                conn.commit()
-                hit += 1
-            else:
-                miss += 1
+            mid = songs_list[0].get("mid", "")
+            if not mid:
+                return result
 
-            done_ids.add(song_id)
+            details = await asyncio.wait_for(_song.query_song([mid]), timeout=8.0)
+            if not details:
+                return result
+            detail = details[0] if isinstance(details, list) else details
+            if not isinstance(detail, dict):
+                return result
 
-            # 每 200 首保存进度
-            if (hit + miss) % 200 == 0:
-                with open(PROGRESS_YEAR_FILE, "w") as f:
-                    json.dump({"done": list(done_ids)}, f)
+            # release_year
+            pub = detail.get("time_public", "")
+            if pub:
+                y = _valid_year(pub)
+                if y:
+                    result["release_year"] = y
 
-            time.sleep(RATE_LIMIT_SEC)
+            # album
+            album_name = detail.get("albumName") or detail.get("album_name")
+            if album_name:
+                result["album"] = _clean_str(album_name, 200)
 
-    finally:
-        # 保存最终进度
-        with open(PROGRESS_YEAR_FILE, "w") as f:
-            json.dump({"done": list(done_ids)}, f)
-        restore_mysql(conn)
-        conn.close()
+            # duration（QQ 返回秒）
+            dur = detail.get("duration") or detail.get("time_total")
+            if dur:
+                try:
+                    d_sec = int(dur)
+                    if d_sec > 0:
+                        result["duration"] = d_sec
+                except Exception:
+                    pass
 
-    print(f"\n📊 结果: 命中 {hit:,} 首 / 未找到 {miss:,} 首")
-    print("✅ release_year 步骤完成")
+            # cover_image
+            cover = detail.get("coverUrl") or detail.get("cover_url")
+            if cover:
+                result["cover_image"] = _clean_str(cover, 200)
+
+            # language（可能是数字字符串或文字）
+            lang = detail.get("language") or detail.get("lan")
+            if lang is not None:
+                lang_str = str(lang).strip()
+                mapped = QQ_LANG_MAP.get(lang_str)
+                result["language"] = mapped if mapped else (_clean_str(lang_str, 10) or None)
+
+            # genre
+            genre = detail.get("genre") or detail.get("genre_name")
+            if genre:
+                result["genre"] = _clean_str(genre, 100)
+
+        except Exception:
+            pass
+
+        return result
+
+    # ── 主异步循环 ──────────────────────────────
+    async def _run_all():
+        # 统计
+        total_updated = 0
+        field_hits: dict = {
+            "release_year": 0, "album": 0, "duration": 0,
+            "cover_image": 0, "popularity": 0, "language": 0, "genre": 0,
+        }
+        source_hits = {"网易云": 0, "QQ": 0, "both": 0, "miss": 0}
+
+        conn = get_conn()
+        try:
+            speed_up_mysql(conn)
+            async with _httpx.AsyncClient() as client:
+                for _, row in tqdm(songs_to_process.iterrows(),
+                                   total=len(songs_to_process),
+                                   desc="补全外部歌曲元数据"):
+                    song_id = int(row["id"])
+                    if song_id in done_ids:
+                        continue
+
+                    title  = str(row["title"] or "").strip()
+                    artist = str(row["artist"] or "").strip()
+                    if not title:
+                        done_ids.add(song_id)
+                        continue
+
+                    # ① 网易云查询
+                    ne_data: dict = {}
+                    if netease_ok:
+                        ne_data = await _netease_fetch(client, title, artist)
+
+                    # ② QQ 查询（总是查，因为 genre/language 网易云不提供）
+                    qq_data: dict = {}
+                    if qq_ok:
+                        qq_data = await _qq_fetch(title, artist)
+
+                    # ③ 合并：网易云优先，QQ 补充缺失字段
+                    merged: dict = {}
+                    for field in field_hits.keys():
+                        val = ne_data.get(field) if ne_data.get(field) else qq_data.get(field)
+                        if val is not None:
+                            merged[field] = val
+
+                    # ④ 只更新当前 DB 中为 NULL/0/空 的字段
+                    to_update: dict = {}
+                    for field, new_val in merged.items():
+                        cur_val = row.get(field)
+                        if field == "release_year":
+                            if not cur_val or int(cur_val) == 0:
+                                to_update[field] = new_val
+                        elif field == "duration":
+                            if not cur_val or int(cur_val) == 0:
+                                to_update[field] = new_val
+                        elif field == "popularity":
+                            if cur_val is None:
+                                to_update[field] = new_val
+                        else:
+                            if not str(cur_val or "").strip():
+                                to_update[field] = new_val
+
+                    # ⑤ 执行 UPDATE
+                    if to_update:
+                        set_clause = ", ".join(f"`{f}` = %s" for f in to_update.keys())
+                        vals = list(to_update.values()) + [song_id]
+                        with conn.cursor() as cur:
+                            cur.execute(
+                                f"UPDATE songs SET {set_clause} WHERE id = %s",
+                                vals
+                            )
+                        conn.commit()
+                        total_updated += 1
+                        for f in to_update:
+                            field_hits[f] += 1
+                        # 统计来源
+                        from_ne = bool(ne_data)
+                        from_qq = bool(qq_data)
+                        if from_ne and from_qq:
+                            source_hits["both"] += 1
+                        elif from_ne:
+                            source_hits["网易云"] += 1
+                        elif from_qq:
+                            source_hits["QQ"] += 1
+                    else:
+                        source_hits["miss"] += 1
+
+                    done_ids.add(song_id)
+                    processed = len(done_ids)
+                    if processed % 100 == 0:
+                        with open(PROGRESS_EXT_FILE, "w") as pf:
+                            json.dump({"done": list(done_ids)}, pf)
+
+                    await asyncio.sleep(RATE_LIMIT_SEC)
+
+        finally:
+            with open(PROGRESS_EXT_FILE, "w") as pf:
+                json.dump({"done": list(done_ids)}, pf)
+            restore_mysql(conn)
+            conn.close()
+
+        print(f"\n📊 补全结果汇总:")
+        print(f"   实际更新歌曲数:  {total_updated:,} 首")
+        print(f"   未命中（跳过）: {source_hits['miss']:,} 首")
+        print(f"\n   数据来源分布:")
+        print(f"     仅网易云命中:    {source_hits['网易云']:,} 首")
+        print(f"     仅 QQ 命中:      {source_hits['QQ']:,} 首")
+        print(f"     两者均命中:      {source_hits['both']:,} 首")
+        print(f"\n   各字段补全数量:")
+        for f, cnt in field_hits.items():
+            print(f"     {f:<16}: {cnt:,}")
+
+    asyncio.run(_run_all())
+    print("\n✅ enrich_external 步骤完成")
+
+
+# 保留旧名称作为别名（向后兼容）
+def step_release_year():
+    """旧名称兼容入口，调用 step_enrich_external()"""
+    step_enrich_external()
 
 
 # ============================================================
@@ -1190,12 +1512,14 @@ def main():
   4. python enrich_db.py --step musicbrainz
   5. python enrich_db.py --step users
   6. python enrich_db.py --step play_history
+  7. python enrich_db.py --step enrich_external   ← 补全外部歌曲全量元数据（需先启动网易云 Node.js 服务）
         """
     )
     parser.add_argument(
         "--step",
         required=True,
-        choices=["alter", "songs", "musicbrainz", "users", "play_history", "release_year"],
+        choices=["alter", "songs", "musicbrainz", "users", "play_history",
+                 "enrich_external", "release_year"],
         help="执行哪个步骤"
     )
     parser.add_argument(
@@ -1219,8 +1543,8 @@ def main():
         step_users()
     elif args.step == "play_history":
         step_play_history()
-    elif args.step == "release_year":
-        step_release_year()
+    elif args.step in ("enrich_external", "release_year"):
+        step_enrich_external()
 
     print(f"\n🏁 完成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
