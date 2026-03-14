@@ -261,7 +261,6 @@ def speed_up_mysql(conn):
     with conn.cursor() as cur:
         cur.execute("SET SESSION FOREIGN_KEY_CHECKS=0")
         cur.execute("SET SESSION UNIQUE_CHECKS=0")
-        cur.execute("SET SESSION SQL_LOG_BIN=0")
     conn.commit()
 
 
@@ -424,7 +423,7 @@ def step_songs():
                     release_year  INT,
                     origin_country CHAR(2),
                     INDEX idx_tmp_kkbox (kkbox_id)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
         conn.commit()
 
@@ -849,7 +848,7 @@ def step_users():
               SUM(city IS NOT NULL) AS has_city,
               COUNT(*) AS total
             FROM users
-            WHERE username LIKE 'kkbox_%'
+            WHERE username LIKE 'kkbox_%%'
         """, c).iloc[0]
     print(f"\n📊 kkbox 用户更新后统计 (共 {int(stats['total']):,} 人):")
     print(f"   bd 填充率: {int(stats['has_bd']):,} ({100*stats['has_bd']/stats['total']:.1f}%)")
