@@ -477,25 +477,50 @@ def step_songs():
         # 3. 语言数字代码 → 中文标签（SQL CASE WHEN）
         # ──────────────────────────────────────────
         print("\n🔤 更新 KKBOX 歌曲语言数字代码 → 中文标签 ...")
-        # 构建 CASE WHEN
+        # 语言字段存储格式为 "3.0"、"-1.0"、"3.0;国语" 等
+        # 先用 SUBSTRING_INDEX(language, '.', 1) 取 "3"、"-1"，再 CAST 为整数
         case_clauses = "\n    ".join(
-            f"WHEN '{code}' THEN '{label}'"
+            f"WHEN {code} THEN '{label}'"
             for code, label in KKBOX_LANG_MAP.items()
         )
         lang_sql = f"""
             UPDATE songs
-            SET language = CASE language
+            SET language = CASE CAST(SUBSTRING_INDEX(language, '.', 1) AS SIGNED)
                 {case_clauses}
                 ELSE '其他'
             END
             WHERE kkbox_id IS NOT NULL
-              AND language REGEXP '^-?[0-9]+$'
+              AND language REGEXP '^-?[0-9]'
         """
         with conn.cursor() as cur:
             cur.execute(lang_sql)
             affected = cur.rowcount
         conn.commit()
         print(f"   ✅ 更新 {affected:,} 行 language")
+
+        # language 已转为中文标签后，对 origin_country='XX' 的 KKBOX 歌曲
+        # 重新按语言推断（之前因 language 为数字代码而无法匹配）
+        print("\n🔄 origin_country 修正（language 已更新，重映 XX 歌曲）...")
+        lang_case2 = "\n    ".join(
+            f"WHEN '{lang}' THEN '{country}'"
+            for lang, country in LANG_TO_COUNTRY.items()
+        )
+        refix_sql = f"""
+            UPDATE songs
+            SET origin_country = CASE language
+                {lang_case2}
+                ELSE origin_country
+            END
+            WHERE origin_country = 'XX'
+              AND kkbox_id IS NOT NULL
+              AND language IS NOT NULL
+              AND language NOT IN ('未知', '其他', '')
+        """
+        with conn.cursor() as cur:
+            cur.execute(refix_sql)
+            affected2 = cur.rowcount
+        conn.commit()
+        print(f"   ✅ 重映 {affected2:,} 行 origin_country（从 XX → 正确国家）")
 
         # ──────────────────────────────────────────
         # 4. genre_ids → genre（Python 批量，仅补空值）
@@ -597,6 +622,118 @@ def step_songs():
           f"= {100*stats['has_genre']/stats['total']:.1f}%")
 
     print("\n✅ songs 步骤完成")
+
+
+# ============================================================
+# --step release_year : 通过 QQ/网易云 API 补全外部歌曲 release_year
+# ============================================================
+def step_release_year():
+    """
+    为外部歌曲（kkbox_id IS NULL）查询 QQ/网易云 API 获取 release_year。
+    前提：qq_api 服务必须运行在 127.0.0.1:8000。
+    支持断点续跑（release_year_progress.json）。
+    """
+    import requests
+    PROGRESS_YEAR_FILE = os.path.join(os.path.dirname(__file__), "release_year_progress.json")
+    QQ_API_BASE = "http://127.0.0.1:8000"
+    RATE_LIMIT_SEC = 0.5   # QQ API 无强制限速，0.5s 保守
+
+    print_sep()
+    print("📅 [Step: release_year] 通过 QQ API 补全外部歌曲 release_year")
+    print_sep()
+
+    # 连通性检测
+    try:
+        resp = requests.get(f"{QQ_API_BASE}/health", timeout=3)
+        if resp.status_code != 200:
+            raise ConnectionError("非 200")
+        print("   ✅ QQ API 服务可达")
+    except Exception as e:
+        print(f"   ❌ QQ API 不可达（{e}）")
+        print("      请先启动服务：uvicorn app:app --host 127.0.0.1 --port 8000")
+        return
+
+    # 加载断点进度
+    done_ids: set = set()
+    if os.path.exists(PROGRESS_YEAR_FILE):
+        with open(PROGRESS_YEAR_FILE) as f:
+            done_ids = set(json.load(f).get("done", []))
+        print(f"   断点续跑：已处理 {len(done_ids)} 首")
+
+    # 查询需处理歌曲
+    engine = get_engine()
+    with engine.connect() as c:
+        songs_df = pd.read_sql("""
+            SELECT id, title, artist
+            FROM songs
+            WHERE kkbox_id IS NULL
+              AND (release_year IS NULL OR release_year = 0)
+            ORDER BY id
+        """, c)
+    print(f"   需补全 release_year 的外部歌曲: {len(songs_df):,} 首")
+    if songs_df.empty:
+        print("   🎉 无需处理，全部已有 release_year")
+        return
+
+    conn = get_conn()
+    try:
+        speed_up_mysql(conn)
+        hit = 0
+        miss = 0
+
+        for _, row in tqdm(songs_df.iterrows(), total=len(songs_df), desc="QQ API 查询"):
+            song_id = int(row["id"])
+            if song_id in done_ids:
+                continue
+
+            title  = str(row["title"]).strip()
+            artist = str(row["artist"]).strip()
+            year   = None
+
+            try:
+                # 调用 QQ API 搜索
+                params = {"keyword": f"{artist} {title}", "limit": 3}
+                r = requests.get(f"{QQ_API_BASE}/search", params=params, timeout=5)
+                if r.status_code == 200:
+                    results = r.json().get("data", {}).get("list", [])
+                    if results:
+                        # 取第一条结果的 releaseYear
+                        first = results[0]
+                        yr = first.get("releaseYear") or first.get("pubTime", "")
+                        if yr:
+                            y = str(yr)[:4]
+                            if y.isdigit() and 1900 <= int(y) <= 2030:
+                                year = int(y)
+            except Exception:
+                pass
+
+            if year:
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE songs SET release_year=%s WHERE id=%s AND (release_year IS NULL OR release_year=0)",
+                                (year, song_id))
+                conn.commit()
+                hit += 1
+            else:
+                miss += 1
+
+            done_ids.add(song_id)
+
+            # 每 200 首保存进度
+            if (hit + miss) % 200 == 0:
+                with open(PROGRESS_YEAR_FILE, "w") as f:
+                    json.dump({"done": list(done_ids)}, f)
+
+            time.sleep(RATE_LIMIT_SEC)
+
+    finally:
+        # 保存最终进度
+        with open(PROGRESS_YEAR_FILE, "w") as f:
+            json.dump({"done": list(done_ids)}, f)
+        restore_mysql(conn)
+        conn.close()
+
+    print(f"\n📊 结果: 命中 {hit:,} 首 / 未找到 {miss:,} 首")
+    print("✅ release_year 步骤完成")
 
 
 # ============================================================
@@ -792,24 +929,30 @@ def step_users():
             members_df["gender"].isin(["male", "female"]), None
         )
 
-        # 查询数据库中 kkbox 用户：{msno: user_id}
-        print("  查询 kkbox 用户映射 ...")
+        # KKBOX msno 是单向哈希，无法还原。
+        # 但导入时按 members.csv 行顺序赋予 kkbox_000001/000002/...
+        # 因此 kkbox_NNNNNN 对应 members.csv 第 N-1 行（0-based）。
+        print("  查询 kkbox 用户（按 id 排序以还原位置映射）...")
         with conn.cursor() as cur:
-            cur.execute("SELECT id, SUBSTRING(username, 7) AS msno FROM users "
-                        "WHERE username LIKE 'kkbox_%'")
-            kkbox_users = {row[1]: row[0] for row in cur.fetchall()}
-        print(f"   数据库中 kkbox 用户: {len(kkbox_users):,} 个")
+            cur.execute(
+                "SELECT id, CAST(SUBSTRING(username, 7) AS UNSIGNED) AS seq "
+                "FROM users WHERE username LIKE 'kkbox_%' ORDER BY id"
+            )
+            kkbox_rows = cur.fetchall()   # [(user_id, seq_1based), ...]
+        print(f"   数据库中 kkbox 用户: {len(kkbox_rows):,} 个")
 
-        # 准备批量更新数据
+        members_df = members_df.reset_index(drop=True)   # 确保 0-based integer index
+
+        # 准备批量更新数据（按位置匹配）
         updates = []
-        for _, row in members_df.iterrows():
-            msno = row["msno"]
-            if msno not in kkbox_users:
+        for (user_id, seq) in kkbox_rows:
+            row_idx = int(seq) - 1
+            if row_idx < 0 or row_idx >= len(members_df):
                 continue
-            user_id = kkbox_users[msno]
+            row = members_df.iloc[row_idx]
             bd_val      = int(row["bd_clean"]) if pd.notna(row["bd_clean"]) else None
-            city_val    = str(row["city"]) if pd.notna(row["city"]) else None
-            gender_val  = row["gender_clean"] if pd.notna(row["gender_clean"]) else None
+            city_val    = str(row["city"])     if pd.notna(row["city"])     else None
+            gender_val  = row["gender_clean"]  if pd.notna(row["gender_clean"]) else None
             date_val    = row["create_date"]
 
             updates.append((bd_val, city_val, gender_val, date_val, user_id))
@@ -1052,7 +1195,7 @@ def main():
     parser.add_argument(
         "--step",
         required=True,
-        choices=["alter", "songs", "musicbrainz", "users", "play_history"],
+        choices=["alter", "songs", "musicbrainz", "users", "play_history", "release_year"],
         help="执行哪个步骤"
     )
     parser.add_argument(
@@ -1076,6 +1219,8 @@ def main():
         step_users()
     elif args.step == "play_history":
         step_play_history()
+    elif args.step == "release_year":
+        step_release_year()
 
     print(f"\n🏁 完成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
