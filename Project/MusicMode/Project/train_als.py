@@ -24,7 +24,7 @@ warnings.filterwarnings('ignore')
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 MODE_DIR = os.path.join(os.path.dirname(PROJECT_DIR), "Mode")
-FEATURE_PATH = os.path.join(MODE_DIR, "features.pkl")
+FEATURE_PATH = os.path.join(MODE_DIR, "features_v3.pkl")
 ALS_MODEL_PATH = os.path.join(MODE_DIR, "als_model.pkl")
 CANDIDATES_PATH = os.path.join(MODE_DIR, "candidates.pkl")
 
@@ -43,7 +43,7 @@ def load_features():
     
     if not os.path.exists(FEATURE_PATH):
         print(f"   ❌ 特征文件不存在: {FEATURE_PATH}")
-        print(f"   📌 请先运行 prepare_features.py")
+        print(f"   📌 请先运行 prepare_features_v3.py")
         sys.exit(1)
     
     with open(FEATURE_PATH, 'rb') as f:
@@ -51,7 +51,7 @@ def load_features():
     
     print(f"   ✅ 用户数: {features['n_users']:,}")
     print(f"   ✅ 歌曲数: {features['n_songs']:,}")
-    print(f"   ✅ 样本数: {len(features['user_encoded']):,}")
+    print(f"   ✅ 样本数: {len(features['user_id_encoded']):,}")
     
     return features
 
@@ -73,8 +73,8 @@ def build_interaction_matrix(features):
     print("   🔨 构建稀疏矩阵...")
     
     # 使用 lil_matrix 构建（更快的增量添加）
-    user_ids = features['user_encoded']
-    song_ids = features['song_encoded']
+    user_ids = features['user_id_encoded']
+    song_ids = features['song_id_encoded']
     targets = features['target']
     
     # 统计每个 (user, song) 的交互次数
@@ -272,7 +272,7 @@ def main():
     print(f"\n📁 输出文件:")
     print(f"   - 模型: {ALS_MODEL_PATH}")
     print(f"   - 候选集: {CANDIDATES_PATH}")
-    print(f"\n🚀 下一步: 运行 train_deepfm.py 训练精排模型")
+    print(f"\n🚀 下一步: 运行 train_lgbm.py 和 train_deepfm_v3.py 训练精排模型")
 
 
 if __name__ == "__main__":

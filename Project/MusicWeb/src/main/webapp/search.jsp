@@ -500,6 +500,7 @@
                                                 };
 
                                                 console.log('播放歌曲:', song);
+                                                player.currentSourceChannel = 'SEARCH';
                                                 player.playSong(song);
                                             });
                                         });

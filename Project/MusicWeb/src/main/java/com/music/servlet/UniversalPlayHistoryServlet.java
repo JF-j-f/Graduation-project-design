@@ -92,6 +92,14 @@ public class UniversalPlayHistoryServlet extends HttpServlet {
             int releaseYear = body.has("releaseYear") ? body.get("releaseYear").getAsInt() : 0;
             String genre = getJsonString(body, "genre");
             String language = getJsonString(body, "language");
+            // sourceChannel: 统一播放来源枚举（由前端传入），外部平台强制覆盖为 EXTERNAL
+            String sourceChannel = getJsonString(body, "sourceChannel");
+            if (source != null && ("netease".equals(source) || "qq".equals(source))) {
+                sourceChannel = "EXTERNAL";
+            }
+            if (sourceChannel == null || sourceChannel.isEmpty()) {
+                sourceChannel = "DIRECT_PLAY";
+            }
 
             // 4. 验证必要字段
             if (title == null || title.isEmpty()) {
@@ -198,9 +206,9 @@ public class UniversalPlayHistoryServlet extends HttpServlet {
                 }
             }
 
-            // 6. 记录播放历史
+            // 6. 记录播放历史（含 sourceChannel）
             if (finalSongId > 0) {
-                boolean historyAdded = playHistoryDAO.addPlayHistory(user.getId(), finalSongId);
+                boolean historyAdded = playHistoryDAO.addPlayHistory(user.getId(), finalSongId, sourceChannel);
                 result.addProperty("success", true);
                 result.addProperty("songId", finalSongId);
                 result.addProperty("historyRecorded", historyAdded);

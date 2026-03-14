@@ -2,14 +2,16 @@
 # -*- coding: utf-8 -*-
 """
 推荐效果评估脚本 evaluate_recs.py
-计算指标：CTR、平均完播率、收藏率、跳曲率、Precision@10、覆盖度
+计算指标：CTR、平均完播率、收藏率、跳曲率、Precision@10、覆盖度、NDCG@10、Intra-list Diversity
 输出到控制台 + Mode/evaluation_report.txt
 """
 
 import sys
 import os
+import math
 import datetime
 import pymysql
+from collections import defaultdict
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
@@ -112,7 +114,82 @@ def compute_per_user_metrics(cur):
     return results
 
 
-# ── 3. Precision@10（按 feedback_score 降序，取前10推荐） ───
+# ── 3. NDCG@10（按 feedback_score 降序，用 was_played 作为相关性） ───
+def compute_ndcg_at_k(cur, k=10):
+    """
+    NDCG@K：归一化折损累积增益
+    相关性 = was_played（0/1），按 feedback_score 降序排列
+    """
+    cur.execute("""
+        SELECT rf.user_id, rf.recommend_date, rf.was_played, rf.feedback_score,
+               ROW_NUMBER() OVER (
+                   PARTITION BY rf.user_id, rf.recommend_date
+                   ORDER BY rf.feedback_score DESC
+               ) AS rn
+        FROM recommendation_feedback rf
+        JOIN users u ON u.id = rf.user_id
+        WHERE u.username != 'admin'
+    """)
+    all_rows = cur.fetchall()
+
+    groups = defaultdict(list)
+    for row in all_rows:
+        key = (row['user_id'], str(row['recommend_date']))
+        if row['rn'] <= k:
+            groups[key].append(int(row['was_played'] or 0))
+
+    if not groups:
+        return 0.0
+
+    ndcg_scores = []
+    for relevances in groups.values():
+        # DCG
+        dcg = sum(rel / math.log2(i + 2) for i, rel in enumerate(relevances))
+        # Ideal DCG（所有相关项排最前）
+        ideal = sorted(relevances, reverse=True)
+        idcg  = sum(rel / math.log2(i + 2) for i, rel in enumerate(ideal))
+        ndcg_scores.append(dcg / idcg if idcg > 0 else 0.0)
+
+    return sum(ndcg_scores) / len(ndcg_scores)
+
+
+# ── 4. Intra-list Diversity（推荐列表内流派多样性，Shannon 熵均值） ──
+def compute_intra_list_diversity(cur):
+    """
+    对每个用户当前推荐列表，计算流派分布的 Shannon 熵
+    返回所有用户推荐列表的平均熵（越高越多样）
+    """
+    cur.execute("""
+        SELECT r.user_id, s.genre
+        FROM recommendations r
+        JOIN songs s ON s.id = r.song_id
+        JOIN users u ON u.id = r.user_id
+        WHERE u.username != 'admin' AND s.genre IS NOT NULL AND s.genre != ''
+    """)
+    rows = cur.fetchall()
+
+    user_genres = defaultdict(list)
+    for row in rows:
+        user_genres[row['user_id']].append(row['genre'])
+
+    if not user_genres:
+        return 0.0
+
+    entropies = []
+    for genres in user_genres.values():
+        total = len(genres)
+        counts = defaultdict(int)
+        for g in genres:
+            primary = g.split(';')[0].strip()
+            counts[primary] += 1
+        entropy = -sum((c / total) * math.log2(c / total)
+                       for c in counts.values() if c > 0)
+        entropies.append(entropy)
+
+    return sum(entropies) / len(entropies)
+
+
+# ── 5. Precision@10（按 feedback_score 降序，取前10推荐） ───
 def compute_precision_at_k(cur, k=10):
     """
     对每个 (user_id, recommend_date) 组，按 feedback_score 降序取前K，
@@ -144,8 +221,8 @@ def compute_precision_at_k(cur, k=10):
     return sum(precisions) / len(precisions) if precisions else 0.0
 
 
-# ── 4. 格式化输出 ──────────────────────────────────────────
-def format_report(overall, per_user, p_at_10, generated_at):
+# ── 6. 格式化输出 ──────────────────────────────────────────
+def format_report(overall, per_user, p_at_10, ndcg_10, diversity, generated_at):
     lines = []
     lines.append("=" * 60)
     lines.append("  音乐推荐系统效果评估报告")
@@ -159,6 +236,8 @@ def format_report(overall, per_user, p_at_10, generated_at):
     lines.append(f"  收藏率          : {overall['fav_rate']:.2%}  ({overall['total_favorited']:,} 首被收藏)")
     lines.append(f"  跳曲率          : {overall['skip_rate']:.2%}  (完播<20%/已播放)")
     lines.append(f"  Precision@10    : {p_at_10:.2%}")
+    lines.append(f"  NDCG@10         : {ndcg_10:.4f}")
+    lines.append(f"  列表内多样性    : {diversity:.4f}  (流派 Shannon 熵均值)")
     lines.append(f"  覆盖度          : {overall['coverage']:.4%}  ({overall['distinct_songs']:,} / {overall['total_songs']:,} 首歌)")
 
     lines.append("\n【逐用户指标】")
@@ -181,6 +260,8 @@ def format_report(overall, per_user, p_at_10, generated_at):
     lines.append("  收藏率      = was_favorited=1 / 总推荐数")
     lines.append("  跳曲率      = play_completion<0.2 / was_played=1")
     lines.append("  Precision@10= 每用户每日推荐中 feedback_score 前10首的 was_played 均值")
+    lines.append("  NDCG@10     = 归一化折损累积增益（考虑排名权重，相关性=was_played）")
+    lines.append("  列表内多样性= 当前推荐列表中流派分布的 Shannon 熵均值（越高越多样）")
     lines.append("  覆盖度      = 被推荐过的不同歌曲数 / songs 总数")
     lines.append("\n" + "=" * 60)
 
@@ -196,11 +277,13 @@ def main():
             overall   = compute_overall_metrics(cur)
             per_user  = compute_per_user_metrics(cur)
             p_at_10   = compute_precision_at_k(cur, k=10)
+            ndcg_10   = compute_ndcg_at_k(cur, k=10)
+            diversity = compute_intra_list_diversity(cur)
     finally:
         db.close()
 
     generated_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    report = format_report(overall, per_user, p_at_10, generated_at)
+    report = format_report(overall, per_user, p_at_10, ndcg_10, diversity, generated_at)
 
     # 控制台输出
     print(report)

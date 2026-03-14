@@ -8,21 +8,27 @@ import java.util.List;
 
 public class PlayHistoryDAO {
 
-    // 添加播放历史记录
+    // 添加播放历史记录（含 source_channel）
     // 播放新歌曲后会自动清除该用户的Redis缓存，确保下次查询获取最新数据
     public boolean addPlayHistory(int userId, int songId) {
+        return addPlayHistory(userId, songId, null);
+    }
+
+    public boolean addPlayHistory(int userId, int songId, String sourceChannel) {
         Connection conn = null;
         PreparedStatement pstmt = null;
 
         try {
             conn = DBUtil.getConnection();
-            String sql = "INSERT INTO play_history (user_id, song_id, play_duration) VALUES (?, ?, 0)";
+            String sql = "INSERT INTO play_history (user_id, song_id, play_duration, source_channel) VALUES (?, ?, 0, ?)";
             pstmt = conn.prepareStatement(sql);
             pstmt.setInt(1, userId);
             pstmt.setInt(2, songId);
+            pstmt.setString(3, sourceChannel != null ? sourceChannel : "UNKNOWN");
 
             int result = pstmt.executeUpdate();
-            System.out.println("🎵 [DEBUG] 添加播放历史 - 用户ID: " + userId + ", 歌曲ID: " + songId + ", 结果: " + (result > 0));
+            System.out.println("🎵 [DEBUG] 添加播放历史 - 用户ID: " + userId + ", 歌曲ID: " + songId
+                    + ", source=" + sourceChannel + ", 结果: " + (result > 0));
 
             // 播放新歌后清除该用户的播放历史缓存，确保下次查询获取最新数据
             if (result > 0) {
