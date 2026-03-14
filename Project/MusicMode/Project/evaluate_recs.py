@@ -30,15 +30,18 @@ def get_db():
 
 # ── 1. 系统整体指标 ─────────────────────────────────────────
 def compute_overall_metrics(cur):
+    # 排除 admin 用户的数据，避免测试账号拉低系统指标
     cur.execute("""
         SELECT
             COUNT(*)                                                          AS total_recs,
-            SUM(was_played)                                                   AS total_played,
-            SUM(was_favorited)                                                AS total_favorited,
-            AVG(CASE WHEN was_played = 1 THEN play_completion END)           AS avg_completion,
-            SUM(CASE WHEN was_played = 1 AND play_completion < 0.2 THEN 1 ELSE 0 END) AS skips,
-            COUNT(DISTINCT song_id)                                           AS distinct_songs
-        FROM recommendation_feedback
+            SUM(rf.was_played)                                                AS total_played,
+            SUM(rf.was_favorited)                                             AS total_favorited,
+            AVG(CASE WHEN rf.was_played = 1 THEN rf.play_completion END)      AS avg_completion,
+            SUM(CASE WHEN rf.was_played = 1 AND rf.play_completion < 0.2 THEN 1 ELSE 0 END) AS skips,
+            COUNT(DISTINCT rf.song_id)                                        AS distinct_songs
+        FROM recommendation_feedback rf
+        JOIN users u ON u.id = rf.user_id
+        WHERE u.username != 'admin'
     """)
     row = cur.fetchone()
 
@@ -84,6 +87,7 @@ def compute_per_user_metrics(cur):
             SUM(CASE WHEN rf.was_played=1 AND rf.play_completion < 0.2 THEN 1 ELSE 0 END) AS skips
         FROM recommendation_feedback rf
         JOIN users u ON u.id = rf.user_id
+        WHERE u.username != 'admin'
         GROUP BY rf.user_id, u.username
         ORDER BY rf.user_id
     """)
@@ -114,13 +118,16 @@ def compute_precision_at_k(cur, k=10):
     对每个 (user_id, recommend_date) 组，按 feedback_score 降序取前K，
     计算 was_played 比例，最后取所有组的均值。
     """
+    # 排除 admin 用户
     cur.execute("""
-        SELECT user_id, recommend_date, was_played, feedback_score,
+        SELECT rf.user_id, rf.recommend_date, rf.was_played, rf.feedback_score,
                ROW_NUMBER() OVER (
-                   PARTITION BY user_id, recommend_date
-                   ORDER BY feedback_score DESC
+                   PARTITION BY rf.user_id, rf.recommend_date
+                   ORDER BY rf.feedback_score DESC
                ) AS rn
-        FROM recommendation_feedback
+        FROM recommendation_feedback rf
+        JOIN users u ON u.id = rf.user_id
+        WHERE u.username != 'admin'
     """)
     all_rows = cur.fetchall()
 

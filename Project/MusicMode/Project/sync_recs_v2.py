@@ -252,6 +252,61 @@ def update_feedback(db):
             else:
                 print(f"   ℹ️ 步骤D - 近期无显式满意度反馈")
 
+            # ===================================================================
+            # 步骤E: 自动重屏蔽检测
+            # 对已到期（is_active=0）且回归权重 < 1.0 的屏蔽项，
+            # 检查最近 2 天推荐中匹配歌曲是否全部未播放 → 重新激活屏蔽
+            # ===================================================================
+            cur.execute("""
+                SELECT ucb.id, ucb.user_id, ucb.block_type, ucb.block_value,
+                       ucb.block_count, ucb.blocked_until
+                FROM user_content_blocks ucb
+                WHERE ucb.is_active = 0
+                  AND DATEDIFF(CURDATE(), ucb.blocked_until) BETWEEN 0 AND 49
+            """)
+            expired_blocks = cur.fetchall()
+            reblock_count = 0
+
+            for eb in expired_blocks:
+                uid_eb = eb['user_id']
+                btype = eb['block_type']
+                bval = eb['block_value']
+
+                # 查找最近 2 天推荐中匹配该屏蔽项的歌曲
+                if btype == 'genre':
+                    match_sql = """
+                        SELECT rf.was_played FROM recommendation_feedback rf
+                        JOIN songs s ON s.id = rf.song_id
+                        WHERE rf.user_id = %s AND rf.recommend_date >= DATE_SUB(CURDATE(), INTERVAL 2 DAY)
+                          AND s.genre LIKE %s
+                    """
+                else:
+                    match_sql = """
+                        SELECT rf.was_played FROM recommendation_feedback rf
+                        JOIN songs s ON s.id = rf.song_id
+                        WHERE rf.user_id = %s AND rf.recommend_date >= DATE_SUB(CURDATE(), INTERVAL 2 DAY)
+                          AND s.artist LIKE %s
+                    """
+                cur.execute(match_sql, (uid_eb, f"%{bval}%"))
+                matches = cur.fetchall()
+
+                if matches and all(m['was_played'] == 0 for m in matches):
+                    # 全部未播放 → 重新激活屏蔽
+                    new_count = eb['block_count'] + 1
+                    new_until = (datetime.date.today() + datetime.timedelta(days=14 + (new_count - 1) * 7)).strftime('%Y-%m-%d')
+                    cur.execute("""
+                        UPDATE user_content_blocks
+                        SET is_active = 1, block_count = %s, blocked_until = %s,
+                            blocked_at = CURRENT_TIMESTAMP
+                        WHERE id = %s
+                    """, (new_count, new_until, eb['id']))
+                    reblock_count += 1
+
+            if reblock_count > 0:
+                print(f"   🔄 步骤E - 自动重屏蔽: {reblock_count} 项")
+            else:
+                print(f"   ℹ️ 步骤E - 无需自动重屏蔽")
+
             db.commit()
             print(f"   ✅ 反馈回收完成。")
     except Exception as e:
@@ -286,7 +341,8 @@ def find_genre_proxy(cur, genre_str, mysql2faiss, index, genre_cache, max_proxie
     genre_cache[keyword] = proxies
     return proxies[:max_proxies]
 
-def get_user_profile(db, user_id, mysql2faiss, index, genre_cache, song_meta_cache):
+def get_user_profile(db, user_id, mysql2faiss, index, genre_cache, song_meta_cache,
+                     blocked_genres=None, blocked_artists=None):
     """多源加权生成用户画像 64 维向量（含外部歌曲桥接）"""
     today = datetime.datetime.now()
     yesterday = today - datetime.timedelta(days=1)
@@ -296,6 +352,32 @@ def get_user_profile(db, user_id, mysql2faiss, index, genre_cache, song_meta_cac
     weights = []
 
     with db.cursor() as cur:
+        # ── 满意度驱动权重 ──────────────────────────────────────
+        # 根据用户最近一次满意度反馈，动态调整偏好权重和历史行为衰减
+        # 不满意 → 大幅压制历史行为、强化显式偏好（信任用户说的）
+        # 满意/非常满意 → 维持历史行为权重（算法方向正确）
+        cur.execute("""
+            SELECT satisfaction FROM user_preference_feedback
+            WHERE user_id = %s ORDER BY feedback_date DESC LIMIT 1
+        """, (user_id,))
+        sati_row = cur.fetchone()
+        latest_satisfaction = sati_row['satisfaction'] if sati_row else None
+
+        SATI_CONFIG = {
+            'dissatisfied':   {'pref_weight': 3.0, 'history_dampen': 0.3},
+            'neutral':        {'pref_weight': 1.5, 'history_dampen': 0.8},
+            'satisfied':      {'pref_weight': 0.5, 'history_dampen': 1.0},
+            'very_satisfied': {'pref_weight': 0.2, 'history_dampen': 1.0},
+        }
+        cfg = SATI_CONFIG.get(latest_satisfaction,
+                              {'pref_weight': 0.2, 'history_dampen': 1.0})
+        history_dampen = cfg['history_dampen']
+        pref_weight    = cfg['pref_weight']
+
+        if latest_satisfaction:
+            print(f"      满意度={latest_satisfaction} → "
+                  f"pref_weight={pref_weight}, history_dampen={history_dampen}")
+
         # 1. 播放历史（含完播率加权）
         cur.execute("""
             SELECT ph.song_id, ph.play_time,
@@ -328,7 +410,7 @@ def get_user_profile(db, user_id, mysql2faiss, index, genre_cache, song_meta_cac
             else:
                 completion_factor = 1.0
 
-            w = base_w * completion_factor
+            w = base_w * completion_factor * history_dampen
 
             if sid in mysql2faiss:
                 vec = index.reconstruct(mysql2faiss[sid])
@@ -342,7 +424,8 @@ def get_user_profile(db, user_id, mysql2faiss, index, genre_cache, song_meta_cac
                     meta = cur.fetchone()
                     genre = meta.get('genre', '') if meta else ''
                     song_meta_cache[sid] = genre
-                if genre:
+                # 跳过被屏蔽流派的代理向量，防止"曲线"注入用户画像
+                if genre and not (blocked_genres and any(bg in genre for bg in blocked_genres)):
                     proxies = find_genre_proxy(cur, genre, mysql2faiss, index, genre_cache, 1)
                     for pvec in proxies:
                         vectors.append(pvec)
@@ -359,7 +442,7 @@ def get_user_profile(db, user_id, mysql2faiss, index, genre_cache, song_meta_cac
             sid = row['song_id']
             if sid in mysql2faiss:
                 vectors.append(index.reconstruct(mysql2faiss[sid]))
-                weights.append(WEIGHTS['favorite_default'])
+                weights.append(WEIGHTS['favorite_default'] * history_dampen)
             else:
                 genre = song_meta_cache.get(sid)
                 if genre is None:
@@ -367,11 +450,11 @@ def get_user_profile(db, user_id, mysql2faiss, index, genre_cache, song_meta_cac
                     meta = cur.fetchone()
                     genre = meta.get('genre', '') if meta else ''
                     song_meta_cache[sid] = genre
-                if genre:
+                if genre and not (blocked_genres and any(bg in genre for bg in blocked_genres)):
                     proxies = find_genre_proxy(cur, genre, mysql2faiss, index, genre_cache, 1)
                     for pvec in proxies:
                         vectors.append(pvec)
-                        weights.append(WEIGHTS['favorite_default'] * 0.5)
+                        weights.append(WEIGHTS['favorite_default'] * 0.5 * history_dampen)
 
         # 3. 自建歌单
         cur.execute("""
@@ -384,7 +467,7 @@ def get_user_profile(db, user_id, mysql2faiss, index, genre_cache, song_meta_cac
             sid = row['song_id']
             if sid in mysql2faiss:
                 vectors.append(index.reconstruct(mysql2faiss[sid]))
-                weights.append(WEIGHTS['playlist_custom'])
+                weights.append(WEIGHTS['playlist_custom'] * history_dampen)
 
         # 4. 用户偏好标签补充（preferred_genres / preferred_artists）
         # 无论有无行为数据都作为低权重补充，对稀疏数据用户尤为重要
@@ -393,7 +476,10 @@ def get_user_profile(db, user_id, mysql2faiss, index, genre_cache, song_meta_cac
         cur.execute("SELECT preferred_genres, preferred_artists FROM users WHERE id = %s", (user_id,))
         pref = cur.fetchone()
         if pref:
-            pref_weight = 0.2  # 低权重，作为行为数据的补充
+            # pref_weight 已由满意度动态计算（不满意=3.0，满意=0.5，默认=0.2）
+            # 不满意时增大查询量，注入更多偏好向量以压过历史行为
+            pref_limit = 100 if pref_weight >= 1.5 else 50
+
             if pref.get('preferred_genres'):
                 for token in pref['preferred_genres'].split(';'):
                     token = token.strip()
@@ -404,8 +490,8 @@ def get_user_profile(db, user_id, mysql2faiss, index, genre_cache, song_meta_cac
                         SELECT id FROM songs
                         WHERE (genre LIKE %s OR language LIKE %s)
                           AND kkbox_id IS NOT NULL AND kkbox_id != ''
-                        ORDER BY popularity DESC LIMIT 50
-                    """, (f"%{token}%", f"%{token}%"))
+                        ORDER BY popularity DESC LIMIT %s
+                    """, (f"%{token}%", f"%{token}%", pref_limit))
                     for song_row in cur.fetchall():
                         if song_row['id'] in mysql2faiss:
                             vectors.append(index.reconstruct(mysql2faiss[song_row['id']]))
@@ -420,8 +506,8 @@ def get_user_profile(db, user_id, mysql2faiss, index, genre_cache, song_meta_cac
                         SELECT id FROM songs
                         WHERE artist LIKE %s
                           AND kkbox_id IS NOT NULL AND kkbox_id != ''
-                        ORDER BY popularity DESC LIMIT 50
-                    """, (f"%{artist}%",))
+                        ORDER BY popularity DESC LIMIT %s
+                    """, (f"%{artist}%", pref_limit))
                     for song_row in cur.fetchall():
                         if song_row['id'] in mysql2faiss:
                             vectors.append(index.reconstruct(mysql2faiss[song_row['id']]))
@@ -456,8 +542,8 @@ def generate_recommendations():
             # 只清除 AI 生成的推荐，保留 Java 端的 cold_start 推荐
             cur.execute("DELETE FROM recommendations WHERE source_type = 'deepfm'")
             
-            # 获取所有普通用户（排除管理员）
-            cur.execute("SELECT id FROM users WHERE status='active' AND username != 'admin'")
+            # 仅为真实业务用户生成推荐（当前为 jf / jf2），排除 admin 和所有 kkbox 训练数据账号
+            cur.execute("SELECT id FROM users WHERE username IN ('jf', 'jf2')")
             users = cur.fetchall()
             
             # 预加载热门歌曲候选池（避免 ORDER BY RAND() 慢查询）
@@ -469,7 +555,11 @@ def generate_recommendations():
             # genre 和歌曲元数据缓存
             genre_cache = {}
             song_meta_cache = {}
-            
+
+            # 预加载歌曲元数据（genre, artist）用于屏蔽过滤
+            cur.execute("SELECT id, genre, artist FROM songs")
+            song_meta_map = {r['id']: (r['genre'] or '', r['artist'] or '') for r in cur.fetchall()}
+
             for u in users:
                 uid = u['id']
                 
@@ -481,9 +571,36 @@ def generate_recommendations():
                 cooled = set(r['song_id'] for r in cur.fetchall())
                 
                 exclude_set = listened.union(cooled)
-                
-                # 生成画像
-                profile_vec = get_user_profile(db, uid, mysql2faiss, index, genre_cache, song_meta_cache)
+
+                # 加载屏蔽列表
+                cur.execute("""
+                    SELECT block_type, block_value, blocked_until, block_count, is_active
+                    FROM user_content_blocks WHERE user_id = %s
+                """, (uid,))
+                blocks = cur.fetchall()
+
+                blocked_genres = set()
+                blocked_artists = set()
+                reintro_map = {}  # (block_type, block_value) → reintro_weight
+
+                today_date = datetime.date.today()
+                for b in blocks:
+                    if b['is_active'] == 1:
+                        if b['block_type'] == 'genre':
+                            blocked_genres.add(b['block_value'])
+                        else:
+                            blocked_artists.add(b['block_value'])
+                    else:
+                        # 已过期 → 计算回归权重
+                        days_after = (today_date - b['blocked_until']).days
+                        if days_after >= 0:
+                            rw = min(1.0, 0.3 + (days_after // 7) * 0.1)
+                            if rw < 1.0:
+                                reintro_map[(b['block_type'], b['block_value'])] = rw
+
+                # 生成画像（传入屏蔽列表，防止被屏蔽流派的代理向量注入画像）
+                profile_vec = get_user_profile(db, uid, mysql2faiss, index, genre_cache, song_meta_cache,
+                                               blocked_genres=blocked_genres, blocked_artists=blocked_artists)
                 
                 recs = []
                 if profile_vec is not None:
@@ -495,7 +612,22 @@ def generate_recommendations():
                         if fidx in faiss2mysql:
                             sql_id = faiss2mysql[fidx]
                             if sql_id not in exclude_set and sql_id not in [r[0] for r in recs]:
-                                recs.append((sql_id, score))
+                                # 屏蔽过滤
+                                genre, artist = song_meta_map.get(sql_id, ('', ''))
+                                if any(bg in genre for bg in blocked_genres):
+                                    continue
+                                if any(ba in artist for ba in blocked_artists):
+                                    continue
+
+                                # 回归降权（已过期屏蔽项的减权处理）
+                                score_mult = 1.0
+                                for (btype, bval), rw in reintro_map.items():
+                                    if btype == 'genre' and bval in genre:
+                                        score_mult = min(score_mult, rw)
+                                    elif btype == 'artist' and bval in artist:
+                                        score_mult = min(score_mult, rw)
+
+                                recs.append((sql_id, score * score_mult))
                                 if len(recs) >= TOP_N:
                                     break
                 

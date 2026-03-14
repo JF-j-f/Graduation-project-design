@@ -215,9 +215,11 @@ CREATE TABLE `users` (
   `create_time` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `preferred_genres` varchar(200) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `preferred_artists` varchar(200) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `city` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '所在城市',
+  `gender` varchar(10) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '性别(male/female/other)',
   PRIMARY KEY (`id`),
   UNIQUE KEY `username` (`username`)
-) ENGINE=InnoDB AUTO_INCREMENT=10005 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户信息表';
+) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户信息表';
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -235,6 +237,24 @@ CREATE TABLE IF NOT EXISTS `user_preference_feedback` (
   FOREIGN KEY (`user_id`) REFERENCES `users`(`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='用户对每日推荐的显式满意度反馈记录（可作训练数据）';
+
+--
+-- v6.0: 用户流派/歌手软屏蔽（递增冷却+衰减回归）
+--
+CREATE TABLE IF NOT EXISTS `user_content_blocks` (
+  `id`             INT AUTO_INCREMENT PRIMARY KEY,
+  `user_id`        INT NOT NULL,
+  `block_type`     ENUM('genre', 'artist') NOT NULL COMMENT '屏蔽类型',
+  `block_value`    VARCHAR(100) NOT NULL COMMENT '屏蔽的流派名或歌手名',
+  `block_count`    INT DEFAULT 1 COMMENT '屏蔽次数（递增计数器）',
+  `blocked_at`     TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '最近一次屏蔽时间',
+  `blocked_until`  DATE NOT NULL COMMENT '屏蔽到期日',
+  `is_active`      TINYINT(1) DEFAULT 1 COMMENT '1=生效中, 0=已到期',
+  UNIQUE KEY `uk_user_type_value` (`user_id`, `block_type`, `block_value`),
+  KEY `idx_user_active` (`user_id`, `is_active`),
+  FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='用户流派/歌手软屏蔽（递增冷却+衰减回归）';
 
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 

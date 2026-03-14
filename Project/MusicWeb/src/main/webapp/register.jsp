@@ -471,6 +471,18 @@
                             <label>昵称</label>
                             <input type="text" name="nickname" placeholder="你的个性昵称">
                         </div>
+                        <div class="form-group">
+                            <label>性别</label>
+                            <select name="gender" style="width:100%; padding:12px 16px; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15); border-radius:12px; color:#fff; font-size:14px; outline:none; appearance:none; -webkit-appearance:none;">
+                                <option value="" style="background:#1a1a2e;">不透露</option>
+                                <option value="male" style="background:#1a1a2e;">男</option>
+                                <option value="female" style="background:#1a1a2e;">女</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>城市</label>
+                            <input type="text" name="city" placeholder="你所在的城市">
+                        </div>
                         <div class="form-group full-width">
                             <label>手机号</label>
                             <input type="text" name="phone" placeholder="请输入手机号">

@@ -140,18 +140,50 @@ def process_features(train_df, songs_df, members_df=None, mysql_data=None):
     print("⚙️ [Step 3/4] 特征工程")
     print("=" * 60)
     
-    # 合并歌曲信息
+    # 合并歌曲信息（含规范化 genre）
     print("\n🔗 合并歌曲特征...")
-    df = train_df.merge(songs_df[['song_id', 'genre_ids', 'language', 'artist_name']], 
-                        on='song_id', how='left')
+    song_cols = ['song_id', 'genre_ids', 'language', 'artist_name']
+    if 'genre' in songs_df.columns:
+        song_cols.append('genre')
+    df = train_df.merge(songs_df[song_cols], on='song_id', how='left')
+
+    # 合并用户信息（city, gender）
+    if members_df is not None:
+        user_cols = ['msno']
+        if 'city' in members_df.columns:
+            user_cols.append('city')
+        if 'gender' in members_df.columns:
+            user_cols.append('gender')
+        if len(user_cols) > 1:
+            df = df.merge(members_df[user_cols], on='msno', how='left')
     
     # 填充缺失值
     df['genre_ids'] = df['genre_ids'].fillna('unknown')
     df['language'] = df['language'].fillna('unknown')
     df['artist_name'] = df['artist_name'].fillna('unknown')
     
-    # 提取主流派（取第一个）
-    df['main_genre'] = df['genre_ids'].apply(lambda x: str(x).split('|')[0] if pd.notna(x) else 'unknown')
+    # 提取主流派：优先使用 songs 表的规范化 genre，回退到 genre_ids 映射
+    def extract_primary_genre(row):
+        """从规范化 genre 或 genre_ids 提取主流派"""
+        # 优先使用数据库中已规范化的 genre（如有）
+        genre = row.get('genre')
+        if genre and str(genre) not in ('nan', 'None', '', '其他', 'unknown'):
+            # 取分号分隔的第一个原子流派
+            return str(genre).split(';')[0].strip()
+        # 回退：通过 genre_ids 数字映射
+        gids = row.get('genre_ids')
+        if gids and str(gids) not in ('nan', 'None', ''):
+            import sys, os as _os
+            _scripts = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), 'scripts')
+            if _scripts not in sys.path:
+                sys.path.insert(0, _scripts)
+            from update_song_metadata import GENRE_MAP
+            for gid in str(gids).split('|'):
+                if gid.strip() in GENRE_MAP:
+                    return GENRE_MAP[gid.strip()]
+        return 'unknown'
+
+    df['main_genre'] = df.apply(extract_primary_genre, axis=1)
     
     print(f"   ✅ 合并后数据: {len(df):,} 条记录")
     
@@ -183,13 +215,38 @@ def process_features(train_df, songs_df, members_df=None, mysql_data=None):
     print("   - 编码 artist...")
     encoders['artist'] = LabelEncoder()
     df['artist_encoded'] = encoders['artist'].fit_transform(df['artist_name'].astype(str))
-    
+
+    # 新增特征：city, gender, source_type（v6.0）
+    if 'city' in df.columns:
+        df['city'] = df['city'].fillna('unknown')
+        print("   - 编码 city...")
+        encoders['city'] = LabelEncoder()
+        df['city_encoded'] = encoders['city'].fit_transform(df['city'].astype(str))
+
+    if 'gender' in df.columns:
+        df['gender'] = df['gender'].fillna('unknown')
+        print("   - 编码 gender...")
+        encoders['gender'] = LabelEncoder()
+        df['gender_encoded'] = encoders['gender'].fit_transform(df['gender'].astype(str))
+
+    if 'source_type' in df.columns:
+        df['source_type'] = df['source_type'].fillna('unknown')
+        print("   - 编码 source_type...")
+        encoders['source_type'] = LabelEncoder()
+        df['source_type_encoded'] = encoders['source_type'].fit_transform(df['source_type'].astype(str))
+
     print(f"\n📊 特征维度统计:")
     print(f"   - 用户数: {df['user_encoded'].nunique():,}")
     print(f"   - 歌曲数: {df['song_encoded'].nunique():,}")
     print(f"   - 流派数: {df['genre_encoded'].nunique():,}")
     print(f"   - 语言数: {df['language_encoded'].nunique():,}")
     print(f"   - 艺术家数: {df['artist_encoded'].nunique():,}")
+    if 'city_encoded' in df.columns:
+        print(f"   - 城市数: {df['city_encoded'].nunique():,}")
+    if 'gender_encoded' in df.columns:
+        print(f"   - 性别数: {df['gender_encoded'].nunique():,}")
+    if 'source_type_encoded' in df.columns:
+        print(f"   - 来源类型数: {df['source_type_encoded'].nunique():,}")
     
     return df, encoders
 
@@ -218,6 +275,17 @@ def save_features(df, encoders):
         'n_languages': df['language_encoded'].nunique(),
         'n_artists': df['artist_encoded'].nunique(),
     }
+
+    # v6.0 新增特征（可选，向后兼容）
+    if 'city_encoded' in df.columns:
+        feature_data['city_encoded'] = df['city_encoded'].values
+        feature_data['n_cities'] = df['city_encoded'].nunique()
+    if 'gender_encoded' in df.columns:
+        feature_data['gender_encoded'] = df['gender_encoded'].values
+        feature_data['n_genders'] = df['gender_encoded'].nunique()
+    if 'source_type_encoded' in df.columns:
+        feature_data['source_type_encoded'] = df['source_type_encoded'].values
+        feature_data['n_source_types'] = df['source_type_encoded'].nunique()
     
     with open(FEATURE_OUTPUT, 'wb') as f:
         pickle.dump(feature_data, f)

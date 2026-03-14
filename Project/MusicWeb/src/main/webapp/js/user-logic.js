@@ -258,6 +258,8 @@ var tasteModal = (function () {
     var selectedSati    = null;   // 当前选中满意度
     var selectedGenres  = new Set();
     var artistList      = [];     // 当前艺术家列表
+    var blockedGenres   = new Set();  // 屏蔽的流派
+    var blockedArtists  = [];         // 屏蔽的歌手
 
     // ── 初始化 ──────────────────────────────────────────────
     function init() {
@@ -301,6 +303,20 @@ var tasteModal = (function () {
             });
         });
 
+        // 屏蔽流派 Tag 按钮
+        document.querySelectorAll('.block-genre-tag').forEach(function (t) {
+            t.addEventListener('click', function () {
+                var genre = this.dataset.genre;
+                if (blockedGenres.has(genre)) {
+                    // 取消屏蔽
+                    unblock('genre', genre, this);
+                } else {
+                    // 添加屏蔽
+                    blockGenre(genre, this);
+                }
+            });
+        });
+
         // 提交按钮
         var submitBtn = document.getElementById('taste-submit-btn');
         if (submitBtn) submitBtn.addEventListener('click', submit);
@@ -328,6 +344,9 @@ var tasteModal = (function () {
             t.style.borderColor = 'rgba(255,255,255,0.18)';
         });
         renderArtistChips();
+
+        // 加载屏蔽列表
+        loadBlocks();
 
         // 加载已有偏好并预填
         fetch('api/userPreference').then(function (r) { return r.json(); }).then(function (data) {
@@ -384,6 +403,115 @@ var tasteModal = (function () {
         renderArtistChips();
     }
 
+    // ── 屏蔽管理 ─────────────────────────────────────────────
+    function loadBlocks() {
+        blockedGenres.clear();
+        blockedArtists = [];
+        renderBlockedArtistChips();
+        // 重置 block genre tag 样式
+        document.querySelectorAll('.block-genre-tag').forEach(function (t) {
+            t.style.background = 'transparent';
+            t.style.color = 'rgba(255,255,255,0.55)';
+            t.style.borderColor = 'rgba(255,255,255,0.18)';
+        });
+
+        fetch('api/blockContent').then(function (r) { return r.json(); }).then(function (data) {
+            if (!data.success || !data.blocks) return;
+            data.blocks.forEach(function (b) {
+                if (!b.isActive) return;
+                if (b.type === 'genre') {
+                    blockedGenres.add(b.value);
+                    var tag = document.querySelector('.block-genre-tag[data-genre="' + b.value + '"]');
+                    if (tag) {
+                        tag.style.background = 'rgba(255,80,80,0.35)';
+                        tag.style.color = '#ff6b6b';
+                        tag.style.borderColor = 'rgba(255,80,80,0.5)';
+                    }
+                } else if (b.type === 'artist') {
+                    blockedArtists.push(b.value);
+                }
+            });
+            renderBlockedArtistChips();
+        }).catch(function () {});
+    }
+
+    function blockGenre(genre, tagEl) {
+        fetch('api/blockContent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'genre', value: genre })
+        }).then(function (r) { return r.json(); }).then(function (data) {
+            if (data.success) {
+                blockedGenres.add(genre);
+                tagEl.style.background = 'rgba(255,80,80,0.35)';
+                tagEl.style.color = '#ff6b6b';
+                tagEl.style.borderColor = 'rgba(255,80,80,0.5)';
+                showToast('已屏蔽流派：' + genre);
+            } else {
+                showToast(data.message || '操作失败', '#e74c3c');
+            }
+        }).catch(function () { showToast('网络错误', '#e74c3c'); });
+    }
+
+    function blockArtistAction() {
+        var input = document.getElementById('block-artist-input');
+        var val = input.value.trim();
+        if (!val) return;
+        input.value = '';
+
+        fetch('api/blockContent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'artist', value: val })
+        }).then(function (r) { return r.json(); }).then(function (data) {
+            if (data.success && !blockedArtists.includes(val)) {
+                blockedArtists.push(val);
+                renderBlockedArtistChips();
+                showToast('已屏蔽歌手：' + val);
+            } else {
+                showToast(data.message || '操作失败', '#e74c3c');
+            }
+        }).catch(function () { showToast('网络错误', '#e74c3c'); });
+    }
+
+    function unblock(type, value, tagEl) {
+        fetch('api/blockContent?type=' + encodeURIComponent(type) + '&value=' + encodeURIComponent(value), {
+            method: 'DELETE'
+        }).then(function (r) { return r.json(); }).then(function (data) {
+            if (data.success) {
+                if (type === 'genre') {
+                    blockedGenres.delete(value);
+                    if (tagEl) {
+                        tagEl.style.background = 'transparent';
+                        tagEl.style.color = 'rgba(255,255,255,0.55)';
+                        tagEl.style.borderColor = 'rgba(255,255,255,0.18)';
+                    }
+                } else {
+                    blockedArtists = blockedArtists.filter(function (a) { return a !== value; });
+                    renderBlockedArtistChips();
+                }
+                showToast('已取消屏蔽：' + value);
+            }
+        }).catch(function () { showToast('网络错误', '#e74c3c'); });
+    }
+
+    function renderBlockedArtistChips() {
+        var container = document.getElementById('block-artist-chips');
+        if (!container) return;
+        container.innerHTML = blockedArtists.map(function (a, i) {
+            return '<span style="display:inline-flex;align-items:center;gap:5px;background:rgba(255,80,80,0.3);'
+                + 'border:1px solid rgba(255,80,80,0.5);border-radius:14px;padding:4px 10px;font-size:12px;color:#ff6b6b;">'
+                + escHtml(a)
+                + '<span onclick="tasteModal.unblockArtist(\'' + escHtml(a).replace(/'/g, "\\'") + '\')" '
+                + 'style="cursor:pointer;opacity:0.7;font-size:14px;line-height:1;">&times;</span>'
+                + '</span>';
+        }).join('');
+    }
+
+    function unblockArtist(name) {
+        unblock('artist', name, null);
+    }
+
     // ── 提交 ─────────────────────────────────────────────────
     function submit() {
         if (!selectedSati) {
@@ -433,7 +561,11 @@ var tasteModal = (function () {
     document.addEventListener('DOMContentLoaded', init);
 
     // 暴露公共接口
-    return { open: open, close: close, addArtist: addArtist, removeArtist: removeArtist };
+    return {
+        open: open, close: close,
+        addArtist: addArtist, removeArtist: removeArtist,
+        blockArtist: blockArtistAction, unblockArtist: unblockArtist
+    };
 })();
 
 /* ============================================================

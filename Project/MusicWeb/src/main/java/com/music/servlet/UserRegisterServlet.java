@@ -21,6 +21,8 @@ public class UserRegisterServlet extends HttpServlet {
         String email = request.getParameter("email");
         String nickname = request.getParameter("nickname");
         String phone = request.getParameter("phone");
+        String gender = request.getParameter("gender");
+        String city = request.getParameter("city");
 
         // 兴趣标签（冷启动用）
         String selectedGenres = request.getParameter("selectedGenres"); // 逗号分隔的 genre_ids
@@ -50,6 +52,8 @@ public class UserRegisterServlet extends HttpServlet {
         user.setEmail(email != null ? email.trim() : "");
         user.setNickname(nickname != null ? nickname.trim() : "");
         user.setPhone(phone != null ? phone.trim() : "");
+        user.setGender(gender != null ? gender.trim() : "");
+        user.setCity(city != null ? city.trim() : "");
 
         // 注册用户
         if (userDAO.registerUser(user)) {

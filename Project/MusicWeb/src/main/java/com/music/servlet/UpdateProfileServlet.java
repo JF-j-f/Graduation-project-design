@@ -39,6 +39,8 @@ public class UpdateProfileServlet extends HttpServlet {
             String nickname = request.getParameter("nickname");
             String email = request.getParameter("email");
             String phone = request.getParameter("phone");
+            String gender = request.getParameter("gender");
+            String city = request.getParameter("city");
 
             // 验证输入参数
             String errorMessage = validateInput(nickname, email, phone);
@@ -54,6 +56,8 @@ public class UpdateProfileServlet extends HttpServlet {
             updatedUser.setNickname(nickname);
             updatedUser.setEmail(email);
             updatedUser.setPhone(phone);
+            updatedUser.setGender(gender);
+            updatedUser.setCity(city);
 
             // 执行更新操作
             boolean success = userDAO.updateUser(updatedUser);
@@ -63,6 +67,8 @@ public class UpdateProfileServlet extends HttpServlet {
                 updatedUser.setUsername(currentUser.getUsername());
                 updatedUser.setPassword(currentUser.getPassword());
                 updatedUser.setCreateTime(currentUser.getCreateTime());
+                updatedUser.setPreferredGenres(currentUser.getPreferredGenres());
+                updatedUser.setPreferredArtists(currentUser.getPreferredArtists());
                 session.setAttribute("user", updatedUser);
 
                 // 记录操作日志

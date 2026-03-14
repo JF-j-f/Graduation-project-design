@@ -14,6 +14,8 @@ public class User {
     private String createTime;
     private String preferredGenres;
     private String preferredArtists;
+    private String city;
+    private String gender;
 
     // 构造方法
     public User() {
@@ -130,5 +132,21 @@ public class User {
 
     public void setPreferredArtists(String preferredArtists) {
         this.preferredArtists = preferredArtists;
+    }
+
+    public String getCity() {
+        return city;
+    }
+
+    public void setCity(String city) {
+        this.city = city;
+    }
+
+    public String getGender() {
+        return gender;
+    }
+
+    public void setGender(String gender) {
+        this.gender = gender;
     }
 }

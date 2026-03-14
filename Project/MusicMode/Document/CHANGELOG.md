@@ -2,6 +2,43 @@
 
 本文档记录 MusicMode 项目的所有更新历史。
 
+## v2.2.0 (2026-03-13) - 流派规范化、KKBOX数据导入、GPU加速重训
+
+### 🚀 新增功能
+
+- **GPU AMP 加速训练** (`train_deepfm.py` 完全重写)：
+  - 使用 `torch.cuda.amp.autocast` + `GradScaler` 启用 FP16 混合精度，充分利用 RTX 4060 Tensor Core。
+  - DataLoader 参数升级：`num_workers=4, pin_memory=True, persistent_workers=True, prefetch_factor=2`。
+  - Batch Size 从 256 扩大至 4096（steps/epoch 减少 16x），每步实时 tqdm 进度条显示 loss。
+  - 训练完成后自动保存 `deepfm_model.pth`（27.4 MB）和 `model_config.pkl`（特征配置）。
+  - 最终验证 AUC 提升至 **0.8053**（Epoch 5）。
+
+- **动态特征配置** (`model_config.pkl`)：保存 `feature_columns` + `dnn_hidden_units` 等关键配置，供 `build_faiss_index.py` 自动重建模型架构，无需手动硬编码特征数。
+
+### ⚡ 优化
+
+- **`build_faiss_index.py` 动态特征加载**：优先读取 `model_config.pkl`，向下兼容缺少配置文件的旧模型（回退至硬编码 5 特征）。
+- **`prepare_features.py` 模块路径修复**：在 `extract_primary_genre()` 函数内通过 `sys.path.insert` 动态添加 `scripts/` 目录，解决 `ModuleNotFoundError: update_song_metadata`。
+- **`sync_recs_v2.py` 推荐目标限制**：用户查询由 `status='active'` 泛查改为 `username IN ('jf', 'jf2')`，仅为真实业务用户生成推荐，彻底排除 admin 和 3.4 万个 kkbox 训练账号。
+
+### 🗄️ 数据工程（一次性脚本，已删除）
+
+- **流派规范化** (`normalize_genres.py`，已删除)：
+  - 扩展 `GENRE_MAP` 至 40 条映射规则（原 16 条），批量重写 `songs.genre` 字段。
+  - "其他"类型歌曲占比从 57%（1,316,528 首）降至 11%（258,876 首），1,057,652 首歌曲成功重新分类。
+
+- **KKBOX 用户数据导入** (`import_kkbox_to_db.py`，已删除)：
+  - 重写为 Pandas 分块读取（CHUNK_SIZE=200,000），替代因 Java 21 不兼容而崩溃的 PySpark 方案。
+  - 成功导入 34,403 个 KKBOX 用户（`username = 'kkbox_xxx'`）和 7,377,416 条播放记录至 MySQL。
+
+### 🐛 Bug 修复
+
+- **BCELoss + AMP 不兼容**：`binary_cross_entropy` 在 `autocast` 内部报错，修复为将 `y_pred.float()` 移出 autocast 上下文再计算 loss。
+- **`torch.compile` Windows 崩溃**：`Inductor` 后端需要 Triton（仅 Linux），通过 `sys.platform != 'win32'` 守卫跳过编译。
+- **MySQL `local_infile` 被禁**：KKBOX 导入时 `LOAD DATA LOCAL INFILE` 报错 3948，通过 `SET GLOBAL local_infile = 1` 解决。
+
+---
+
 ## v2.1.0 (2026-03-12) - 推荐反馈闭环修复与效果评估
 
 ### 🚀 新增功能
