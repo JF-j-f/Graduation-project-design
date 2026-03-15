@@ -656,7 +656,7 @@ def step_enrich_external():
     NETEASE_BASE = "http://127.0.0.1:3000"
     NETEASE_SEARCH_PATHS = ["/netease/search", "/search"]
     NETEASE_DETAIL_PATHS = ["/netease/song/detail", "/song/detail"]
-    RATE_LIMIT_SEC = 0.4   # 每首歌 0.4s，9000首约 60 分钟
+    RATE_LIMIT_SEC = 0.0   # 真并发模式下不再需要额外 sleep，API 延迟本身就是节流
 
     # QQ Music 语言数字代码 → 中文标签（部分平台返回数字）
     QQ_LANG_MAP = {
@@ -693,20 +693,16 @@ def step_enrich_external():
     except ImportError:
         pass
 
-    if not netease_ok:
-        print("   ⚠️  网易云 Node.js 服务未运行（端口 3000）")
-        print("      → 命令参考：cd MusicServer && node app.js  (或项目根目录一键启动)")
+    if netease_ok:
+        print("   ✅ 网易云 API 服务可达（端口 3000），并发限制=3，间隔=1s")
     else:
-        print("   ✅ 网易云 API 服务可达（端口 3000）")
+        print("   ⚠️  网易云 API 不可达，将仅使用 QQ Music")
 
     if not qq_ok:
-        print("   ⚠️  QQ API（qqmusic_api）不可用 → pip install qqmusic-api-python")
-    else:
-        print("   ✅ QQ API（qqmusic_api 库）可用")
-
-    if not netease_ok and not qq_ok:
-        print("\n   ❌ 两个 API 均不可用，退出")
+        print("   ❌ QQ API（qqmusic_api）不可用 → pip install qqmusic-api-python")
         return
+    else:
+        print("   ✅ QQ API（qqmusic_api 库）可用，并发限制=10")
 
     # ── 断点进度 ────────────────────────────────
     done_ids: set = set()
@@ -729,14 +725,36 @@ def step_enrich_external():
 
     # 过滤已全部填充的歌曲（即不需要任何更新的行）
     def _needs_any(row) -> bool:
+        def _miss_num(v) -> bool:
+            """数值型字段：NaN / None / 0 均视为缺失"""
+            if v is None:
+                return True
+            try:
+                import math
+                return math.isnan(float(v)) or float(v) == 0
+            except (TypeError, ValueError):
+                return True
+
+        def _miss_str(v) -> bool:
+            """字符串型字段：NaN / None / 空串均视为缺失"""
+            if v is None:
+                return True
+            try:
+                import math
+                if math.isnan(float(v)):
+                    return True
+            except (TypeError, ValueError):
+                pass
+            return not str(v).strip()
+
         return (
-            not row["release_year"] or int(row["release_year"] or 0) == 0
-            or not str(row["album"] or "").strip()
-            or not row["duration"] or int(row["duration"] or 0) == 0
-            or not str(row["cover_image"] or "").strip()
-            or row["popularity"] is None
-            or not str(row["language"] or "").strip()
-            or not str(row["genre"] or "").strip()
+            _miss_num(row["release_year"])
+            or _miss_str(row["album"])
+            or _miss_num(row["duration"])
+            or _miss_str(row["cover_image"])
+            or _miss_num(row["popularity"])
+            or _miss_str(row["language"])
+            or _miss_str(row["genre"])
         )
 
     songs_to_process = songs_df[songs_df.apply(_needs_any, axis=1)]
@@ -761,12 +779,35 @@ def step_enrich_external():
         s = str(val).strip()
         return s[:max_len] if s else None
 
+    # ── 网易云 language 映射 ────────────────────────
+    NE_LANG_MAP = {
+        "zh": "国语", "zh-CN": "国语", "zh-TW": "国语", "cn": "国语",
+        "yue": "粤语", "cantonese": "粤语",
+        "en": "英语", "eng": "英语", "english": "英语",
+        "ja": "日语", "jp": "日语", "japanese": "日语",
+        "ko": "韩语", "kr": "韩语", "korean": "韩语",
+        "fr": "法语", "de": "德语", "es": "西班牙语",
+        "ru": "俄语", "it": "意大利语", "pt": "葡萄牙语",
+    }
+
+    def _map_ne_lang(raw) -> Optional[str]:
+        if raw is None:
+            return None
+        s = str(raw).strip().lower()
+        if not s:
+            return None
+        if s in NE_LANG_MAP:
+            return NE_LANG_MAP[s]
+        if any(u'\u4e00' <= c <= u'\u9fff' for c in s):
+            return _clean_str(s, 10)
+        return _clean_str(s, 10)
+
     # ── 网易云：获取歌曲全量元数据 ─────────────────
     async def _netease_fetch(client: "_httpx.AsyncClient",
                              title: str, artist: str) -> dict:
         """
         返回从网易云获取的字段 dict（只包含成功获取的字段）：
-          release_year, album, duration, cover_image, popularity
+          release_year, album, duration, cover_image, popularity, language
         """
         result: dict = {}
         keyword = f"{artist} {title}"
@@ -811,11 +852,18 @@ def step_enrich_external():
                     if y:
                         result["release_year"] = y
 
+                # language（搜索结果中可能直接有）
+                lang_raw = s.get("language") or s.get("lang") or s.get("songLanguage")
+                lm = _map_ne_lang(lang_raw)
+                if lm:
+                    result["language"] = lm
+
                 # ── 若关键字段缺失，再调 detail 端点 ──
                 need_detail = (
                     "release_year" not in result
                     or "album" not in result
                     or "duration" not in result
+                    or "language" not in result
                 )
                 if need_detail and song_id:
                     for dpath in NETEASE_DETAIL_PATHS:
@@ -850,7 +898,49 @@ def step_enrich_external():
                                     y = _valid_year(_dt.fromtimestamp(int(pt2) / 1000).year)
                                     if y:
                                         result["release_year"] = y
+                            if "language" not in result:
+                                dl = ds.get("language") or ds.get("lang") or ds.get("songLanguage")
+                                dlm = _map_ne_lang(dl)
+                                if dlm:
+                                    result["language"] = dlm
                             break
+                        except Exception:
+                            continue
+
+                # ── wiki/summary 补充 language（最后手段） ──
+                if "language" not in result and song_id:
+                    for wiki_path in ["/song/wiki/summary", "/netease/song/wiki/summary"]:
+                        try:
+                            rw = await client.get(
+                                f"{NETEASE_BASE}{wiki_path}",
+                                params={"id": str(song_id)},
+                                timeout=6.0
+                            )
+                            if rw.status_code != 200:
+                                continue
+                            wd = rw.json()
+                            blocks = wd.get("data", {}).get("blocks", [])
+                            for blk in blocks:
+                                for creative in blk.get("creatives", []):
+                                    for res in creative.get("resources", []):
+                                        ext = res.get("resourceExt", {})
+                                        sd = ext.get("songData", {})
+                                        wl = sd.get("language")
+                                        wlm = _map_ne_lang(wl)
+                                        if wlm:
+                                            result["language"] = wlm
+                                            break
+                                    if "language" in result:
+                                        break
+                                if "language" in result:
+                                    break
+                            if "language" not in result:
+                                wl2 = wd.get("data", {}).get("language")
+                                wlm2 = _map_ne_lang(wl2)
+                                if wlm2:
+                                    result["language"] = wlm2
+                            if "language" in result:
+                                break
                         except Exception:
                             continue
 
@@ -860,193 +950,312 @@ def step_enrich_external():
 
         return result
 
-    # ── QQ Music：获取歌曲全量元数据 ───────────────
-    async def _qq_fetch(title: str, artist: str) -> dict:
-        """
-        返回从 QQ Music 获取的字段 dict：
-          release_year, album, duration, cover_image, language, genre
-        """
-        result: dict = {}
-        try:
-            from qqmusic_api import search as _s, song as _song
-            raw = await asyncio.wait_for(
-                _s.search_by_type(keyword=f"{artist} {title}", num=3, page=1),
-                timeout=8.0
-            )
-            songs_list: list = []
-            if isinstance(raw, list) and raw:
-                first = raw[0]
-                songs_list = first.get("list", []) if isinstance(first, dict) else []
-            elif isinstance(raw, dict):
-                songs_list = raw.get("list", [])
-            if not songs_list:
-                return result
+    # ── QQ Music 直连配置 ──────────────────────────
+    QQ_GENRE_MAP = {
+        1: "Pop", 2: "Rock", 3: "Folk", 4: "Electronic",
+        5: "Jazz", 6: "Classical", 7: "R&B", 8: "Hip-Hop",
+        9: "Latin", 10: "Blues", 11: "Country", 12: "New Age",
+        14: "World", 15: "Reggae", 19: "Light Music",
+        20: "Soundtrack", 21: "Opera", 22: "Punk",
+        24: "Metal", 25: "Ballad",
+    }
+    QQ_SEARCH_URL = "https://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg"
+    QQ_DETAIL_URL = "https://u.y.qq.com/cgi-bin/musicu.fcg"
 
-            mid = songs_list[0].get("mid", "")
+    # ── QQ Music：HTTP 直连查询（绕过 qqmusic_api 库） ───
+    async def _qq_fetch(client: "_httpx.AsyncClient",
+                        title: str, artist: str) -> dict:
+        result: dict = {}
+        keyword = f"{artist} {title}"
+        try:
+            # Step 1: 快速搜索获取 mid
+            r1 = await client.get(QQ_SEARCH_URL, params={"key": keyword}, timeout=8.0)
+            if r1.status_code != 200:
+                return result
+            items = r1.json().get("data", {}).get("song", {}).get("itemlist", [])
+            if not items:
+                return result
+            mid = items[0].get("mid", "")
             if not mid:
                 return result
 
-            details = await asyncio.wait_for(_song.query_song([mid]), timeout=8.0)
-            if not details:
+            # Step 2: 用 mid 获取详情
+            detail_req = {
+                "songinfo": {
+                    "method": "get_song_detail_yqq",
+                    "module": "music.pf_song_detail_svr",
+                    "param": {"song_mid": mid},
+                }
+            }
+            r2 = await client.get(
+                QQ_DETAIL_URL,
+                params={"data": json.dumps(detail_req, ensure_ascii=False)},
+                timeout=8.0,
+            )
+            if r2.status_code != 200:
                 return result
-            detail = details[0] if isinstance(details, list) else details
-            if not isinstance(detail, dict):
+            info = r2.json().get("songinfo", {}).get("data", {}).get("track_info", {})
+            if not info:
                 return result
 
-            # release_year
-            pub = detail.get("time_public", "")
+            pub = info.get("time_public", "")
             if pub:
                 y = _valid_year(pub)
                 if y:
                     result["release_year"] = y
 
-            # album
-            album_name = detail.get("albumName") or detail.get("album_name")
-            if album_name:
-                result["album"] = _clean_str(album_name, 200)
+            al = info.get("album") or {}
+            if al.get("name"):
+                result["album"] = _clean_str(al["name"], 200)
 
-            # duration（QQ 返回秒）
-            dur = detail.get("duration") or detail.get("time_total")
-            if dur:
-                try:
-                    d_sec = int(dur)
-                    if d_sec > 0:
-                        result["duration"] = d_sec
-                except Exception:
-                    pass
+            pmid = al.get("pmid") or al.get("mid")
+            if pmid:
+                result["cover_image"] = f"https://y.gtimg.cn/music/photo_new/T002R300x300M000{pmid}.jpg"
 
-            # cover_image
-            cover = detail.get("coverUrl") or detail.get("cover_url")
-            if cover:
-                result["cover_image"] = _clean_str(cover, 200)
+            interval = info.get("interval")
+            if interval and int(interval) > 0:
+                result["duration"] = int(interval)
 
-            # language（可能是数字字符串或文字）
-            lang = detail.get("language") or detail.get("lan")
+            lang = info.get("language")
             if lang is not None:
                 lang_str = str(lang).strip()
                 mapped = QQ_LANG_MAP.get(lang_str)
-                result["language"] = mapped if mapped else (_clean_str(lang_str, 10) or None)
+                if mapped:
+                    result["language"] = mapped
 
-            # genre
-            genre = detail.get("genre") or detail.get("genre_name")
-            if genre:
-                result["genre"] = _clean_str(genre, 100)
-
+            genre_val = info.get("genre")
+            if genre_val is not None:
+                if isinstance(genre_val, int) and genre_val in QQ_GENRE_MAP:
+                    result["genre"] = QQ_GENRE_MAP[genre_val]
         except Exception:
             pass
-
         return result
 
-    # ── 主异步循环 ──────────────────────────────
-    async def _run_all():
-        # 统计
-        total_updated = 0
-        field_hits: dict = {
-            "release_year": 0, "album": 0, "duration": 0,
-            "cover_image": 0, "popularity": 0, "language": 0, "genre": 0,
-        }
-        source_hits = {"网易云": 0, "QQ": 0, "both": 0, "miss": 0}
+    # ── NaN/空值判断工具（主循环外定义，避免重复创建） ─────
+    import math as _math
 
-        conn = get_conn()
+    def _db_miss_num(v) -> bool:
+        if v is None: return True
+        try: return _math.isnan(float(v)) or float(v) == 0
+        except Exception: return True
+
+    def _db_miss_str(v) -> bool:
+        if v is None: return True
+        try:
+            if _math.isnan(float(v)): return True
+        except Exception: pass
+        return not str(v).strip()
+
+    # ── 并发参数 ─────────────────────────────────────
+    # 网易云：max 5 并发 + 每次请求后 sleep 1s（占着信号量期间休眠，有效控制速率）
+    # QQ：max 5 并发，无额外 sleep
+    NE_CONCURRENCY = 5
+    NE_SLEEP       = 1.0
+    QQ_CONCURRENCY = 5
+
+    # ── 写 DB 工具 ────────────────────────────────────
+    async def _apply_update(data: dict, row, conn, conn_lock: "asyncio.Lock") -> list:
+        """
+        将 API 返回的 data 中、DB 当前仍缺失的字段写入 DB。
+        返回实际写入的字段名列表。
+        """
+        to_update: dict = {}
+        for field, new_val in data.items():
+            if new_val is None:
+                continue
+            cur_val = row.get(field)
+            if field in ("release_year", "duration", "popularity"):
+                if _db_miss_num(cur_val):
+                    to_update[field] = new_val
+            else:
+                if _db_miss_str(cur_val):
+                    to_update[field] = new_val
+
+        if to_update:
+            set_clause = ", ".join(f"`{f}` = %s" for f in to_update)
+            vals = list(to_update.values()) + [int(row["id"])]
+            async with conn_lock:
+                with conn.cursor() as cur:
+                    cur.execute(f"UPDATE songs SET {set_clause} WHERE id = %s", vals)
+                conn.commit()
+        return list(to_update.keys())
+
+    # ── 单 API 工作器 ─────────────────────────────────
+    async def _ne_worker(client: "_httpx.AsyncClient",
+                         rows: list,
+                         ne_sem: "asyncio.Semaphore",
+                         conn, conn_lock: "asyncio.Lock",
+                         pbar, field_hits: dict, source_hits: dict) -> list:
+        """
+        用网易云处理一批歌曲。
+        - sleep 在 sem 持有期间，限制 NE 速率（避免 405）。
+        - 返回未命中的 row 列表，等待 QQ fallback。
+        """
+        misses = []
+
+        async def _one(row):
+            song_id = int(row["id"])
+            title   = str(row["title"]  or "").strip()
+            artist  = str(row["artist"] or "").strip()
+            if not title:
+                done_ids.add(song_id)
+                pbar.update(1)
+                return
+
+            async with ne_sem:
+                data = await _netease_fetch(client, title, artist)
+                await asyncio.sleep(NE_SLEEP)   # 持锁等待，控制速率
+
+            done_ids.add(song_id)
+            pbar.update(1)
+
+            if data:
+                written = await _apply_update(data, row, conn, conn_lock)
+                for f in written:
+                    if f in field_hits:
+                        field_hits[f] += 1
+                source_hits["网易云"] += 1
+            else:
+                misses.append(row)
+
+        await asyncio.gather(*[_one(r) for r in rows], return_exceptions=True)
+        return misses
+
+    async def _qq_worker(rows: list,
+                         qq_sem: "asyncio.Semaphore",
+                         conn, conn_lock: "asyncio.Lock",
+                         pbar, field_hits: dict, source_hits: dict,
+                         label: str = "QQ") -> list:
+        """
+        用 QQ Music 处理一批歌曲。
+        - 返回未命中的 row 列表，等待 NE fallback。
+        """
+        misses = []
+
+        async def _one(row):
+            song_id = int(row["id"])
+            title   = str(row["title"]  or "").strip()
+            artist  = str(row["artist"] or "").strip()
+            if not title:
+                done_ids.add(song_id)
+                pbar.update(1)
+                return
+
+            async with qq_sem:
+                data = await _qq_fetch(title, artist)
+
+            done_ids.add(song_id)
+            pbar.update(1)
+
+            if data:
+                written = await _apply_update(data, row, conn, conn_lock)
+                for f in written:
+                    if f in field_hits:
+                        field_hits[f] += 1
+                source_hits[label] += 1
+            else:
+                misses.append(row)
+
+        await asyncio.gather(*[_one(r) for r in rows], return_exceptions=True)
+        return misses
+
+    # ── 主协调器 ──────────────────────────────────────
+    async def _run_all():
+        field_hits  = {f: 0 for f in ("release_year","album","duration",
+                                       "cover_image","popularity","language","genre")}
+        source_hits = {"网易云": 0, "QQ": 0, "NE-fallback": 0, "QQ-fallback": 0, "miss": 0}
+
+        ne_sem    = asyncio.Semaphore(NE_CONCURRENCY)
+        qq_sem    = asyncio.Semaphore(QQ_CONCURRENCY)
+        conn_lock = asyncio.Lock()
+        conn      = get_conn()
+
         try:
             speed_up_mysql(conn)
             async with _httpx.AsyncClient() as client:
-                for _, row in tqdm(songs_to_process.iterrows(),
-                                   total=len(songs_to_process),
-                                   desc="补全外部歌曲元数据"):
-                    song_id = int(row["id"])
-                    if song_id in done_ids:
-                        continue
+                pending_rows = [
+                    row for _, row in songs_to_process.iterrows()
+                    if int(row["id"]) not in done_ids
+                ]
+                total = len(pending_rows)
 
-                    title  = str(row["title"] or "").strip()
-                    artist = str(row["artist"] or "").strip()
-                    if not title:
-                        done_ids.add(song_id)
-                        continue
+                # 交错分组：偶数索引 → 网易云，奇数索引 → QQ
+                ne_batch = pending_rows[0::2]
+                qq_batch = pending_rows[1::2]
 
-                    # ① 网易云查询
-                    ne_data: dict = {}
-                    if netease_ok:
-                        ne_data = await _netease_fetch(client, title, artist)
+                print(f"\n   Pass 1 — 网易云处理 {len(ne_batch):,} 首，"
+                      f"QQ 处理 {len(qq_batch):,} 首（双轨并行）")
+                pbar1 = tqdm(total=total, desc="Pass-1 双轨并行")
 
-                    # ② QQ 查询（总是查，因为 genre/language 网易云不提供）
-                    qq_data: dict = {}
-                    if qq_ok:
-                        qq_data = await _qq_fetch(title, artist)
+                ne_args = (client, ne_batch, ne_sem, conn, conn_lock,
+                           pbar1, field_hits, source_hits)
+                qq_args = (qq_batch, qq_sem, conn, conn_lock,
+                           pbar1, field_hits, source_hits)
 
-                    # ③ 合并：网易云优先，QQ 补充缺失字段
-                    merged: dict = {}
-                    for field in field_hits.keys():
-                        val = ne_data.get(field) if ne_data.get(field) else qq_data.get(field)
-                        if val is not None:
-                            merged[field] = val
+                ne_misses, qq_misses = await asyncio.gather(
+                    _ne_worker(*ne_args),
+                    _qq_worker(*qq_args),
+                )
+                pbar1.close()
+                _save_checkpoint()
 
-                    # ④ 只更新当前 DB 中为 NULL/0/空 的字段
-                    to_update: dict = {}
-                    for field, new_val in merged.items():
-                        cur_val = row.get(field)
-                        if field == "release_year":
-                            if not cur_val or int(cur_val) == 0:
-                                to_update[field] = new_val
-                        elif field == "duration":
-                            if not cur_val or int(cur_val) == 0:
-                                to_update[field] = new_val
-                        elif field == "popularity":
-                            if cur_val is None:
-                                to_update[field] = new_val
-                        else:
-                            if not str(cur_val or "").strip():
-                                to_update[field] = new_val
+                print(f"\n   Pass 1 完成: NE 未命中 {len(ne_misses):,} 首，"
+                      f"QQ 未命中 {len(qq_misses):,} 首")
 
-                    # ⑤ 执行 UPDATE
-                    if to_update:
-                        set_clause = ", ".join(f"`{f}` = %s" for f in to_update.keys())
-                        vals = list(to_update.values()) + [song_id]
-                        with conn.cursor() as cur:
-                            cur.execute(
-                                f"UPDATE songs SET {set_clause} WHERE id = %s",
-                                vals
-                            )
-                        conn.commit()
-                        total_updated += 1
-                        for f in to_update:
-                            field_hits[f] += 1
-                        # 统计来源
-                        from_ne = bool(ne_data)
-                        from_qq = bool(qq_data)
-                        if from_ne and from_qq:
-                            source_hits["both"] += 1
-                        elif from_ne:
-                            source_hits["网易云"] += 1
-                        elif from_qq:
-                            source_hits["QQ"] += 1
-                    else:
-                        source_hits["miss"] += 1
+                # Pass 2：交换 API，对未命中做 fallback
+                total2 = len(ne_misses) + len(qq_misses)
+                if total2:
+                    print(f"   Pass 2 — fallback 补搜 {total2:,} 首（双轨并行）")
+                    pbar2 = tqdm(total=total2, desc="Pass-2 fallback")
 
-                    done_ids.add(song_id)
-                    processed = len(done_ids)
-                    if processed % 100 == 0:
-                        with open(PROGRESS_EXT_FILE, "w") as pf:
-                            json.dump({"done": list(done_ids)}, pf)
+                    ne_fb_args = (client, qq_misses, ne_sem, conn, conn_lock,
+                                  pbar2, field_hits, {"网易云": 0,
+                                                       "NE-fallback": source_hits["NE-fallback"]})
+                    qq_fb_args = (ne_misses, qq_sem, conn, conn_lock,
+                                  pbar2, field_hits, {"QQ": 0,
+                                                       "QQ-fallback": source_hits["QQ-fallback"]},
+                                  "QQ-fallback")
 
-                    await asyncio.sleep(RATE_LIMIT_SEC)
+                    # NE 处理 QQ 的 miss；QQ 处理 NE 的 miss
+                    still_ne_miss, still_qq_miss = await asyncio.gather(
+                        _ne_worker(client, qq_misses, ne_sem, conn, conn_lock,
+                                   pbar2, field_hits,
+                                   {"网易云": source_hits["NE-fallback"]}),
+                        _qq_worker(ne_misses, qq_sem, conn, conn_lock,
+                                   pbar2, field_hits,
+                                   {"QQ": source_hits["QQ-fallback"]},
+                                   "QQ-fallback"),
+                    )
+                    pbar2.close()
+                    _save_checkpoint()
+
+                    final_miss = len(still_ne_miss) + len(still_qq_miss)
+                    source_hits["miss"] = final_miss
+                    print(f"   Pass 2 完成: 最终仍未命中 {final_miss:,} 首")
+                else:
+                    print("   无需 Pass 2")
 
         finally:
-            with open(PROGRESS_EXT_FILE, "w") as pf:
-                json.dump({"done": list(done_ids)}, pf)
+            _save_checkpoint()
             restore_mysql(conn)
             conn.close()
 
-        print(f"\n📊 补全结果汇总:")
-        print(f"   实际更新歌曲数:  {total_updated:,} 首")
-        print(f"   未命中（跳过）: {source_hits['miss']:,} 首")
+        total_updated = sum(field_hits.values())
+        print(f"\n   补全结果汇总:")
+        print(f"   实际写入字段次数: {total_updated:,}")
+        print(f"   未命中（两轮皆无）: {source_hits['miss']:,} 首")
         print(f"\n   数据来源分布:")
-        print(f"     仅网易云命中:    {source_hits['网易云']:,} 首")
-        print(f"     仅 QQ 命中:      {source_hits['QQ']:,} 首")
-        print(f"     两者均命中:      {source_hits['both']:,} 首")
+        print(f"     NE  Pass-1  命中: {source_hits['网易云']:,} 首")
+        print(f"     QQ  Pass-1  命中: {source_hits['QQ']:,} 首")
+        print(f"     NE  Pass-2 fallback: {source_hits['NE-fallback']:,} 首")
+        print(f"     QQ  Pass-2 fallback: {source_hits['QQ-fallback']:,} 首")
         print(f"\n   各字段补全数量:")
         for f, cnt in field_hits.items():
             print(f"     {f:<16}: {cnt:,}")
+
+    def _save_checkpoint():
+        with open(PROGRESS_EXT_FILE, "w") as pf:
+            json.dump({"done": list(done_ids)}, pf)
 
     asyncio.run(_run_all())
     print("\n✅ enrich_external 步骤完成")
