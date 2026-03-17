@@ -47,9 +47,9 @@ OUTPUT_CONFIG    = os.path.join(MODE_DIR, "model_config_v3.pkl")
 OUTPUT_PLOT      = os.path.join(MODE_DIR, "training_progress_v3.png")
 
 # 训练超参数
-BATCH_SIZE       = 4096
+BATCH_SIZE       = 8192   # RTX 4060 8GB VRAM 可承载，steps/epoch 减半；OOM时退回 6144
 EPOCHS           = 10
-LEARNING_RATE    = 0.001
+LEARNING_RATE    = 0.002   # Linear scaling rule: batch 翻倍 → LR × 2
 DNN_HIDDEN_UNITS = (512, 256, 128, 64)   # v3: 更深 DNN（v2 为 256,128,64）
 DROPOUT          = 0.2
 NUM_WORKERS      = 4
@@ -72,20 +72,22 @@ VALID_RATIO = 0.1
 # ============================================================
 
 # (feat_name_for_deepctr, encoded_key_in_features_v3, n_key, embed_dim)
+# ⚠️ DeepCTR-Torch 要求所有 SparseFeat 使用相同 embedding_dim（torch.cat dim=1 限制）
+# ⚠️ n_key 须与 prepare_features_v3.py save_outputs() 中的 key 名完全一致
 SPARSE_FEAT_SPECS = [
-    ("user_id",         "user_id_encoded",          "n_users",              32),
-    ("song_id",         "song_id_encoded",           "n_songs",              32),
-    ("genre",           "genre_encoded",             "n_genres",             16),
-    ("language",        "language_encoded",          "n_languages",          16),
-    ("artist",          "artist_encoded",            "n_artists",            16),
-    ("origin_country",  "origin_country_encoded",    "n_origin_countries",    8),
-    ("year_bucket",     "year_bucket_encoded",       "n_year_buckets",        8),
-    ("source_channel",  "source_channel_encoded",    "n_source_channels",     8),
-    ("city",            "city_encoded",              "n_cities",              8),
-    ("gender",          "gender_encoded",            "n_genders",             4),
-    ("age_bucket",      "age_bucket_encoded",        "n_age_buckets",         4),
-    ("tenure_bucket",   "tenure_bucket_encoded",     "n_tenure_buckets",      4),
-    ("duration_bucket", "duration_bucket_encoded",   "n_duration_buckets",    4),
+    ("user_id",         "user_id_encoded",          "n_users",         16),
+    ("song_id",         "song_id_encoded",           "n_songs",         16),
+    ("genre",           "genre_encoded",             "n_genres",        16),
+    ("language",        "language_encoded",          "n_languages",     16),
+    ("artist",          "artist_encoded",            "n_artists",       16),
+    ("origin_country",  "origin_country_encoded",    "n_countries",     16),
+    ("year_bucket",     "year_bucket_encoded",       "n_year_buckets",  16),
+    ("source_channel",  "source_channel_encoded",    "n_sources",       16),
+    ("city",            "city_encoded",              "n_cities",        16),
+    ("gender",          "gender_encoded",            "n_genders",       16),
+    ("age_bucket",      "age_bucket_encoded",        "n_age_buckets",   16),
+    ("tenure_bucket",   "tenure_bucket_encoded",     "n_tenures",       16),
+    ("duration_bucket", "duration_bucket_encoded",   "n_dur_buckets",   16),
 ]
 
 # 稠密特征名（与 features_v3.pkl 中的 key 对应）
@@ -321,6 +323,14 @@ def train_deepfm(feature_columns, feature_names,
     steps_per_epoch = len(train_loader)
     print(f"\n   Steps/epoch: {steps_per_epoch:,}")
 
+    # val_loader 在循环外构建一次（避免每 epoch 重建，节省 1-2 分钟）
+    # X_val 已在 GPU 上，不能再 pin_memory（只能 pin CPU tensor）
+    val_loader = Data.DataLoader(
+        Data.TensorDataset(X_val, torch.zeros(len(y_val))),
+        batch_size=BATCH_SIZE * 4, shuffle=False,
+        pin_memory=False,
+    )
+
     # ── 训练循环
     history = {
         'loss': [], 'val_loss': [], 'val_auc': [], 'lr': []
@@ -381,10 +391,6 @@ def train_deepfm(feature_columns, feature_names,
         # ── 验证集评估
         model.eval()
         val_preds_list = []
-        val_loader = Data.DataLoader(
-            Data.TensorDataset(X_val, torch.zeros(len(y_val))),
-            batch_size=BATCH_SIZE * 4, shuffle=False
-        )
         with torch.no_grad():
             for xv, _ in val_loader:
                 if use_amp:

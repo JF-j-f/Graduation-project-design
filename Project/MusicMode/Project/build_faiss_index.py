@@ -39,16 +39,17 @@ INPUT_CONFIG     = os.path.join(MODE_DIR, "model_config_v3.pkl")
 OUTPUT_FAISS     = os.path.join(MODE_DIR, "song_index.faiss")
 OUTPUT_MAP       = os.path.join(MODE_DIR, "song_id_map.pkl")
 
-# 复合向量维度：song(32)+genre(16)+language(16)+artist(16)+origin_country(8) = 88
-EMBEDDING_DIM = 88
+# 复合向量维度：song(16)+genre(16)+language(16)+artist(16)+origin_country(16) = 80
+# ⚠️ v3 所有 SparseFeat 统一 embedding_dim=16
+EMBEDDING_DIM = 80
 
 # 组成复合向量的 embedding 名称（需与 DeepFM v3 的 SparseFeat 名称一致）
 SONG_EMB_PARTS = [
-    ("song_id",        32),
+    ("song_id",        16),
     ("genre",          16),
     ("language",       16),
     ("artist",         16),
-    ("origin_country",  8),
+    ("origin_country", 16),
 ]
 
 
@@ -120,9 +121,17 @@ def load_model_and_features():
 # ============================================================
 
 def extract_embeddings(model, features):
+    """
+    构建全量歌曲 Embedding（暖歌曲 + 冷门歌曲）
+    暖歌曲：协同(song_id) + 内容(genre/lang/artist/country) 混合向量
+    冷门歌曲：song_id 部分置零，仅用内容 embedding 代理
+    """
     print("\n" + "=" * 62)
-    print("🔢 [Step 2/4] 提取歌曲复合 Embedding（88维）")
+    print(f"🔢 [Step 2/4] 提取歌曲复合 Embedding（{EMBEDDING_DIM}维）")
     print("=" * 62)
+
+    import pandas as pd
+    from sqlalchemy import create_engine
 
     embedding_dict = model.embedding_dict
 
@@ -135,77 +144,128 @@ def extract_embeddings(model, features):
             print(f"   {name:<18} embedding: {mat.shape}")
         else:
             print(f"   ⚠️  {name} 不在 embedding_dict，用零填充")
-            # 使用 n_key 推断词表大小
             n_key = f"n_{name}s" if not name.endswith("y") else f"n_{name[:-1]}ies"
             vocab_size = features.get(n_key, 1) + 1
             emb_matrices[name] = np.zeros((vocab_size, dim), dtype=np.float32)
 
-    # 构建歌曲→属性映射（每首歌取出现最多的属性值）
-    print("\n   🔗 构建歌曲属性映射...")
+    # 加载 encoders（用于冷门歌曲内容编码）
+    encoders_path = os.path.join(MODE_DIR, "encoders_v3.pkl")
+    with open(encoders_path, "rb") as f:
+        encoders = pickle.load(f)
+
+    # 构建 real_songs.id → encoded_id 的映射（暖歌曲）
+    song_enc = encoders.get("song_id")
+    id_to_enc = {}   # int(songs.id) → encoded_id
+    if song_enc is not None:
+        for enc_id, val in enumerate(song_enc.classes_):
+            try:
+                id_to_enc[int(val)] = enc_id
+            except (ValueError, TypeError):
+                pass
+
+    # 构建暖歌曲的 song_vectors（协同+内容混合）
+    print("\n   🔗 构建暖歌曲属性映射...")
     from collections import Counter
+    song_id_enc  = features["song_id_encoded"]
+    genre_enc    = features["genre_encoded"]
+    lang_enc     = features["language_encoded"]
+    artist_enc   = features["artist_encoded"]
+    country_enc  = features.get("origin_country_encoded",
+                                 np.zeros(len(song_id_enc), dtype=np.int32))
 
-    song_id_enc   = features["song_id_encoded"]
-    genre_enc     = features["genre_encoded"]
-    lang_enc      = features["language_encoded"]
-    artist_enc    = features["artist_encoded"]
-    country_enc   = features.get("origin_country_encoded",
-                                  np.zeros(len(song_id_enc), dtype=np.int32))
-
-    # 聚合：每首歌 → 各属性计数器
     attr_accum = {}
     for i in range(len(song_id_enc)):
         sid = int(song_id_enc[i])
         if sid not in attr_accum:
-            attr_accum[sid] = {
-                "genre": Counter(),
-                "language": Counter(),
-                "artist": Counter(),
-                "origin_country": Counter(),
-            }
-        attr_accum[sid]["genre"][int(genre_enc[i])]          += 1
-        attr_accum[sid]["language"][int(lang_enc[i])]        += 1
-        attr_accum[sid]["artist"][int(artist_enc[i])]        += 1
+            attr_accum[sid] = {k: Counter() for k in ("genre", "language", "artist", "origin_country")}
+        attr_accum[sid]["genre"][int(genre_enc[i])]            += 1
+        attr_accum[sid]["language"][int(lang_enc[i])]          += 1
+        attr_accum[sid]["artist"][int(artist_enc[i])]          += 1
         attr_accum[sid]["origin_country"][int(country_enc[i])] += 1
 
-    # 取众数
-    song_attrs = {
-        sid: {k: c.most_common(1)[0][0] for k, c in d.items()}
-        for sid, d in attr_accum.items()
-    }
-    print(f"   ✅ 已映射 {len(song_attrs):,} 首歌曲的属性")
+    song_attrs = {sid: {k: c.most_common(1)[0][0] for k, c in d.items()}
+                  for sid, d in attr_accum.items()}
 
-    # 构建复合 Embedding 矩阵
-    n_songs = features["n_songs"]
-    song_vectors = np.zeros((n_songs, EMBEDDING_DIM), dtype=np.float32)
-
-    song_emb = emb_matrices["song_id"]     # (n_songs+1, 32)
+    n_songs  = features["n_songs"]
+    warm_vecs = np.zeros((n_songs, EMBEDDING_DIM), dtype=np.float32)
+    song_emb  = emb_matrices["song_id"]
+    song_dim  = SONG_EMB_PARTS[0][1]
 
     offset = 0
-    # song_id 部分（32维）直接按索引取
-    for sid in range(n_songs):
-        if sid < len(song_emb):
-            song_vectors[sid, offset:offset+32] = song_emb[sid]
-    offset += 32
-
-    # 其他属性 embedding（各按 song_attrs 查询）
-    for name, dim in SONG_EMB_PARTS[1:]:   # genre, language, artist, origin_country
+    warm_vecs[:, offset:offset+song_dim] = song_emb[:n_songs]
+    offset += song_dim
+    for name, dim in SONG_EMB_PARTS[1:]:
         mat = emb_matrices[name]
         for sid in range(n_songs):
             if sid in song_attrs:
                 attr_id = song_attrs[sid][name]
                 if attr_id < len(mat):
-                    song_vectors[sid, offset:offset+dim] = mat[attr_id]
+                    warm_vecs[sid, offset:offset+dim] = mat[attr_id]
         offset += dim
+    print(f"   ✅ 暖歌曲 Embedding: {warm_vecs.shape}")
 
-    # L2 归一化（IndexFlatIP 归一化后等价于余弦相似度）
-    norms = np.linalg.norm(song_vectors, axis=1, keepdims=True)
+    # ── 加载全量歌曲（含冷门歌曲）──────────────────────────────
+    print("\n   📥 加载全量歌曲元数据（含冷门）...")
+    engine = create_engine(
+        "mysql+pymysql://root:JF123456@localhost:3306/musicweb?charset=utf8mb4",
+        pool_pre_ping=True
+    )
+    all_songs_df = pd.read_sql(
+        "SELECT id, genre, language, artist, origin_country FROM songs ORDER BY id",
+        engine
+    )
+    engine.dispose()
+    n_all = len(all_songs_df)
+    print(f"   ✅ 全量歌曲: {n_all:,} 首（暖歌曲: {n_songs:,}，冷门: {n_all - len(id_to_enc):,}）")
+
+    # 预计算每个内容特征的 val_to_enc 字典（用于冷门歌曲快速编码）
+    val_to_enc_cache = {}
+    for name, _ in SONG_EMB_PARTS[1:]:
+        enc = encoders.get(name)
+        if enc is not None:
+            val_to_enc_cache[name] = {str(v): int(i) for i, v in enumerate(enc.classes_)}
+        else:
+            val_to_enc_cache[name] = {}
+
+    # 构建全量 Embedding 矩阵（向量化）
+    print("   🔨 构建全量 Embedding 矩阵（向量化）...")
+    real_ids  = all_songs_df["id"].values
+    all_vecs  = np.zeros((n_all, EMBEDDING_DIM), dtype=np.float32)
+
+    # 暖歌曲：直接用 warm_vecs
+    warm_flags = np.array([rid in id_to_enc for rid in real_ids])
+    warm_idx   = np.where(warm_flags)[0]
+    cold_idx   = np.where(~warm_flags)[0]
+
+    for i in warm_idx:
+        all_vecs[i] = warm_vecs[id_to_enc[int(real_ids[i])]]
+
+    # 冷门歌曲：内容代理向量（song_id 部分保持零）
+    if len(cold_idx) > 0:
+        offset = SONG_EMB_PARTS[0][1]   # 跳过 song_id(16维)
+        for name, dim in SONG_EMB_PARTS[1:]:
+            v2e  = val_to_enc_cache[name]
+            mat  = emb_matrices[name]
+            vals = all_songs_df[name].fillna("unknown").astype(str).values
+            enc_ids = pd.Series(vals).map(v2e).fillna(0).astype(int).values
+            enc_ids = np.clip(enc_ids, 0, len(mat) - 1)
+            all_vecs[cold_idx, offset:offset+dim] = mat[enc_ids[cold_idx]]
+            offset += dim
+
+    # L2 归一化
+    norms = np.linalg.norm(all_vecs, axis=1, keepdims=True)
     norms[norms == 0] = 1.0
-    song_vectors /= norms
+    all_vecs /= norms
 
-    print(f"\n   ✅ 复合 Embedding 矩阵: {song_vectors.shape}")
+    # 构建双向映射
+    faiss_to_mysql = {int(i): int(rid) for i, rid in enumerate(real_ids)}
+    mysql_to_faiss = {int(rid): int(i) for i, rid in enumerate(real_ids)}
+    mysql_to_enc   = {int(real_ids[i]): id_to_enc[int(real_ids[i])] for i in warm_idx}
+
+    print(f"   ✅ 全量 Embedding 矩阵: {all_vecs.shape}")
     print(f"   ✅ L2 归一化完成")
 
-    return song_vectors, song_attrs
+    return all_vecs, faiss_to_mysql, mysql_to_faiss, mysql_to_enc
 
 
 # ============================================================
@@ -250,7 +310,7 @@ def build_faiss_index(song_vectors):
 # Step 4: 保存
 # ============================================================
 
-def save_index(index, song_attrs, features):
+def save_index(index, faiss_to_mysql, mysql_to_faiss, mysql_to_enc, features):
     print("\n" + "=" * 62)
     print("💾 [Step 4/4] 保存索引和映射")
     print("=" * 62)
@@ -262,15 +322,18 @@ def save_index(index, song_attrs, features):
     print(f"   ✅ FAISS 索引: {OUTPUT_FAISS}  ({size_mb:.1f} MB)")
 
     map_data = {
-        "song_attrs":    song_attrs,          # {song_encoded_id: {attr: encoded_val}}
-        "n_songs":       features["n_songs"],
-        "embedding_dim": EMBEDDING_DIM,
-        "emb_parts":     SONG_EMB_PARTS,      # 供 sync_recs_v3 重建向量用
-        "version":       "v3",
+        "faiss_to_mysql": faiss_to_mysql,    # {faiss_idx: real_songs.id}
+        "mysql_to_faiss": mysql_to_faiss,    # {real_songs.id: faiss_idx}
+        "mysql_to_enc":   mysql_to_enc,      # {real_songs.id: encoded_id}（暖歌曲）
+        "n_warm":         features["n_songs"],
+        "n_all":          index.ntotal,
+        "embedding_dim":  EMBEDDING_DIM,
+        "emb_parts":      SONG_EMB_PARTS,
+        "version":        "v4_cold_start",
     }
     with open(OUTPUT_MAP, "wb") as f:
         pickle.dump(map_data, f, protocol=4)
-    print(f"   ✅ 歌曲映射: {OUTPUT_MAP}")
+    print(f"   ✅ 歌曲映射: {OUTPUT_MAP}  (暖歌曲: {features['n_songs']:,}, 全量: {index.ntotal:,})")
 
 
 # ============================================================
@@ -283,9 +346,9 @@ def main():
     print("🎵" * 31)
 
     model, features = load_model_and_features()
-    song_vectors, song_attrs = extract_embeddings(model, features)
-    index = build_faiss_index(song_vectors)
-    save_index(index, song_attrs, features)
+    all_vecs, faiss_to_mysql, mysql_to_faiss, mysql_to_enc = extract_embeddings(model, features)
+    index = build_faiss_index(all_vecs)
+    save_index(index, faiss_to_mysql, mysql_to_faiss, mysql_to_enc, features)
 
     print("\n" + "=" * 62)
     print("✅ FAISS 索引构建完成！")

@@ -210,6 +210,26 @@ def map_source_channel(source_type: str, source_system_tab: str,
     return "UNKNOWN"
 
 
+def map_source_channel_vectorized(df: pd.DataFrame) -> np.ndarray:
+    """向量化 source_channel 计算（替代 apply(lambda row:...)，~10x 更快）"""
+    st  = df["source_type"].fillna("").str.strip().str.lower()
+    tab = df["source_system_tab"].fillna("").str.strip().str.lower()
+    return np.select(
+        [st == "online-playlist",
+         st == "local-library",
+         st.eq("radio") | tab.str.contains("radio", regex=False),
+         st == "album",
+         st.isin(["my-daily-playlist", "song-based-playlist"]),
+         st == "listen-with",
+         tab.eq("search") | (st.eq("song") & tab.eq("search")),
+         tab == "discover",
+         st == "song"],
+        ["ONLINE_PLAYLIST", "PERSONAL_PLAYLIST", "RADIO", "ALBUM", "AI_PLAYLIST",
+         "SOCIAL", "SEARCH", "DISCOVERY", "DIRECT_PLAY"],
+        default="UNKNOWN",
+    )
+
+
 # ============================================================
 # ISRC 解析函数
 # ============================================================
@@ -1542,22 +1562,31 @@ def step_play_history():
       - source_channel = 'EXTERNAL'
       - target = 根据 30 天内重复收听规则计算
 
-    处理量：7.37M 行，预计 60-90 分钟。
+    优化策略：临时表 + 单次 JOIN UPDATE（~5-10 分钟，vs 旧版 ~90 分钟）
+      1. 分块读 train.csv，向量化计算 source_channel（np.select，~10x 于 apply）
+      2. 插入临时表 tmp_ph_update（50K/批，带复合索引）
+      3. 单条 JOIN UPDATE 替代 7.37M 次 WHERE 查询
     """
     print_sep()
-    print("📊 [Step: play_history] 回填 target + source_channel")
+    print("📊 [Step: play_history] 回填 target + source_channel（临时表优化版）")
     print_sep()
 
-    conn   = get_conn()
-    engine = get_engine()
+    conn = get_conn()
 
     try:
-        # ── 1. 构建 msno → user_id 映射
+        # ── 1. 构建 msno → user_id 映射（位置映射：members.csv 第N行 ↔ DB 第N个kkbox用户）
         print("\n  构建 msno → user_id 映射 ...")
+        if not os.path.exists(MEMBERS_CSV):
+            print(f"   ❌ 文件不存在: {MEMBERS_CSV}")
+            return
+        members_msno = pd.read_csv(MEMBERS_CSV, usecols=["msno"],
+                                   dtype={"msno": str})["msno"].tolist()
         with conn.cursor() as cur:
-            cur.execute("SELECT id, SUBSTRING(username, 7) AS msno FROM users "
-                        "WHERE username LIKE 'kkbox_%'")
-            msno_to_uid = {row[1]: row[0] for row in cur.fetchall()}
+            cur.execute("SELECT id FROM users WHERE username LIKE 'kkbox_%' ORDER BY id")
+            uid_list = [row[0] for row in cur.fetchall()]
+        if len(members_msno) != len(uid_list):
+            print(f"   ⚠️  members.csv 行数 {len(members_msno):,} ≠ DB kkbox 用户数 {len(uid_list):,}，取最小值映射")
+        msno_to_uid = {msno: uid for msno, uid in zip(members_msno, uid_list)}
         print(f"   kkbox 用户: {len(msno_to_uid):,} 个")
 
         # ── 2. 构建 kkbox_song_id → songs.id 映射
@@ -1584,10 +1613,8 @@ def step_play_history():
                 print(f"   ✅ jf/jf2 source_channel 更新: {cur.rowcount} 行")
             conn.commit()
 
-            # 计算 jf/jf2 target（30天内重复收听）
             print("  计算 jf/jf2 target（30天内重复收听规则）...")
             for uid in jf_ids:
-                # 标记有重复收听的记录 target=1
                 with conn.cursor() as cur:
                     cur.execute(f"""
                         UPDATE play_history ph1
@@ -1602,7 +1629,6 @@ def step_play_history():
                         WHERE ph1.user_id = {uid} AND ph1.target IS NULL
                     """)
                 conn.commit()
-                # 其余标记为 0
                 with conn.cursor() as cur:
                     cur.execute(
                         "UPDATE play_history SET target=0 "
@@ -1611,82 +1637,101 @@ def step_play_history():
                 conn.commit()
             print(f"   ✅ jf/jf2 target 计算完成")
 
-        # ── 4. 从 train.csv 回填 KKBOX 用户的 target + source_channel
-        print(f"\n  读取 train.csv（约7.37M行，可能需要几分钟）...")
+        # ── 4. 创建临时表（会话结束自动销毁）
+        print("\n  创建临时映射表 tmp_ph_update ...")
         if not os.path.exists(TRAIN_CSV):
             print(f"   ❌ 文件不存在: {TRAIN_CSV}")
             return
 
         speed_up_mysql(conn)
 
-        chunk_size = 500_000
-        total_updated = 0
-        total_rows    = 0
+        with conn.cursor() as cur:
+            cur.execute("DROP TEMPORARY TABLE IF EXISTS tmp_ph_update")
+            cur.execute("""
+                CREATE TEMPORARY TABLE tmp_ph_update (
+                    user_id  INT NOT NULL,
+                    song_id  INT NOT NULL,
+                    target   TINYINT NOT NULL,
+                    source_channel VARCHAR(30) NOT NULL,
+                    INDEX idx_us (user_id, song_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+        conn.commit()
+        print("   ✅ 临时表创建完成")
 
-        # 预统计行数（用于进度条）
-        print("  统计 train.csv 行数...")
-        with open(TRAIN_CSV, "r") as f:
-            total_lines = sum(1 for _ in f) - 1  # 减去 header
+        # ── 5. 分块读 train.csv，向量化处理，批量写入临时表
+        print("\n  统计 train.csv 行数...")
+        with open(TRAIN_CSV, "r", encoding="utf-8") as f:
+            total_lines = sum(1 for _ in f) - 1
         print(f"   train.csv 共 {total_lines:,} 行")
 
-        update_sql = ("UPDATE play_history SET target=%s, source_channel=%s "
-                      "WHERE user_id=%s AND song_id=%s AND target IS NULL")
+        insert_sql = "INSERT INTO tmp_ph_update (user_id, song_id, target, source_channel) VALUES (%s,%s,%s,%s)"
+        INSERT_BATCH = 50_000
+        chunk_size   = 500_000
 
-        pbar = tqdm(total=total_lines, desc="  回填 play_history", unit="行")
+        total_rows    = 0
+        total_inserted = 0
+        pbar = tqdm(total=total_lines, desc="  写入临时表", unit="行")
 
         for chunk in pd.read_csv(
             TRAIN_CSV,
             dtype={"msno": str, "song_id": str,
                    "source_system_tab": str, "source_screen_name": str,
-                   "source_type": str, "target": int},
+                   "source_type": str, "target": "Int64"},
             chunksize=chunk_size,
             low_memory=True,
         ):
             total_rows += len(chunk)
             pbar.update(len(chunk))
 
-            # 映射 user_id 和 song_id
-            chunk["user_id"] = chunk["msno"].map(msno_to_uid)
-            chunk["db_song_id"] = chunk["song_id"].map(kkbox_to_sid)
+            # 向量化映射
+            user_ids = chunk["msno"].map(msno_to_uid)
+            song_ids = chunk["song_id"].map(kkbox_to_sid)
+            valid_mask = user_ids.notna() & song_ids.notna()
 
-            # 过滤无法映射的行
-            valid = chunk.dropna(subset=["user_id", "db_song_id"])
-            if valid.empty:
+            if not valid_mask.any():
                 continue
 
-            # 计算 source_channel
-            valid = valid.copy()
-            valid["source_channel"] = valid.apply(
-                lambda r: map_source_channel(
-                    r.get("source_type", ""),
-                    r.get("source_system_tab", ""),
-                    r.get("source_screen_name", "")
-                ),
-                axis=1
-            )
+            sub = chunk[valid_mask].copy()
+            sub["_uid"] = user_ids[valid_mask].astype(int)
+            sub["_sid"] = song_ids[valid_mask].astype(int)
 
-            # 构建更新参数列表
-            updates = [
-                (int(r["target"]),
-                 r["source_channel"],
-                 int(r["user_id"]),
-                 int(r["db_song_id"]))
-                for _, r in valid.iterrows()
-            ]
+            # 向量化 source_channel（np.select，比 apply+lambda 快 ~10x）
+            sub["_sc"] = map_source_channel_vectorized(sub)
 
-            # 分批 executemany
+            # 转为 list-of-tuples（比 iterrows 快 ~10x）
+            rows = list(zip(
+                sub["_uid"].tolist(),
+                sub["_sid"].tolist(),
+                sub["target"].fillna(0).astype(int).tolist(),
+                sub["_sc"].tolist(),
+            ))
+
             with conn.cursor() as cur:
-                for i in range(0, len(updates), BATCH_SIZE):
-                    cur.executemany(update_sql, updates[i:i+BATCH_SIZE])
+                for i in range(0, len(rows), INSERT_BATCH):
+                    cur.executemany(insert_sql, rows[i:i+INSERT_BATCH])
             conn.commit()
-            total_updated += len(updates)
+            total_inserted += len(rows)
 
         pbar.close()
+        print(f"\n   CSV 处理: {total_rows:,} 行  |  成功写入临时表: {total_inserted:,} 行")
 
-        print(f"\n   train.csv 共处理: {total_rows:,} 行")
-        print(f"   成功映射并更新: {total_updated:,} 行")
+        # ── 6. 单次 JOIN UPDATE（MySQL 内部走索引，最快）
+        print("\n  执行 JOIN UPDATE（更新 play_history）...")
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE play_history ph
+                JOIN tmp_ph_update t
+                    ON ph.user_id = t.user_id AND ph.song_id = t.song_id
+                SET ph.target         = t.target,
+                    ph.source_channel = t.source_channel
+                WHERE ph.target IS NULL
+            """)
+            updated = cur.rowcount
+        conn.commit()
+        print(f"   ✅ play_history 已更新: {updated:,} 行")
 
-        # 统计结果
+        # ── 7. 统计
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM play_history WHERE target IS NOT NULL")
             has_target = cur.fetchone()[0]

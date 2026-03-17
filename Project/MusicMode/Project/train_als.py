@@ -14,6 +14,7 @@ import os
 import sys
 import pickle
 import numpy as np
+import pandas as pd
 from tqdm import tqdm
 import warnings
 warnings.filterwarnings('ignore')
@@ -77,22 +78,15 @@ def build_interaction_matrix(features):
     song_ids = features['song_id_encoded']
     targets = features['target']
     
-    # 统计每个 (user, song) 的交互次数
-    interaction_counts = {}
-    for u, s, t in tqdm(zip(user_ids, song_ids, targets), 
-                        total=len(user_ids), 
-                        desc="   统计交互"):
-        key = (u, s)
-        interaction_counts[key] = interaction_counts.get(key, 0) + t
-    
-    # 构建矩阵
-    rows = []
-    cols = []
-    data = []
-    for (u, s), count in interaction_counts.items():
-        rows.append(u)
-        cols.append(s)
-        data.append(count)
+    # 统计每个 (user, song) 的交互次数（向量化，替代 Python for 循环）
+    print("   统计交互（向量化 groupby）...")
+    interaction_series = (
+        pd.DataFrame({"user": user_ids, "song": song_ids, "target": targets})
+        .groupby(["user", "song"])["target"].sum()
+    )
+    rows = interaction_series.index.get_level_values("user").tolist()
+    cols = interaction_series.index.get_level_values("song").tolist()
+    data = interaction_series.values.tolist()
     
     interaction_matrix = csr_matrix((data, (rows, cols)), 
                                     shape=(n_users, n_songs),

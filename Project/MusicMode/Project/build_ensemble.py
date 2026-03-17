@@ -138,10 +138,6 @@ def lgbm_predict(X_val):
 
     preds = lgbm_model.predict(X_val, num_iteration=best_iter)
     print(f"   LightGBM 验证集 AUC（来自训练记录）: {val_auc:.4f}")
-
-    from sklearn.metrics import roc_auc_score
-    live_auc = roc_auc_score(np.zeros(len(preds)), preds)  # placeholder
-    # 用实际 val 标签在 Step4 一起算
     return preds
 
 

@@ -165,13 +165,21 @@ class Resources:
                 self.als_model = pickle.load(f)
             print("   ✅ ALS 模型加载")
 
-        # MySQL ID ↔ FAISS 索引 双向映射（通过 kkbox_id → song_encoded）
-        self.mysql2faiss: dict[int, int] = {}
-        self.faiss2mysql: dict[int, int] = {}
-        # song_encoded ↔ MySQL song_id 映射（用于 song_stats 查询）
-        self.mysql2enc: dict[int, int]   = {}
-
-        print(f"   ✅ FAISS 索引：{self.index.ntotal:,} 首歌曲")
+        # MySQL ID ↔ FAISS 索引 双向映射（从 song_id_map.pkl 直接加载）
+        md = self.map_data
+        if "faiss_to_mysql" in md:
+            # v4_cold_start 格式（全量 2.3M 歌曲）
+            self.faiss2mysql: dict[int, int] = md["faiss_to_mysql"]
+            self.mysql2faiss: dict[int, int] = md["mysql_to_faiss"]
+            self.mysql2enc:   dict[int, int] = md["mysql_to_enc"]
+            print(f"   ✅ FAISS 索引：{self.index.ntotal:,} 首歌曲"
+                  f"（暖: {md.get('n_warm', '?'):,}, 冷: {self.index.ntotal - md.get('n_warm', 0):,}）")
+        else:
+            # 旧格式兼容
+            self.mysql2faiss: dict[int, int] = {}
+            self.faiss2mysql: dict[int, int] = {}
+            self.mysql2enc:   dict[int, int] = {}
+            print(f"   ✅ FAISS 索引：{self.index.ntotal:,} 首歌曲（旧格式，需重建映射）")
 
     def build_song_mappings(self, db_songs: list):
         """构建 MySQL song_id ↔ FAISS idx / song_encoded 的双向映射"""
@@ -181,19 +189,20 @@ class Resources:
             print("   ⚠️  song_id 编码器不存在，无法建立 FAISS 映射")
             return
 
+        # encoder 是按 str(songs.id) 训练的，用整数 ID 做 key
         kb_to_enc = {kb: idx for idx, kb in enumerate(song_enc.classes_)}
 
         for row in db_songs:
             sql_id = row["id"]
-            kb_id  = row.get("kkbox_id") or ""
-            if kb_id and kb_id in kb_to_enc:
-                enc_id = kb_to_enc[kb_id]
+            str_id = str(sql_id)
+            if str_id in kb_to_enc:
+                enc_id = kb_to_enc[str_id]
                 # FAISS index pos == song_encoded (verify: built in build_faiss_index.py)
                 self.mysql2faiss[sql_id] = enc_id
                 self.faiss2mysql[enc_id] = sql_id
                 self.mysql2enc[sql_id]   = enc_id
 
-        print(f"   ✅ 歌曲映射建立：{len(self.mysql2faiss):,} 首 KKBOX 歌曲可检索")
+        print(f"   ✅ 歌曲映射建立：{len(self.mysql2faiss):,} 首歌曲可检索")
 
 
 # ============================================================
@@ -343,7 +352,7 @@ def build_user_profile(db, user_id, res: Resources,
             return []
         cur.execute("""
             SELECT id FROM songs
-            WHERE genre LIKE %s AND kkbox_id IS NOT NULL AND kkbox_id != ''
+            WHERE genre LIKE %s
             ORDER BY popularity DESC LIMIT 5
         """, (f"%{keyword}%",))
         proxies = []
@@ -433,7 +442,6 @@ def build_user_profile(db, user_id, res: Resources,
                 cur.execute("""
                     SELECT id FROM songs
                     WHERE (genre LIKE %s OR language LIKE %s)
-                      AND kkbox_id IS NOT NULL AND kkbox_id != ''
                     ORDER BY popularity DESC LIMIT %s
                 """, (f"%{token}%", f"%{token}%", limit))
                 for r in cur.fetchall():
@@ -446,7 +454,7 @@ def build_user_profile(db, user_id, res: Resources,
                     continue
                 cur.execute("""
                     SELECT id FROM songs WHERE artist LIKE %s
-                      AND kkbox_id IS NOT NULL ORDER BY popularity DESC LIMIT %s
+                    ORDER BY popularity DESC LIMIT %s
                 """, (f"%{artist}%", limit))
                 for r in cur.fetchall():
                     if r["id"] in res.mysql2faiss:
@@ -643,9 +651,30 @@ def build_pair_features(user_id, song_ids, db, res: Resources):
     user_play_count_log = math.log1p(play_count)
     user_30d_active     = float(active_30d)
 
-    # 用户流派分布（简化：从偏好标签）
-    preferred_genres = (pref.get("preferred_genres") or "").split(";")
-    preferred_genres = [g.strip() for g in preferred_genres if g.strip()]
+    # 用户流派分布（优先从 play history 统计，回退到注册偏好标签）
+    u_genre_dist   = res.user_stats.get("user_genre_dist",   {}).get(user_id, {})
+    u_artist_dist  = res.user_stats.get("user_artist_dist",  {}).get(user_id, {})
+    u_lang_dist    = res.user_stats.get("user_language_dist",{}).get(user_id, {})
+    u_country_dist = res.user_stats.get("user_country_dist", {}).get(user_id, {})
+
+    has_play_history = bool(u_genre_dist)  # 有播放历史 → 使用历史分布
+
+    # 新用户（无播放历史）使用注册偏好标签近似分布
+    if not has_play_history:
+        reg_genres   = [g.strip() for g in (pref.get("preferred_genres")  or "").split(";") if g.strip()]
+        reg_artists  = [a.strip() for a in (pref.get("preferred_artists") or "").split(";") if a.strip()]
+        if reg_genres:
+            prob = 1.0 / len(reg_genres)
+            u_genre_dist  = {g: prob for g in reg_genres}
+            u_lang_dist   = {g: prob for g in reg_genres}   # 语言偏好用流派近似
+        if reg_artists:
+            prob = 1.0 / len(reg_artists)
+            u_artist_dist = {a: prob for a in reg_artists}
+
+    # 用户流派多样性
+    user_diversity = float(res.user_stats.get("user_basic", {}).get(user_id, {}).get(
+        "user_genre_diversity", 0.5) if isinstance(res.user_stats.get("user_basic"), dict)
+        else 0.5)
 
     # 用户 encoded id
     user_enc = _safe_encode(encoders.get("user_id"), str(user_id))
@@ -656,16 +685,15 @@ def build_pair_features(user_id, song_ids, db, res: Resources):
     for sid in song_ids:
         sr = song_rows.get(sid, {})
 
-        genre    = sr.get("genre")   or "unknown"
-        language = sr.get("language") or "unknown"
-        artist   = sr.get("artist")  or "unknown"
-        country  = sr.get("origin_country") or "XX"
+        genre    = str(sr.get("genre")          or "unknown")
+        language = str(sr.get("language")        or "unknown")
+        artist   = str(sr.get("artist")         or "unknown")
+        country  = str(sr.get("origin_country") or "XX")
         rel_year = sr.get("release_year") or 0
         duration = sr.get("duration") or 0
         pop      = sr.get("popularity") or 0
-        kb_id    = sr.get("kkbox_id") or ""
-
-        song_enc = _safe_encode(encoders.get("song_id"), kb_id)
+        # encoder 按 str(songs.id) 训练，直接用整数 ID
+        song_enc = _safe_encode(encoders.get("song_id"), str(sid))
         genre_enc = _safe_encode(encoders.get("genre"), genre)
         lang_enc  = _safe_encode(encoders.get("language"), language)
         art_enc   = _safe_encode(encoders.get("artist"),   artist)
@@ -693,21 +721,30 @@ def build_pair_features(user_id, song_ids, db, res: Resources):
         age_days       = max(0, (datetime.date.today().year - rel_year) * 365) if rel_year > 0 else 0
         song_age_log   = math.log1p(age_days)
 
-        # 交互特征（简化：基于偏好标签匹配）
-        user_genre_match    = 1.0 if any(pg in genre for pg in preferred_genres) else 0.0
-        user_artist_match   = float(artist in (pref.get("preferred_artists") or ""))
-        user_language_match = 1.0 if any(pg in language for pg in preferred_genres) else 0.0
-        user_country_match  = 0.5   # 默认
+        # 交互特征：用 play-history 分布匹配（新用户用注册偏好近似）
+        user_genre_match    = float(u_genre_dist.get(genre,   0.0))
+        user_artist_match   = float(u_artist_dist.get(artist,  0.0))
+        user_language_match = float(u_lang_dist.get(language,  0.0))
+        user_country_match  = float(u_country_dist.get(country, 0.5))
 
         row = [
-            # 13 稀疏特征
-            user_enc, song_enc,
-            gender_enc, age_enc, city_enc, tenure_enc,
-            genre_enc, lang_enc, art_enc, ctry_enc,
-            year_enc, dur_enc, src_enc,
-            # 12 稠密特征
+            # 13 稀疏特征（严格对齐 train_deepfm_v3.py SPARSE_FEAT_SPECS 顺序）
+            user_enc,    # 0: user_id
+            song_enc,    # 1: song_id
+            genre_enc,   # 2: genre
+            lang_enc,    # 3: language
+            art_enc,     # 4: artist
+            ctry_enc,    # 5: origin_country
+            year_enc,    # 6: year_bucket
+            src_enc,     # 7: source_channel
+            city_enc,    # 8: city
+            gender_enc,  # 9: gender
+            age_enc,     # 10: age_bucket
+            tenure_enc,  # 11: tenure_bucket
+            dur_enc,     # 12: duration_bucket
+            # 12 稠密特征（对齐 DENSE_FEAT_SPECS 顺序）
             user_play_count_log, avg_comp_u,
-            0.5,             # user_genre_diversity（简化）
+            user_diversity,
             user_30d_active,
             song_play_log, song_avg_comp,
             song_pop_norm,  song_age_log,
@@ -781,11 +818,7 @@ def generate_recommendations():
         # Step 2: 加载资源
         print("\n📥 [Step 2] 加载模型资源...")
         res = Resources()
-
-        with db.cursor() as cur:
-            cur.execute("SELECT id, kkbox_id FROM songs WHERE kkbox_id IS NOT NULL AND kkbox_id != ''")
-            db_songs = cur.fetchall()
-        res.build_song_mappings(db_songs)
+        # 映射已在 Resources.__init__ 中从 song_id_map.pkl 直接加载，无需额外构建
 
         # 预加载所有歌曲元数据（genre, artist）用于屏蔽和多样性过滤
         with db.cursor() as cur:
