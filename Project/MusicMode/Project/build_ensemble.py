@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-build_ensemble.py — 5 模型横向对比 + 多策略集成
+build_ensemble.py — 3 模型横向对比 + 多策略集成
 
 功能：
-  1. 加载 5 个模型（LightGBM, XGBoost, CatBoost, DeepFM, DIN）在验证集上推断
+  1. 加载 3 个模型（LightGBM, DeepFM, DIN）在验证集上推断
   2. 搜索最优加权系数（scipy.optimize.minimize，Kaggle Best Practice）
   3. Top-K 等权平均（K=2,3,4,5）
   4. Stacking 二阶段（Logistic Regression, Wolpert 1992）
@@ -51,14 +51,6 @@ MODEL_CONFIGS = {
     "LightGBM": {
         "type": "lgbm",
         "model_path": os.path.join(MODE_DIR, "lgbm", "lgbm_model.pkl"),
-    },
-    "XGBoost": {
-        "type": "xgb",
-        "model_path": os.path.join(MODE_DIR, "xgboost", "xgb_model.pkl"),
-    },
-    "CatBoost": {
-        "type": "catboost",
-        "model_path": os.path.join(MODE_DIR, "catboost", "catboost_model.pkl"),
     },
     "DeepFM": {
         "type": "deepfm",
@@ -314,7 +306,7 @@ def load_val_data():
 # ============================================================
 
 def predict_tree_model(name, cfg, X_val):
-    """树模型推断（LightGBM / XGBoost / CatBoost）"""
+    """树模型推断（LightGBM）"""
     if not os.path.exists(cfg["model_path"]):
         print(f"   ⚠️  {name} 模型不存在，跳过")
         return None
@@ -334,12 +326,6 @@ def predict_tree_model(name, cfg, X_val):
 
     if model_type == "lgbm":
         preds = model.predict(X_use, num_iteration=payload.get("best_iteration"))
-    elif model_type == "xgb":
-        import xgboost as xgb
-        dval = xgb.DMatrix(X_use, feature_names=saved_fnames)
-        preds = model.predict(dval)
-    elif model_type == "catboost":
-        preds = model.predict_proba(X_val)[:, 1]
     else:
         raise ValueError(f"Unknown type: {model_type}")
 
@@ -421,7 +407,7 @@ def collect_predictions(X_val, y_val, feat, val_idx):
     model_aucs  = {}
 
     for name, cfg in MODEL_CONFIGS.items():
-        if cfg["type"] in ("lgbm", "xgb", "catboost"):
+        if cfg["type"] == "lgbm":
             preds = predict_tree_model(name, cfg, X_val)
         else:
             preds = predict_torch_model(name, cfg, feat, val_idx)
@@ -521,7 +507,7 @@ def generate_report(model_aucs, ensemble_results, best_weights, weight_names):
             continue
         info = {"val_auc": model_aucs[name], "train_auc": 0, "duration_min": 0}
         try:
-            if cfg["type"] in ("lgbm", "xgb", "catboost"):
+            if cfg["type"] == "lgbm":
                 with open(cfg["model_path"], "rb") as f:
                     p = pickle.load(f)
                 info["train_auc"] = p.get("train_auc", 0)
@@ -544,7 +530,7 @@ def generate_report(model_aucs, ensemble_results, best_weights, weight_names):
     lines.append(f"{'模型':<16} {'Train AUC':>10} {'Val AUC':>10} {'耗时(min)':>10}")
     lines.append("-" * 50)
 
-    for name in ["LightGBM", "XGBoost", "CatBoost", "DeepFM", "DIN"]:
+    for name in ["LightGBM", "DeepFM", "DIN"]:
         if name in model_info:
             info = model_info[name]
             lines.append(f"{name:<16} {info['train_auc']:>10.4f} {info['val_auc']:>10.4f} {info['duration_min']:>10.1f}")
@@ -616,7 +602,7 @@ def save_config(model_aucs, ensemble_results, best_weights, weight_names, best_o
 
 def main():
     print("\n" + "=" * 62)
-    print("   5 模型横向对比 + 多策略集成")
+    print("   3 模型横向对比 + 多策略集成（LightGBM + DeepFM + DIN）")
     print(f"   开始时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 62)
 
