@@ -941,6 +941,33 @@ public class SongDAO {
     /**
      * 插入新的外部歌曲
      */
+    /** 语言 → ISO-3166 发行国推断表（50+ 条目） */
+    private static final java.util.Map<String, String> LANG_TO_COUNTRY;
+    static {
+        java.util.Map<String, String> m = new java.util.HashMap<>();
+        m.put("国语", "TW"); m.put("普通话", "CN"); m.put("粤语", "HK");
+        m.put("英语", "US"); m.put("日语", "JP"); m.put("韩语", "KR");
+        m.put("法语", "FR"); m.put("西班牙语", "ES"); m.put("葡萄牙语", "BR");
+        m.put("德语", "DE"); m.put("意大利语", "IT"); m.put("俄语", "RU");
+        m.put("泰语", "TH"); m.put("越南语", "VN"); m.put("印尼语", "ID");
+        m.put("马来语", "MY"); m.put("印地语", "IN"); m.put("阿拉伯语", "SA");
+        m.put("土耳其语", "TR"); m.put("菲律宾语", "PH"); m.put("蒙古语", "MN");
+        m.put("Chinese", "CN"); m.put("Mandarin", "TW"); m.put("Cantonese", "HK");
+        m.put("English", "US"); m.put("Japanese", "JP"); m.put("Korean", "KR");
+        m.put("French", "FR"); m.put("Spanish", "ES"); m.put("Portuguese", "BR");
+        m.put("German", "DE"); m.put("Italian", "IT"); m.put("Russian", "RU");
+        m.put("Thai", "TH"); m.put("Vietnamese", "VN"); m.put("Indonesian", "ID");
+        m.put("Hindi", "IN"); m.put("Arabic", "SA"); m.put("Turkish", "TR");
+        LANG_TO_COUNTRY = java.util.Collections.unmodifiableMap(m);
+    }
+
+    private String inferOriginCountry(String language) {
+        if (language == null || language.isEmpty()) return "XX";
+        // 多值分隔（取第一个）
+        String first = language.split("[;,；，]")[0].trim();
+        return LANG_TO_COUNTRY.getOrDefault(first, "XX");
+    }
+
     private int insertNewExternalSong(String title, String artist, String album,
             int duration, String source,
             String coverImage, int releaseYear,
@@ -949,11 +976,13 @@ public class SongDAO {
         PreparedStatement pstmt = null;
         ResultSet rs = null;
 
+        String originCountry = inferOriginCountry(language);
+
         try {
             conn = DBUtil.getConnection();
-            String sql = "INSERT INTO songs (title, artist, album, duration, genre, release_year, file_path, cover_image, language) "
+            String sql = "INSERT INTO songs (title, artist, album, duration, genre, release_year, file_path, cover_image, language, origin_country) "
                     +
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
             pstmt = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
             pstmt.setString(1, title);
             pstmt.setString(2, artist);
@@ -964,6 +993,7 @@ public class SongDAO {
             pstmt.setString(7, source != null ? source : "");
             pstmt.setString(8, coverImage != null ? coverImage : "img/cover.jpg");
             pstmt.setString(9, language != null ? language : "");
+            pstmt.setString(10, originCountry);
 
             int result = pstmt.executeUpdate();
 

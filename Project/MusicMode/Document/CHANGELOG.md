@@ -2,6 +2,145 @@
 
 本文档记录 MusicMode 项目的所有更新历史。
 
+## v2.4.0 (2026-03-18) - 模型精简：移除 CatBoost/XGBoost，OOF Target Encoding，深度模型增强
+
+### 🗑️ 移除
+
+- **CatBoost 移除** (`train_catboost.py` 已删除)：Val AUC=0.6499，Train AUC=0.9558（过拟合差距 0.306），集成权重仅 0.8%，性价比极低，予以剔除。同步删除 `Mode/catboost/` 目录及 `catboost_train.log`。
+- **XGBoost 移除** (`train_xgboost.py` 已删除)：与 LightGBM 高度冗余（均为 GBDT 族），无法提供额外多样性，予以剔除。同步删除 `Mode/xgboost/` 目录及 `xgboost_train.log`。
+
+### 🚨 关键改进：OOF (Out-of-Fold) Target Encoding
+
+- **问题**：旧版 Target Encoding 在全训练集上计算统计量后直接喂回同一训练集，导致 target leakage——训练时模型间接"看见"了标签，造成虚高训练 AUC。
+- **修复**：改用 K-Fold OOF 策略：将训练集分为 K 折，每折的 TE 统计量仅从其余 K-1 折计算，验证集 TE 从全训练集计算，彻底消除训练集内数据泄漏。
+- **效果**：LightGBM Val AUC 从 0.6798 提升至 **0.7063**。
+
+### 🚀 深度模型优化
+
+- **DeepFM v3 EPOCHS 10→15**：延长训练轮数，充分利用早停（`EarlyStopping patience=3`），Val AUC 达 **0.7548**。
+- **DIN EPOCHS 10→15**：同步延长训练，DIN 成为最佳单模型，Val AUC 达 **0.7602**。
+- **Embedding L2 正则化**：对 sparse 特征嵌入层新增 L2 正则（`l2_reg_embedding=1e-5`），缓解高基数特征过拟合。
+- **min-count 过滤**：对出现频次 < min_count 的 ID 类特征映射为 `<UNK>`，减少噪声嵌入数量。
+
+### 📊 模型性能（2026-03-18）
+
+| 模型 | 验证 AUC | 说明 |
+|------|---------|------|
+| LightGBM（OOF TE）| **0.7063** | OOF Target Encoding 消除泄漏 |
+| DeepFM v3（EPOCHS=15）| **0.7548** | GPU AMP，L2 正则，min-count 过滤 |
+| DIN（EPOCHS=15）| **0.7602** | 最佳单模型，用户兴趣序列建模 |
+| Stacking Ensemble | **0.7607** | LightGBM + DeepFM + DIN 堆叠集成 |
+| CatBoost | ~~0.6499~~ | 已移除（过拟合差距 0.306） |
+| XGBoost | ~~—~~ | 已移除（与 LightGBM 冗余） |
+
+### 🧹 清理
+
+- 删除 `Project/__pycache__/`、`scripts/__pycache__/` 等编译缓存
+- 删除 `Project/catboost_info/` 临时目录
+- 删除 `scripts/test_api_composer.py`、`scripts/test_enrich_100.py` 一次性测试脚本
+- 删除 `catboost_train.log`、`xgboost_train.log`、`lgbm_train.log` 训练日志
+
+### 📁 新增/修改文件
+
+| 文件 | 改动 |
+|------|------|
+| `Project/train_catboost.py` | [DELETED] CatBoost 训练脚本已移除 |
+| `Project/train_xgboost.py` | [DELETED] XGBoost 训练脚本已移除 |
+| `Mode/catboost/` | [DELETED] CatBoost 模型目录已移除 |
+| `Mode/xgboost/` | [DELETED] XGBoost 模型目录已移除 |
+| `Project/train_lgbm.py` | [UPDATE] 改用 OOF Target Encoding |
+| `Project/train_deepfm_v3.py` | [UPDATE] EPOCHS 10→15，L2 正则，min-count |
+| `Project/train_din.py` | [UPDATE] EPOCHS 10→15，L2 正则，min-count |
+| `Project/build_ensemble.py` | [UPDATE] Stacking 集成：LightGBM + DeepFM + DIN |
+| `Document/README.md` | [UPDATE] 模型阵容更新，移除 CatBoost/XGBoost |
+
+---
+
+## v2.3.0 (2026-03-17) - 推荐系统全面升级：目标泄漏修复、特征工程 v3、集成精排
+
+### 🚨 关键修复：目标泄漏 (Target Leakage)
+
+- **发现 `play_duration` 为累积值**：`play_history.play_duration` 存储的是用户对某首歌所有播放记录的**累积时长**，而非单次播放时长。由此计算的 `this_play_completion = play_duration / duration` 在 99.99% 行达到 ≥1（表明已完整收听），直接导致 AUC = 1.0 的完美泄漏。已从所有特征集中**永久删除**。
+- **验证集 AUC 回归真实**：去除泄漏后，无泄漏验证 AUC = **0.6717**（对比旧"干净"基线 0.9603，差距揭示了原有评估方法的隐性泄漏问题）。
+
+### 🚀 新增功能
+
+- **特征工程 v3** (`prepare_features_v3.py` 完全重写)：
+  - 45 维特征（14 sparse + 31 dense），移除所有泄漏特征
+  - **用户级时序切分**：对每位用户按 `play_time` 排序后取各自最后 10% 作为验证集（`MIN_INTERACTIONS=5`，交互数不足的用户全部归入训练集）
+  - 新增 `compute_temporal_features()`：计算 7d/30d 滚动窗口特征（`closed="left"` 防止单行泄漏）
+  - 新增 B-3 记忆衰减特征（`user_song_prev_play_days`、`user_song_play_count_before`），后经实验证实为 near-constant 已移除
+
+- **推荐系统 v3.1** (`sync_recs_v3.py`)：三通道混合召回 + 集成精排：
+  - **通道 A（FAISS）**：基于用户画像向量召回 150 候选
+  - **通道 B（热度兜底）**：按 `popularity DESC, release_year DESC` 补充 100 候选
+  - **通道 C（ALS 协同过滤）**：ALS 生成 Top-100 候选融合
+  - **精排层**：LightGBM 打分 + DeepFM 打分 + α 加权集成（`final = α×LGBM + (1-α)×DeepFM`）
+  - **重排层**：多样性约束（同艺人不超过 3 首）+ 冷却/屏蔽过滤
+  - 每日凌晨 4 时生成每用户 20 首个性化推荐
+
+- **集成模型** (`build_ensemble.py`)：
+  - 在验证集上网格搜索最优集成权重 α（步长 0.05，范围 [0, 1]）
+  - 最优 α 保存至 `ensemble_config.pkl`，供 `sync_recs_v3.py` 加载
+
+- **LightGBM 精排** (`train_lgbm.py`)：
+  - 6 条验证断言（时序不重叠、ALS 仅用训练集、分布检查等）防止隐性泄漏
+  - **Phase B-2 Cross TE**：将 `user_genre_match`/`user_language_match`/`user_country_match` 从 0/1 布尔值升级为 P(target=1|user,genre/language/country) 条件概率，贝叶斯平滑系数 m=15
+  - **Phase B-1 ALS 向量注入**：在 train_idx 子集上重训 ALS（factors=50, iterations=10），仅注入 `als_score`（1维点积），避免 21 维嵌入引发过拟合早停
+  - **Phase C 特征剪枝**：移除 5 个零重要性特征（`gender_encoded`、`dow_match`、`user_30d_active_days`、`user_has_in_playlist`、`user_playlist_artist_count_log`）
+  - **贝叶斯平滑**：`user_artist_repeat_rate`、`user_target_rate`、`song_target_rate` 仅从 train_idx 子集计算，公式 `TE = (n×mean + 15×prior) / (n+15)`
+
+- **DeepFM v3** (`train_deepfm_v3.py`)：
+  - 同步应用用户级时序切分、Phase B-2 Cross TE、Phase C 特征剪枝
+  - GPU AMP 加速，与 LightGBM 使用完全相同的 train_idx/val_idx
+
+- **外部歌曲元数据补全** (`scripts/enrich_db.py`)：
+  - 五级元数据聚合策略（QQ 音乐 / 网易云 / Last.fm / MusicBrainz / langdetect 本地语种识别）
+  - 补全 `songs.origin_country`、`songs.language`（数字代码→中文映射）、`songs.release_year`
+  - 修复 bd 城市位置映射错误，解决 collation mismatch 与 SQL_LOG_BIN 权限问题
+
+### ⚡ 优化
+
+- **ALS 召回**：从全量 play_history 召回改为在切分后的训练集子集上重训，消除验证集信息泄露风险
+- **特征矩阵维度**：从 45 维精简至 32 维（移除 B-3/B-4 无效特征 + Phase C 零重要性特征）
+
+### 🧪 实验结论（已废弃的方向）
+
+- **B-3 记忆衰减特征**：`user_song_prev_play_days`（-1 占 99.99%）和 `user_song_play_count_before`（0 占 99.99%）因 play_history 中 (user,song) 对几乎唯一，导致两个特征近乎常数，无信息量，已废弃
+- **B-4 时间窗口滚动特征**：7d/30d 播放量、平均完播率、trending_ratio 等 6 个特征轻微损害 AUC（0.6798 → 0.6631），已废弃
+
+### 📊 模型性能（2026-03-17）
+
+| 模型 | 验证 AUC | 说明 |
+|------|---------|------|
+| LightGBM（无泄漏，B-1+B-2+C）| **0.6798** | 最佳，用户级时序切分 |
+| LightGBM（无泄漏，B-2+C）| 0.6717 | 基准无泄漏验证 |
+| DeepFM v3 | — | 与 LightGBM 集成后使用 |
+| LightGBM（旧，全局切分含隐性泄漏）| 0.9603 | 虚高，已废弃 |
+
+### 📁 新增/修改文件
+
+| 文件 | 改动 |
+|------|------|
+| `Project/prepare_features_v3.py` | [REWRITE] 特征工程 v3，45维，用户级时序切分 |
+| `Project/train_lgbm.py` | [UPDATE] Phase A+B-1+B-2+C，6条验证断言，ALS 子集重训 |
+| `Project/train_deepfm_v3.py` | [UPDATE] 同步用户级切分 + Cross TE + 特征剪枝 |
+| `Project/build_ensemble.py` | [UPDATE] 网格搜索 α，用户级切分对齐 |
+| `Project/sync_recs_v3.py` | [UPDATE] 三通道召回 + 集成精排 + 多样性重排 |
+| `scripts/enrich_db.py` | [NEW] 外部歌曲元数据五级补全脚本 |
+| `Mode/lgbm_model.pkl` | [UPDATE] 最新 LightGBM 精排模型 |
+| `Mode/deepfm_model_v3.pth` | [UPDATE] 最新 DeepFM 排序模型 |
+| `Mode/als_model.pkl` | [NEW] ALS 召回模型（rank=50, iter=10）|
+| `Mode/candidates.pkl` | [NEW] ALS Top-100 候选集 |
+| `Mode/features_v3.pkl` | [UPDATE] 特征矩阵 v3（7.37M 样本，32维）|
+| `Mode/ensemble_config.pkl` | [NEW] 最优集成权重 α |
+| `Mode/encoders_v3.pkl` | [UPDATE] 标签编码器 v3 |
+| `Mode/model_config_v3.pkl` | [UPDATE] 模型特征配置 |
+| `Mode/lgbm_metrics.csv` | [UPDATE] 各阶段训练指标记录 |
+| `scripts/start_daily_recommend.bat` | [UPDATE] 改为调用 sync_recs_v3.py |
+
+---
+
 ## v2.2.0 (2026-03-13) - 流派规范化、KKBOX数据导入、GPU加速重训
 
 ### 🚀 新增功能

@@ -29,6 +29,10 @@ class AudioPlayer {
         this.playStartTime = null;
         this.currentLocalSongId = null;
 
+        // v5.0: 播放来源上下文（各页面在调用 playSong 前设置）
+        // 枚举值: DIRECT_PLAY / RECOMMENDATION / SEARCH / PERSONAL_PLAYLIST / EXTERNAL / UNKNOWN
+        this.currentSourceChannel = 'DIRECT_PLAY';
+
         // 初始化
         this.init();
     }
@@ -447,16 +451,23 @@ class AudioPlayer {
 
     // v3.1.0: 通用播放历史记录（支持本地和外部歌曲）
     recordUniversalPlayHistory(song) {
+        // 外部歌曲（netease/qq）强制覆盖 sourceChannel 为 EXTERNAL
+        const effectiveSource = song.source || 'local';
+        const sourceChannel = (effectiveSource === 'netease' || effectiveSource === 'qq')
+            ? 'EXTERNAL'
+            : (this.currentSourceChannel || 'DIRECT_PLAY');
+
         const payload = {
             songId: song.id || null,
             title: song.title || '',
             artist: song.artist || '',
             album: song.album || '',
             duration: song.duration || 0,
-            source: song.source || 'local',
+            source: effectiveSource,
             externalId: song.externalId || '',
             coverUrl: song.coverUrl || song.coverImage || '',
-            releaseYear: song.releaseYear || 0
+            releaseYear: song.releaseYear || 0,
+            sourceChannel: sourceChannel
         };
 
         console.log('📝 [播放历史] 记录歌曲:', payload.title, '-', payload.artist, '(source:', payload.source + ')');

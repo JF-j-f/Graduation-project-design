@@ -22,6 +22,17 @@ document.addEventListener('DOMContentLoaded', function () {
                 duration: parseInt(btn.dataset.songDuration) || 0
             };
 
+            // 根据按钮所在区域设置播放来源上下文
+            if (btn.closest('#recommend-list')) {
+                player.currentSourceChannel = 'RECOMMENDATION';
+            } else if (btn.closest('#history-list, .play-history')) {
+                player.currentSourceChannel = 'DIRECT_PLAY';
+            } else if (btn.closest('.playlist-songs, #playlist-detail')) {
+                player.currentSourceChannel = 'PERSONAL_PLAYLIST';
+            } else {
+                player.currentSourceChannel = 'DIRECT_PLAY';
+            }
+
             // 播放
             player.playSong(song);
         }
@@ -590,6 +601,7 @@ document.addEventListener('DOMContentLoaded', function () {
         // 直接重置队列（不弹 confirm）
         player.playQueue = [];
         player.currentIndex = -1;
+        player.currentSourceChannel = 'RECOMMENDATION';
 
         // 收集全部推荐歌曲并加入队列
         playBtns.forEach(function (btn) {

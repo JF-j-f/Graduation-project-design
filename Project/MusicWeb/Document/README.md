@@ -212,6 +212,7 @@ MusicWeb/
 - `genre_ids` (VARCHAR): 曲风ID列表
 - `language` (VARCHAR): 语言代码
 - `popularity` (INT): 歌曲热度
+- `origin_country` (VARCHAR): 歌曲原产地（由 `enrich_db.py` 从外部元数据补全）
 
 #### 3. 播放历史表 (`play_history`)
 
@@ -610,4 +611,4 @@ MusicWeb/
 
 ---
 
-*本文档最后更新时间：2026年3月12日*
+*本文档最后更新时间：2026年3月17日*

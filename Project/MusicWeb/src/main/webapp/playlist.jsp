@@ -377,6 +377,7 @@
                                 };
 
                                 player.addToQueue(song);
+                                player.currentSourceChannel = 'PERSONAL_PLAYLIST';
                                 player.play(song);
                             }
                         });
@@ -418,6 +419,7 @@
                                 album: firstBtn.dataset.songAlbum,
                                 duration: parseInt(firstBtn.dataset.songDuration)
                             };
+                            player.currentSourceChannel = 'PERSONAL_PLAYLIST';
                             player.play(firstSong);
                         };
 

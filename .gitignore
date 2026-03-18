@@ -1,1 +1,22 @@
 /.claude
+
+# 模型文件（大型二进制，不进入版本库）
+Project/MusicMode/Mode/*.pkl
+Project/MusicMode/Mode/*.pth
+Project/MusicMode/Mode/*.faiss
+Project/MusicMode/Mode/*.h5
+Project/MusicMode/Mode/*.onnx
+
+# Python 编译缓存
+__pycache__/
+*.pyc
+*.pyo
+
+# 训练日志与中间产物（可选保留，按需注释掉）
+Project/MusicMode/Mode/train_*.txt
+Project/MusicMode/Mode/*.csv
+Project/MusicMode/Mode/*.png
+
+# 空占位文件
+Project/MusicMode/scripts/null
+Project/MusicWeb/scripts/null
