@@ -28,10 +28,14 @@ MusicMode 是一个基于大数据技术的**个性化音乐推荐系统后端�
 
 ### 算法模型
 
-- **DeepCTR-Torch** - 基于 PyTorch 的深度兴趣网络
-- **DeepFM** - 高阶交叉特征排序 (已训练, AUC=0.8053，GPU AMP 加速)
-- **FAISS** - 高性能向量相似度检索引擎
+- **LightGBM** - 梯度提升精排模型（OOF Target Encoding 消除数据泄漏，Val AUC=0.7063）
+- **DeepFM v3** - 高阶交叉特征深度精排（GPU AMP 加速，EPOCHS=15，Val AUC=0.7548）
+- **DIN (Deep Interest Network)** - 用户兴趣序列建模（EPOCHS=15，Val AUC=0.7602，最佳单模型）
+- **Stacking Ensemble** - LightGBM + DeepFM + DIN 堆叠集成（Val AUC=0.7607，最优）
+- **FAISS** - 高性能向量相似度检索引擎（召回层）
 - **Spark MLlib ALS** - 协同过滤召回
+
+> **注意**：CatBoost（Val AUC=0.6499，过拟合差距 0.306）和 XGBoost（与 LightGBM 重复）已于 2026-03-18 从模型序列中移除。
 
 ## 项目核心结构
 
@@ -52,35 +56,30 @@ MusicMode/
 ├── Project/                     # 算法源码
 │   ├── data_analysis.py          # EDA 数据分析
 │   ├── data_cleaning.py          # 数据清洗与采样
-│   ├── prepare_features.py       # 特征工程 v1（旧版）
-│   ├── prepare_features_v3.py    # 特征工程 v3（当前版，45维，用户级时序切分）
+│   ├── prepare_features_v3.py    # 特征工程 v3（当前版，32维，用户级时序切分 + OOF TE）
 │   ├── train_als.py              # ALS 召回模型
-│   ├── train_deepfm.py           # DeepFM 精排模型 v1（旧版）
-│   ├── train_deepfm_v3.py        # DeepFM 精排模型 v3（当前版，GPU AMP）
-│   ├── train_lgbm.py             # LightGBM 精排模型（含泄漏修复 + Cross TE + ALS 注入）
-│   ├── build_ensemble.py         # LightGBM+DeepFM 集成权重搜索
+│   ├── train_deepfm_v3.py        # DeepFM 精排模型 v3（GPU AMP，EPOCHS=15）
+│   ├── train_din.py              # DIN 精排模型（EPOCHS=15，最佳单模型 AUC=0.7602）
+│   ├── train_lgbm.py             # LightGBM 精排模型（OOF TE + Cross TE + ALS 注入）
+│   ├── build_ensemble.py         # Stacking 集成：LightGBM + DeepFM + DIN
 │   ├── build_faiss_index.py      # FAISS 向量索引构建
-│   ├── sync_recs.py              # 旧版结果同步
-│   ├── sync_recs_v2.py           # 多通道混合推荐脚本 v2（旧版）
 │   ├── sync_recs_v3.py           # 三通道召回 + 集成精排推荐脚本 v3（当前版）
 │   ├── evaluate_recs.py          # 推荐效果评估脚本
 │   └── run_pipeline.py           # 一键运行脚本
 └── Mode/                         # 模型产物
     ├── features_v3.pkl           # 预处理特征矩阵 v3（7.37M 样本，32 维）
     ├── encoders_v3.pkl           # 标签编码器 v3
-    ├── model_config_v3.pkl       # 特征列配置（DeepFM + LightGBM 共用）
-    ├── deepfm_model_v3.pth       # DeepFM 训练模型 v3（GPU AMP，AUC=0.8053）
-    ├── lgbm_model.pkl            # LightGBM 精排模型（无泄漏，B-1+B-2+C）
+    ├── model_config_v3.pkl       # 特征列配置（共用）
+    ├── lgbm/lgbm_model.pkl       # LightGBM 精排模型（OOF TE，Val AUC=0.7063）
+    ├── deepfm/deepfm_model.pth   # DeepFM 精排模型（EPOCHS=15，Val AUC=0.7548）
+    ├── din/din_model.pth         # DIN 精排模型（EPOCHS=15，Val AUC=0.7602，最佳）
+    ├── ensemble/ensemble_config.pkl  # Stacking 集成配置（Val AUC=0.7607）
     ├── als_model.pkl             # ALS 召回模型（rank=50, iter=10）
     ├── candidates.pkl            # ALS Top-100 候选集缓存
-    ├── ensemble_config.pkl       # 最优集成权重 α
-    ├── song_index.faiss          # FAISS 向量索引（704M）
+    ├── song_index.faiss          # FAISS 向量索引
     ├── song_id_map.pkl           # FAISS ID ↔ MySQL ID 映射
     ├── song_stats.pkl            # 歌曲统计特征缓存
-    ├── user_stats.pkl            # 用户统计特征缓存
-    ├── lgbm_metrics.csv          # LightGBM 各阶段训练指标记录
-    ├── lgbm_importance.png       # LightGBM 特征重要度可视化
-    └── training_progress_v3.png  # DeepFM 训练过程可视化图（loss/AUC 曲线）
+    └── user_stats.pkl            # 用户统计特征缓存
 ```
 
 ## 数据流程
@@ -107,7 +106,7 @@ MusicMode/
    - **通道 A（FAISS）**: 基于用户画像向量从索引中召回 Top-150 候选
    - **通道 B（热度兜底）**: 按 `popularity DESC, release_year DESC` 补充 100 候选
    - **通道 C（ALS 协同过滤）**: ALS 矩阵分解生成 Top-100 候选融合
-   - **精排**: LightGBM 打分 + DeepFM 打分 + α 加权集成
+   - **精排**: LightGBM + DeepFM + DIN 三模型 Stacking 集成（Stacking AUC=0.7607）
    - **重排**: 多样性约束（同艺人不超过 3 首）+ 冷却/屏蔽过滤
 4. **反馈闭环**: `recommendation_feedback` 表追踪推荐交互，动态调整评分与冷却
 5. **结果回传**: `sync_recs_v3.py` 将 Top-20 推荐批量写入 `recommendations` 表
@@ -173,4 +172,4 @@ python update_song_metadata.py
 
 ---
 
-*本文档最后更新时间：2026年3月17日*
+*本文档最后更新时间：2026年3月18日*

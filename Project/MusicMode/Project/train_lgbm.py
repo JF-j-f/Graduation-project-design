@@ -41,12 +41,14 @@ PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 MODE_DIR    = os.path.join(os.path.dirname(PROJECT_DIR), "Mode")
 
 INPUT_FEATURES  = os.path.join(MODE_DIR, "features_v3.pkl")
-OUTPUT_MODEL    = os.path.join(MODE_DIR, "lgbm_model.pkl")
-OUTPUT_PLOT     = os.path.join(MODE_DIR, "lgbm_importance.png")
-OUTPUT_METRICS  = os.path.join(MODE_DIR, "lgbm_metrics.csv")       # 论文用：特征重要度 + 评估指标
+LGBM_DIR        = os.path.join(MODE_DIR, "lgbm")
+os.makedirs(LGBM_DIR, exist_ok=True)
+OUTPUT_MODEL    = os.path.join(LGBM_DIR, "lgbm_model.pkl")
+OUTPUT_PLOT     = os.path.join(LGBM_DIR, "lgbm_importance.png")
+OUTPUT_METRICS  = os.path.join(LGBM_DIR, "lgbm_metrics.csv")       # 论文用：特征重要度 + 评估指标
 
 # 训练配置
-VALID_RATIO  = 0.1    # 验证集比例
+VALID_RATIO  = 0.1    # 验证集比例：10%（20%时序偏移过大，正样本率差12.71%，改回10%）
 RANDOM_SEED  = 42
 N_JOBS       = -1     # 使用全部 CPU 核心
 
@@ -55,22 +57,21 @@ LGBM_PARAMS = {
     "objective":       "binary",
     "metric":          "auc",
     "boosting_type":   "gbdt",
-    "num_leaves":      127,
-    "max_depth":       7,
-    "min_child_samples": 100,
-    "learning_rate":   0.05,
-    "feature_fraction": 0.8,
-    "bagging_fraction": 0.8,
+    "num_leaves":      64,       # Fix-3: 31→64，OOF TE 后泄漏消除，可适当增加容量
+    "max_depth":       6,        # Fix-3: 5→6
+    "min_child_samples": 5000,   # Fix-2: 100→5000，叶节点最少样本
+    "learning_rate":   0.01,     # Fix-2: 0.05→0.01，配合更多轮次
+    "feature_fraction": 0.6,     # Fix-2: 0.8→0.6
+    "bagging_fraction": 0.7,     # Fix-2: 0.8→0.7
     "bagging_freq":    5,
-    "reg_alpha":       0.1,
-    "reg_lambda":      0.1,
-    "n_estimators":    3000,
-    "early_stopping_rounds": 200,
+    "reg_alpha":       1.0,      # Fix-2: 0.1→1.0
+    "reg_lambda":      5.0,      # Fix-2: 0.1→5.0
+    "n_estimators":    5000,     # Fix-2: 3000→5000，配合小学习率
+    "early_stopping_rounds": 300,# Fix-2: 200→300
     "verbose":         -1,
     "n_jobs":          N_JOBS,
     "random_state":    RANDOM_SEED,
-    # CPU 全核训练（LightGBM GPU build 在大数据高基数特征下有已知稳定性问题）
-    "num_threads":     0,   # 0 = 全部 CPU 线程
+    "num_threads":     0,
 }
 
 
@@ -78,22 +79,20 @@ LGBM_PARAMS = {
 # 特征列定义
 # ============================================================
 
-# 稀疏特征（直接用原始编码值，LightGBM 自动处理）
+# 稀疏特征（已删除两模型均为零重要度的6个特征：
+#   age_bucket_encoded, city_encoded, tenure_bucket_encoded,
+#   year_bucket_encoded, duration_bucket_encoded, user_peak_hour_encoded）
 SPARSE_FEATURES = [
     "user_id_encoded", "song_id_encoded",
-    "age_bucket_encoded", "city_encoded",
-    "tenure_bucket_encoded", "genre_encoded", "language_encoded",
+    "genre_encoded", "language_encoded",
     "artist_encoded", "origin_country_encoded",
-    "year_bucket_encoded", "duration_bucket_encoded",
     "source_channel_encoded",
-    "user_peak_hour_encoded",
 ]
 
-# 稠密特征（已移除 Phase-C 零重要度特征: gender_encoded, dow_match,
-#  user_30d_active_days, user_has_in_playlist, user_playlist_artist_count_log）
+# 稠密特征（已删除两模型均为零重要度的特征）
 DENSE_FEATURES = [
     "user_play_count_log", "user_avg_completion",
-    "user_genre_diversity",
+    # user_genre_diversity: 删除（LGBM=0, XGB=0）
     "song_play_count_log", "song_avg_completion",
     "song_popularity_norm", "song_age_days_log",
     "user_genre_match", "user_artist_match",
@@ -102,9 +101,18 @@ DENSE_FEATURES = [
     "user_skip_rate",
     "song_skip_rate",
     "hour_match",
-    "days_since_last_play_log",
+    # "days_since_last_play_log": Fix-3 已移除（含验证集记录的泄漏特征）
     "days_since_artist_log",
     "user_artist_repeat_rate",
+    # 以下 B-3/B-4 特征已全部删除（LGBM=0, XGB=0）：
+    # user_song_prev_play_days, user_song_play_count_before,
+    # user_7d_play_count_log, user_30d_play_count_log, user_7d_avg_completion,
+    # song_7d_play_count_log, song_30d_play_count_log, song_trending_ratio
+    # SVD 嵌入特征（仅保留两模型有效维度，删除均为零的 1/7/8 和 artist 1/2）
+    *[f"svd_user_song_{i}" for i in [0, 2, 3, 4, 5, 6, 9]],
+    *[f"svd_song_user_{i}" for i in range(10)],
+    *[f"svd_user_artist_{i}" for i in [0, 3, 4]],
+    "svd_dot_score",
 ]
 
 ALL_FEATURES = SPARSE_FEATURES + DENSE_FEATURES
@@ -126,8 +134,19 @@ def main():
         print("❌ 特征文件不存在！请先运行 prepare_features_v3.py")
         sys.exit(1)
 
-    with open(INPUT_FEATURES, "rb") as f:
-        feat = pickle.load(f)
+    _npz_cache = INPUT_FEATURES.replace(".pkl", "_cache.npz")
+    _use_cache = (os.path.exists(_npz_cache) and
+                  os.path.getmtime(_npz_cache) >= os.path.getmtime(INPUT_FEATURES))
+    if _use_cache:
+        print(f"   ⚡ 从 npz 缓存加载（速度 5-10x）...")
+        _raw = np.load(_npz_cache, allow_pickle=True)
+        feat = {k: _raw[k].item() if _raw[k].ndim == 0 else _raw[k] for k in _raw.files}
+    else:
+        print(f"   首次加载 pkl，同时生成 npz 缓存供后续使用...")
+        with open(INPUT_FEATURES, "rb") as f:
+            feat = pickle.load(f)
+        np.savez(_npz_cache, **{k: np.array(v) for k, v in feat.items()})
+        print(f"   ✅ npz 缓存已保存: {_npz_cache}")
 
     # ── 2. 构建特征矩阵
     print(f"\n🔧 构建特征矩阵...")
@@ -151,26 +170,29 @@ def main():
     song_id_enc    = feat["song_id_encoded"]
     artist_enc     = feat["artist_encoded"]
 
-    # ── 3. 用户级时序切分（每位用户最后 10% 作为验证集，消除冷启动集中问题）
-    MIN_INTERACTIONS = 5  # 交互数 < 5 的用户全部归入训练集
-    print(f"\n🔀 用户级时序切分（验证集 {VALID_RATIO*100:.0f}%，MIN_INTERACTIONS={MIN_INTERACTIONS}）...")
+    # ── 3. 用户级时序切分（向量化版本，速度 10x；同时计算 user_history_position）
+    MIN_INTERACTIONS = 5
+    print(f"\n🔀 用户级时序切分（验证集 {VALID_RATIO*100:.0f}%，向量化）...")
     _df_meta = pd.DataFrame({
         "orig_idx": np.arange(len(play_time_unix)),
         "uid":      user_id_enc.astype(np.int32),
         "time":     play_time_unix,
-    })
-    _train_list, _val_list = [], []
-    for _uid, _grp in _df_meta.groupby("uid", sort=False):
-        _grp_sorted = _grp.sort_values("time")
-        _n = len(_grp_sorted)
-        if _n < MIN_INTERACTIONS:
-            _train_list.append(_grp_sorted["orig_idx"].values)
-        else:
-            _n_val = max(1, int(_n * VALID_RATIO))
-            _train_list.append(_grp_sorted.iloc[:-_n_val]["orig_idx"].values)
-            _val_list.append(_grp_sorted.iloc[-_n_val:]["orig_idx"].values)
-    train_idx = np.concatenate(_train_list)
-    val_idx   = np.concatenate(_val_list) if _val_list else np.array([], dtype=np.int64)
+    }).sort_values(["uid", "time"])
+    _df_meta["_cnt"]  = _df_meta.groupby("uid")["uid"].transform("count")
+    _df_meta["_rank"] = _df_meta.groupby("uid").cumcount()   # 0-indexed
+    _n_val_vec        = (_df_meta["_cnt"] * VALID_RATIO).astype(int).clip(lower=1)
+    _is_val           = ((_df_meta["_cnt"] >= MIN_INTERACTIONS) &
+                         (_df_meta["_rank"] >= _df_meta["_cnt"] - _n_val_vec))
+    train_idx = _df_meta.loc[~_is_val, "orig_idx"].values
+    val_idx   = _df_meta.loc[ _is_val, "orig_idx"].values
+
+    # user_history_position: 该条记录在用户全部交互历史中的位置比例（0=最早, 1=最新）
+    # 让模型感知"晚期交互重复率系统性偏低"，直接对抗时序概念漂移
+    _df_meta["_seq_ratio"] = (
+        _df_meta["_rank"] / (_df_meta["_cnt"] - 1).clip(lower=1)
+    ).clip(0, 1).astype(np.float32)
+    _seq_ratio_all = np.zeros(len(y), dtype=np.float32)
+    _seq_ratio_all[_df_meta["orig_idx"].values] = _df_meta["_seq_ratio"].values
 
     # ── 3b. Target Leakage 修复：仅用训练集数据重计算 3 个泄漏特征
     print("  🔧 修复 Target Leakage（user_artist_repeat_rate / user_target_rate / song_target_rate）...")
@@ -182,7 +204,7 @@ def main():
         "y":   y[train_idx].astype(np.float32),
     })
     # Bayesian Smoothing: TE_smoothed = (n × mean + m × prior) / (n + m)
-    _SMOOTH_M = 15
+    _SMOOTH_M = 100  # Fix-1: 15→100，强化平滑拉向全局先验，防止 TE 特征在前几轮记忆训练集
     _ua_stats = _train_meta.groupby(["uid", "art"])["y"].agg(["count", "mean"]).reset_index()
     _ua_stats["uar"] = (_ua_stats["count"] * _ua_stats["mean"] + _SMOOTH_M * _global_prior) / (_ua_stats["count"] + _SMOOTH_M)
     _ua_df = _ua_stats[["uid", "art", "uar"]]
@@ -213,28 +235,102 @@ def main():
     IDX_UTR = ALL_FEATURES.index("user_target_rate")
     IDX_STR = ALL_FEATURES.index("song_target_rate")
 
-    X_train = X[train_idx].copy()
-    X_val   = X[val_idx].copy()
-    uar_tr, utr_tr, str_tr = _fix_leaky(train_idx)
-    X_train[:, IDX_UAR] = uar_tr
-    X_train[:, IDX_UTR] = utr_tr
-    X_train[:, IDX_STR] = str_tr
-    uar_vl, utr_vl, str_vl = _fix_leaky(val_idx)
-    X_val[:, IDX_UAR]   = uar_vl
-    X_val[:, IDX_UTR]   = utr_vl
-    X_val[:, IDX_STR]   = str_vl
-
-    y_train = y[train_idx]
-    y_val   = y[val_idx]
-    print(f"   训练集: {len(train_idx):,} 样本")
-    print(f"   验证集: {len(val_idx):,} 样本")
-    print(f"   ✅ 泄漏修复完成，global_prior={_global_prior:.4f}，Bayesian smoothing m={_SMOOTH_M}")
-
-    # ── Phase B-2: Cross TE（user×genre / user×language / user×country 条件概率，仅训练集计算）
-    print("\n🎯 Phase B-2: Cross TE（user×genre/language/country → P(target=1)）...")
+    # 提前加载 Cross TE 所需编码（OOF 循环内需要）
     _genre_enc   = feat.get("genre_encoded",          np.zeros(len(y), dtype=np.int32))
     _lang_enc    = feat.get("language_encoded",       np.zeros(len(y), dtype=np.int32))
     _country_enc = feat.get("origin_country_encoded", np.zeros(len(y), dtype=np.int32))
+
+    X_train = X[train_idx].copy()
+    X_val   = X[val_idx].copy()
+
+    # ── OOF Target Encoding（5折，替代全量回写，消除自我泄漏）
+    print("  🔧 5折 OOF Target Encoding（消除训练集自我泄漏）...")
+    _N_OOF = 5
+    _fold_edges = np.linspace(0, len(train_idx), _N_OOF + 1, dtype=int)
+    _uar_oof = np.full(len(y), _global_prior, dtype=np.float32)
+    _utr_oof = np.full(len(y), _global_prior, dtype=np.float32)
+    _str_oof = np.full(len(y), _global_prior, dtype=np.float32)
+    _ug_oof  = np.full(len(y), _global_prior, dtype=np.float32)
+    _ul_oof  = np.full(len(y), _global_prior, dtype=np.float32)
+    _uc_oof  = np.full(len(y), _global_prior, dtype=np.float32)
+
+    for _k in range(_N_OOF):
+        _fold_mask = np.zeros(len(train_idx), dtype=bool)
+        _fold_mask[_fold_edges[_k]:_fold_edges[_k+1]] = True
+        _other_idx = train_idx[~_fold_mask]
+        _this_fold = train_idx[_fold_mask]
+
+        # — Primary TE stats from other folds
+        _om = pd.DataFrame({
+            "uid": user_id_enc[_other_idx].astype(np.int32),
+            "art": artist_enc[_other_idx].astype(np.int32),
+            "sid": song_id_enc[_other_idx].astype(np.int32),
+            "y":   y[_other_idx].astype(np.float32),
+        })
+        _ua_o = _om.groupby(["uid","art"])["y"].agg(["count","mean"]).reset_index()
+        _ua_o["uar"] = (_ua_o["count"]*_ua_o["mean"] + _SMOOTH_M*_global_prior) / (_ua_o["count"] + _SMOOTH_M)
+        _u_o  = _om.groupby("uid")["y"].agg(["count","mean"]).reset_index()
+        _u_o["utr"]  = (_u_o["count"]*_u_o["mean"]  + _SMOOTH_M*_global_prior) / (_u_o["count"]  + _SMOOTH_M)
+        _s_o  = _om.groupby("sid")["y"].agg(["count","mean"]).reset_index()
+        _s_o["str_v"]= (_s_o["count"]*_s_o["mean"]  + _SMOOTH_M*_global_prior) / (_s_o["count"]  + _SMOOTH_M)
+
+        # — Cross TE stats from other folds
+        _om2 = pd.DataFrame({
+            "uid": user_id_enc[_other_idx].astype(np.int32),
+            "gnr": _genre_enc[_other_idx].astype(np.int32),
+            "lng": _lang_enc[_other_idx].astype(np.int32),
+            "ctr": _country_enc[_other_idx].astype(np.int32),
+            "y":   y[_other_idx].astype(np.float32),
+        })
+        _ug_o = _om2.groupby(["uid","gnr"])["y"].agg(["count","mean"]).reset_index()
+        _ug_o["ug_te"] = (_ug_o["count"]*_ug_o["mean"] + _SMOOTH_M*_global_prior) / (_ug_o["count"] + _SMOOTH_M)
+        _ul_o = _om2.groupby(["uid","lng"])["y"].agg(["count","mean"]).reset_index()
+        _ul_o["ul_te"] = (_ul_o["count"]*_ul_o["mean"] + _SMOOTH_M*_global_prior) / (_ul_o["count"] + _SMOOTH_M)
+        _uc_o = _om2.groupby(["uid","ctr"])["y"].agg(["count","mean"]).reset_index()
+        _uc_o["uc_te"] = (_uc_o["count"]*_uc_o["mean"] + _SMOOTH_M*_global_prior) / (_uc_o["count"] + _SMOOTH_M)
+
+        # — Apply to this fold
+        _tf = pd.DataFrame({
+            "uid": user_id_enc[_this_fold].astype(np.int32),
+            "art": artist_enc[_this_fold].astype(np.int32),
+            "sid": song_id_enc[_this_fold].astype(np.int32),
+            "gnr": _genre_enc[_this_fold].astype(np.int32),
+            "lng": _lang_enc[_this_fold].astype(np.int32),
+            "ctr": _country_enc[_this_fold].astype(np.int32),
+        })
+        _tf = _tf.merge(_ua_o[["uid","art","uar"]], on=["uid","art"], how="left")
+        _tf = _tf.merge(_u_o[["uid","utr"]],        on="uid",          how="left")
+        _tf = _tf.merge(_s_o[["sid","str_v"]],      on="sid",          how="left")
+        _tf = _tf.merge(_ug_o[["uid","gnr","ug_te"]], on=["uid","gnr"], how="left")
+        _tf = _tf.merge(_ul_o[["uid","lng","ul_te"]], on=["uid","lng"], how="left")
+        _tf = _tf.merge(_uc_o[["uid","ctr","uc_te"]], on=["uid","ctr"], how="left")
+        _tf["uar"]   = _tf["uar"].fillna(_tf["utr"]).fillna(_global_prior)
+        _tf["utr"]   = _tf["utr"].fillna(_global_prior)
+        _tf["str_v"] = _tf["str_v"].fillna(_global_prior)
+        _tf["ug_te"] = _tf["ug_te"].fillna(_global_prior)
+        _tf["ul_te"] = _tf["ul_te"].fillna(_global_prior)
+        _tf["uc_te"] = _tf["uc_te"].fillna(_global_prior)
+        _uar_oof[_this_fold] = _tf["uar"].values.astype(np.float32)
+        _utr_oof[_this_fold] = _tf["utr"].values.astype(np.float32)
+        _str_oof[_this_fold] = _tf["str_v"].values.astype(np.float32)
+        _ug_oof[_this_fold]  = _tf["ug_te"].values.astype(np.float32)
+        _ul_oof[_this_fold]  = _tf["ul_te"].values.astype(np.float32)
+        _uc_oof[_this_fold]  = _tf["uc_te"].values.astype(np.float32)
+
+    # Apply OOF values to X_train
+    IDX_GM = ALL_FEATURES.index("user_genre_match")
+    IDX_LM = ALL_FEATURES.index("user_language_match")
+    IDX_CM = ALL_FEATURES.index("user_country_match")
+    X_train[:, IDX_UAR] = _uar_oof[train_idx]
+    X_train[:, IDX_UTR] = _utr_oof[train_idx]
+    X_train[:, IDX_STR] = _str_oof[train_idx]
+    X_train[:, IDX_GM]  = _ug_oof[train_idx]
+    X_train[:, IDX_LM]  = _ul_oof[train_idx]
+    X_train[:, IDX_CM]  = _uc_oof[train_idx]
+    print(f"   ✅ OOF TE 完成（5折，训练集 user_artist_repeat_rate 均值={_uar_oof[train_idx].mean():.4f}）")
+
+    # ── 验证集：用全量训练集统计回填（无泄漏，val 未参与统计）
+    print("  🔧 验证集 Target Encoding（全量训练集统计 → val 回填）...")
     _b2_meta = pd.DataFrame({
         "uid": user_id_enc[train_idx].astype(np.int32),
         "gnr": _genre_enc[train_idx].astype(np.int32),
@@ -265,14 +361,21 @@ def main():
             _t["uc_te"].fillna(_global_prior).values.astype(np.float32),
         )
 
-    IDX_GM = ALL_FEATURES.index("user_genre_match")
-    IDX_LM = ALL_FEATURES.index("user_language_match")
-    IDX_CM = ALL_FEATURES.index("user_country_match")
-    ug_tr, ul_tr, uc_tr = _fix_cross_te(train_idx)
     ug_vl, ul_vl, uc_vl = _fix_cross_te(val_idx)
-    X_train[:, IDX_GM] = ug_tr;  X_val[:, IDX_GM] = ug_vl
-    X_train[:, IDX_LM] = ul_tr;  X_val[:, IDX_LM] = ul_vl
-    X_train[:, IDX_CM] = uc_tr;  X_val[:, IDX_CM] = uc_vl
+    X_val[:, IDX_GM] = ug_vl
+    X_val[:, IDX_LM] = ul_vl
+    X_val[:, IDX_CM] = uc_vl
+
+    uar_vl, utr_vl, str_vl = _fix_leaky(val_idx)
+    X_val[:, IDX_UAR]   = uar_vl
+    X_val[:, IDX_UTR]   = utr_vl
+    X_val[:, IDX_STR]   = str_vl
+
+    y_train = y[train_idx]
+    y_val   = y[val_idx]
+    print(f"   训练集: {len(train_idx):,} 样本")
+    print(f"   验证集: {len(val_idx):,} 样本")
+    print(f"   ✅ 泄漏修复完成，global_prior={_global_prior:.4f}，Bayesian smoothing m={_SMOOTH_M}")
     print(f"   ✅ Cross TE 完成（genre/language/country_match 已替换为 Bayesian 平滑条件概率）")
 
     # ── Phase B-1: ALS 向量注入（仅训练集重训 ALS，避免验证集软泄漏）
@@ -334,6 +437,57 @@ def main():
 
     _eff_features = ALL_FEATURES + _als_features
 
+    # ── Phase SVD Fix: 训练集专用 SVD（防止全量预计算的 SVD 泄漏到验证集）
+    # prepare_features_v3.py 在全量数据上 fit_transform SVD，验证集的用户/歌曲交互
+    # 已编码进 SVD 向量，导致验证 AUC 虚高。此处仅在 train_idx 上重新拟合并替换。
+    print("\n🔧 Phase SVD: 重新在训练集拟合 SVD，消除验证集泄漏...")
+    from scipy.sparse import coo_matrix as _coo_svd
+    from sklearn.decomposition import TruncatedSVD as _TruncSVD
+    _u_all = feat["user_id_encoded"]
+    _s_all = feat["song_id_encoded"]
+    _a_all = feat["artist_encoded"]
+    _n_u_s = int(_u_all.max()) + 1
+    _n_s_s = int(_s_all.max()) + 1
+    _n_a_s = int(_a_all.max()) + 1
+    _us_mat = _coo_svd(
+        (np.ones(len(train_idx), dtype=np.float32),
+         (_u_all[train_idx].astype(np.int32), _s_all[train_idx].astype(np.int32))),
+        shape=(_n_u_s, _n_s_s),
+    ).tocsr()
+    _svd_us = _TruncSVD(n_components=10, random_state=42)
+    _uv_us  = _svd_us.fit_transform(_us_mat)   # (n_users, 10)
+    _sv_us  = _svd_us.components_.T             # (n_songs, 10)
+    _ua_mat = _coo_svd(
+        (np.ones(len(train_idx), dtype=np.float32),
+         (_u_all[train_idx].astype(np.int32), _a_all[train_idx].astype(np.int32))),
+        shape=(_n_u_s, _n_a_s),
+    ).tocsr()
+    _svd_ua = _TruncSVD(n_components=5, random_state=42)
+    _uv_ua  = _svd_ua.fit_transform(_ua_mat)   # (n_users, 5)
+
+    def _apply_svd(X_set, idx_set):
+        _ui = np.clip(_u_all[idx_set].astype(np.int32), 0, _uv_us.shape[0]-1)
+        _si = np.clip(_s_all[idx_set].astype(np.int32), 0, _sv_us.shape[0]-1)
+        for _i in [0, 2, 3, 4, 5, 6, 9]:   # 只更新 DENSE_FEATURES 中保留的 svd_user_song 维度
+            X_set[:, ALL_FEATURES.index(f"svd_user_song_{_i}")] = _uv_us[_ui, _i].astype(np.float32)
+        for _i in range(10):                 # svd_song_user 全部保留
+            X_set[:, ALL_FEATURES.index(f"svd_song_user_{_i}")] = _sv_us[_si, _i].astype(np.float32)
+        _ai = np.clip(_a_all[idx_set].astype(np.int32), 0, _uv_ua.shape[0]-1)
+        for _i in [0, 3, 4]:                 # 只更新 DENSE_FEATURES 中保留的 svd_user_artist 维度
+            X_set[:, ALL_FEATURES.index(f"svd_user_artist_{_i}")] = _uv_ua[_ui, _i].astype(np.float32)
+        X_set[:, ALL_FEATURES.index("svd_dot_score")] = (_uv_us[_ui] * _sv_us[_si]).sum(axis=1).astype(np.float32)
+        return X_set
+
+    X_train = _apply_svd(X_train, train_idx)
+    X_val   = _apply_svd(X_val,   val_idx)
+    print(f"   ✅ SVD 泄漏修复完成（训练集拟合 → user-song 7d + song-user 10d + user-artist 3d + dot）")
+
+    # ── user_history_position 注入（对抗时序概念漂移）
+    X_train = np.hstack([X_train, _seq_ratio_all[train_idx].reshape(-1, 1)])
+    X_val   = np.hstack([X_val,   _seq_ratio_all[val_idx].reshape(-1, 1)])
+    _eff_features = _eff_features + ["user_history_position"]
+    print(f"   ✅ user_history_position 注入完成（val 位置均值={_seq_ratio_all[val_idx].mean():.3f}）")
+
     # ── 训练前验证（防止 target leakage）
     print("\n🔍 训练前验证...")
     # 验证1：每用户 val 记录时间 > train 记录时间（抽样100用户）
@@ -380,8 +534,8 @@ def main():
         params=base_params,
         train_set=train_data,
         num_boost_round=LGBM_PARAMS["n_estimators"],
-        valid_sets=[train_data, val_data],
-        valid_names=["train", "val"],
+        valid_sets=[val_data],       # 仅 val 集用于早停，避免 train AUC 持续上升干扰早停判断
+        valid_names=["val"],
         callbacks=callbacks,
     )
 

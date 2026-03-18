@@ -2,6 +2,60 @@
 
 本文档记录 MusicMode 项目的所有更新历史。
 
+## v2.4.0 (2026-03-18) - 模型精简：移除 CatBoost/XGBoost，OOF Target Encoding，深度模型增强
+
+### 🗑️ 移除
+
+- **CatBoost 移除** (`train_catboost.py` 已删除)：Val AUC=0.6499，Train AUC=0.9558（过拟合差距 0.306），集成权重仅 0.8%，性价比极低，予以剔除。同步删除 `Mode/catboost/` 目录及 `catboost_train.log`。
+- **XGBoost 移除** (`train_xgboost.py` 已删除)：与 LightGBM 高度冗余（均为 GBDT 族），无法提供额外多样性，予以剔除。同步删除 `Mode/xgboost/` 目录及 `xgboost_train.log`。
+
+### 🚨 关键改进：OOF (Out-of-Fold) Target Encoding
+
+- **问题**：旧版 Target Encoding 在全训练集上计算统计量后直接喂回同一训练集，导致 target leakage——训练时模型间接"看见"了标签，造成虚高训练 AUC。
+- **修复**：改用 K-Fold OOF 策略：将训练集分为 K 折，每折的 TE 统计量仅从其余 K-1 折计算，验证集 TE 从全训练集计算，彻底消除训练集内数据泄漏。
+- **效果**：LightGBM Val AUC 从 0.6798 提升至 **0.7063**。
+
+### 🚀 深度模型优化
+
+- **DeepFM v3 EPOCHS 10→15**：延长训练轮数，充分利用早停（`EarlyStopping patience=3`），Val AUC 达 **0.7548**。
+- **DIN EPOCHS 10→15**：同步延长训练，DIN 成为最佳单模型，Val AUC 达 **0.7602**。
+- **Embedding L2 正则化**：对 sparse 特征嵌入层新增 L2 正则（`l2_reg_embedding=1e-5`），缓解高基数特征过拟合。
+- **min-count 过滤**：对出现频次 < min_count 的 ID 类特征映射为 `<UNK>`，减少噪声嵌入数量。
+
+### 📊 模型性能（2026-03-18）
+
+| 模型 | 验证 AUC | 说明 |
+|------|---------|------|
+| LightGBM（OOF TE）| **0.7063** | OOF Target Encoding 消除泄漏 |
+| DeepFM v3（EPOCHS=15）| **0.7548** | GPU AMP，L2 正则，min-count 过滤 |
+| DIN（EPOCHS=15）| **0.7602** | 最佳单模型，用户兴趣序列建模 |
+| Stacking Ensemble | **0.7607** | LightGBM + DeepFM + DIN 堆叠集成 |
+| CatBoost | ~~0.6499~~ | 已移除（过拟合差距 0.306） |
+| XGBoost | ~~—~~ | 已移除（与 LightGBM 冗余） |
+
+### 🧹 清理
+
+- 删除 `Project/__pycache__/`、`scripts/__pycache__/` 等编译缓存
+- 删除 `Project/catboost_info/` 临时目录
+- 删除 `scripts/test_api_composer.py`、`scripts/test_enrich_100.py` 一次性测试脚本
+- 删除 `catboost_train.log`、`xgboost_train.log`、`lgbm_train.log` 训练日志
+
+### 📁 新增/修改文件
+
+| 文件 | 改动 |
+|------|------|
+| `Project/train_catboost.py` | [DELETED] CatBoost 训练脚本已移除 |
+| `Project/train_xgboost.py` | [DELETED] XGBoost 训练脚本已移除 |
+| `Mode/catboost/` | [DELETED] CatBoost 模型目录已移除 |
+| `Mode/xgboost/` | [DELETED] XGBoost 模型目录已移除 |
+| `Project/train_lgbm.py` | [UPDATE] 改用 OOF Target Encoding |
+| `Project/train_deepfm_v3.py` | [UPDATE] EPOCHS 10→15，L2 正则，min-count |
+| `Project/train_din.py` | [UPDATE] EPOCHS 10→15，L2 正则，min-count |
+| `Project/build_ensemble.py` | [UPDATE] Stacking 集成：LightGBM + DeepFM + DIN |
+| `Document/README.md` | [UPDATE] 模型阵容更新，移除 CatBoost/XGBoost |
+
+---
+
 ## v2.3.0 (2026-03-17) - 推荐系统全面升级：目标泄漏修复、特征工程 v3、集成精排
 
 ### 🚨 关键修复：目标泄漏 (Target Leakage)

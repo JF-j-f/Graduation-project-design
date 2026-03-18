@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-prepare_features_v3.py — 特征工程 v3（25特征全集）
+prepare_features_v3.py — 特征工程 v3.2（62特征全集，含 SVD 嵌入）
 
 数据来源：MySQL musicweb 数据库（全量）
 输出文件：
@@ -32,7 +32,9 @@ import numpy as np
 import pandas as pd
 from datetime import date, datetime
 from scipy.stats import entropy as scipy_entropy
+from scipy.sparse import coo_matrix
 from sklearn.preprocessing import LabelEncoder
+from sklearn.decomposition import TruncatedSVD
 from tqdm import tqdm
 
 warnings.filterwarnings('ignore')
@@ -711,6 +713,46 @@ def build_feature_matrix(ph_df, songs_df, users_df, user_stats_dict, song_stats,
     df["song_30d_play_count_log"]     = temporal["song_30d_play_count_log"].values
     df["song_trending_ratio"]         = temporal["song_trending_ratio"].values
 
+    # ── SVD 嵌入特征（KKBOX 冠军方案核心技术: TruncatedSVD 矩阵分解）
+    print("  计算 SVD 嵌入特征（user-song 10d + song-user 10d + user-artist 5d + dot_score）...")
+    _user_codes = df["user_id"].astype("category").cat.codes.values.astype(np.int32)
+    _song_codes = df["song_id"].astype("category").cat.codes.values.astype(np.int32)
+    _n_u_svd = int(_user_codes.max()) + 1
+    _n_s_svd = int(_song_codes.max()) + 1
+
+    # user×song 交互矩阵 → TruncatedSVD(10)
+    _us_mat = coo_matrix(
+        (np.ones(len(df), dtype=np.float32), (_user_codes, _song_codes)),
+        shape=(_n_u_svd, _n_s_svd),
+    ).tocsr()
+    _svd_us = TruncatedSVD(n_components=10, random_state=42)
+    _user_vecs_us = _svd_us.fit_transform(_us_mat)    # (n_users, 10)
+    _song_vecs_us = _svd_us.components_.T              # (n_songs, 10)
+
+    for i in range(10):
+        df[f"svd_user_song_{i}"] = _user_vecs_us[_user_codes, i].astype(np.float32)
+        df[f"svd_song_user_{i}"] = _song_vecs_us[_song_codes, i].astype(np.float32)
+
+    # user×artist 交互矩阵 → TruncatedSVD(5)
+    _artist_codes = df["artist"].astype("category").cat.codes.values.astype(np.int32)
+    _n_a_svd = int(_artist_codes.max()) + 1
+    _ua_mat = coo_matrix(
+        (np.ones(len(df), dtype=np.float32), (_user_codes, _artist_codes)),
+        shape=(_n_u_svd, _n_a_svd),
+    ).tocsr()
+    _svd_ua = TruncatedSVD(n_components=5, random_state=42)
+    _user_vecs_ua = _svd_ua.fit_transform(_ua_mat)    # (n_users, 5)
+
+    for i in range(5):
+        df[f"svd_user_artist_{i}"] = _user_vecs_ua[_user_codes, i].astype(np.float32)
+
+    # SVD dot score: user_vec · song_vec（类似 ALS 协同过滤分数）
+    _uv = _user_vecs_us[_user_codes]  # (N, 10)
+    _sv = _song_vecs_us[_song_codes]  # (N, 10)
+    df["svd_dot_score"] = (_uv * _sv).sum(axis=1).astype(np.float32)
+
+    print(f"     ✅ SVD 嵌入完成: 26 维（user-song 10 + song-user 10 + user-artist 5 + dot_score 1）")
+
     print(f"\n  ✅ 特征矩阵组装完成: {len(df):,} 行 × {len(df.columns)} 列")
     return df
 
@@ -793,6 +835,11 @@ def save_outputs(df, encoders, user_stats_dict, song_stats):
         "song_7d_play_count_log",           # 近7天歌曲播放总量 log1p
         "song_30d_play_count_log",          # 近30天歌曲播放总量 log1p
         "song_trending_ratio",              # 歌曲热度趋势（7d/30d_daily_avg）
+        # SVD 嵌入特征（KKBOX 冠军方案核心）
+        *[f"svd_user_song_{i}" for i in range(10)],   # user-song SVD 10d
+        *[f"svd_song_user_{i}" for i in range(10)],   # song-user SVD 10d
+        *[f"svd_user_artist_{i}" for i in range(5)],  # user-artist SVD 5d
+        "svd_dot_score",                    # user·song SVD 点积分数
     ]
     SPARSE_ENCODED = [
         "user_id_encoded", "song_id_encoded",
@@ -874,8 +921,8 @@ def save_outputs(df, encoders, user_stats_dict, song_stats):
 
 def main():
     print("\n" + "🎵" * 31)
-    print("   MusicMode 特征工程 v3.1")
-    print("   全量 MySQL 数据 + 36 特征体系（含歌单/时序/跳过/复听/最近交互）")
+    print("   MusicMode 特征工程 v3.2")
+    print("   全量 MySQL 数据 + 62 特征体系（含 SVD 嵌入 + 歌单/时序/跳过/复听）")
     print("🎵" * 31)
     print(f"\n  今天: {TODAY}")
 
@@ -912,7 +959,7 @@ def main():
     save_outputs(df, encoders, user_stats_dict, song_stats)
 
     print("\n" + "=" * 62)
-    print("✅ 特征工程 v3.0 完成！")
+    print("✅ 特征工程 v3.2 完成！")
     print("=" * 62)
     print(f"\n📁 输出文件:")
     print(f"   {OUTPUT_FEATURES}")

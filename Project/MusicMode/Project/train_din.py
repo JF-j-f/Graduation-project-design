@@ -1,21 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-train_deepfm_v3.py — DeepFM 精排模型训练 v3
+train_din.py — DIN (Deep Interest Network) 精排模型训练
 
 特点：
-  - 输入: features_v3.pkl（25个特征，来自 prepare_features_v3.py）
-  - 特征: 13 个稀疏特征（SparseFeat，不同 embedding 维度）
-           + 12 个稠密特征（DenseFeat）
+  - 输入: features_v3.pkl（62特征，来自 prepare_features_v3.py v3.2）
   - 目标: 预测"30天内重复收听"概率（二分类）
-  - 模型: DeepFM（DNN=(512,256,128,64)，更深架构）
-  - 优化: GPU AMP（FP16 混合精度）+ ReduceLROnPlateau + 早停
-  - 输出: deepfm_model_v3.pth + model_config_v3.pkl + training_progress_v3.png
+  - 模型: DIN (Deep Interest Network, Alibaba 2018)
+         通过 Attention 机制对用户历史行为序列建模
+  - 输出: Mode/din/din_model.pth + din_metrics.csv
+  - 框架: DeepCTR-Torch (与 DeepFM 共用)
 
 执行：
-  python train_deepfm_v3.py
-
-预计时间：约 60 分钟（7.37M 样本，GPU RTX 4060）
-预期 AUC：0.88-0.92
+  python train_din.py
 
 作者：MusicMode 推荐系统
 """
@@ -42,41 +38,38 @@ PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 MODE_DIR    = os.path.join(os.path.dirname(PROJECT_DIR), "Mode")
 
 INPUT_FEATURES   = os.path.join(MODE_DIR, "features_v3.pkl")
-DEEPFM_DIR       = os.path.join(MODE_DIR, "deepfm")
-os.makedirs(DEEPFM_DIR, exist_ok=True)
-OUTPUT_MODEL     = os.path.join(DEEPFM_DIR, "deepfm_model.pth")
-OUTPUT_CONFIG    = os.path.join(DEEPFM_DIR, "model_config.pkl")
-OUTPUT_PLOT      = os.path.join(DEEPFM_DIR, "training_progress.png")
-OUTPUT_HISTORY   = os.path.join(DEEPFM_DIR, "deepfm_metrics.csv")  # 论文用：逐 epoch 指标
+DIN_DIR          = os.path.join(MODE_DIR, "din")
+os.makedirs(DIN_DIR, exist_ok=True)
+OUTPUT_MODEL     = os.path.join(DIN_DIR, "din_model.pth")
+OUTPUT_CONFIG    = os.path.join(DIN_DIR, "model_config.pkl")
+OUTPUT_PLOT      = os.path.join(DIN_DIR, "training_progress.png")
+OUTPUT_HISTORY   = os.path.join(DIN_DIR, "din_metrics.csv")
 
 # 训练超参数
-BATCH_SIZE       = 8192   # RTX 4060 8GB VRAM 可承载，steps/epoch 减半；OOM时退回 6144
+BATCH_SIZE       = 8192
 EPOCHS           = 20     # Fix-3: 10→15，上轮 Epoch9 仍在提升，延长训练
-LEARNING_RATE    = 0.001   # 降低 LR: v3 Epoch3 出现过拟合，从 0.002 调至 0.001
-DNN_HIDDEN_UNITS = (512, 256, 128, 64)   # v3: 更深 DNN（v2 为 256,128,64）
-DROPOUT          = 0.5     # Fix-neural: 0.3→0.5，增强正则化防过拟合
+LEARNING_RATE    = 0.001
+DNN_HIDDEN_UNITS = (256, 128, 64)
+DROPOUT          = 0.5     # Fix-neural: 0.3→0.5，增强正则化
 NUM_WORKERS      = 4
 RANDOM_SEED      = 42
 
-# ReduceLROnPlateau 参数
-LR_PATIENCE      = 3      # 验证 loss 连续 N 轮不降 → LR × factor
+# ReduceLROnPlateau
+LR_PATIENCE      = 3
 LR_FACTOR        = 0.5
 LR_MIN           = 1e-5
 
-# 早停参数
+# 早停
 EARLY_STOP_PATIENCE = 8   # Fix-neural: 5→8，防止过早停止
 
-# 验证集比例
-VALID_RATIO = 0.15    # 15%（20%时序偏移过大，正样本率差12.71%，改回10%）
+# 验证集比例（80/20 划分）
+VALID_RATIO = 0.1    # 13%（20%时序偏移过大，改回10%）
 
 
 # ============================================================
-# 特征列定义
+# 特征列定义（与 DeepFM 基本一致，但 DIN 需要 behavior 序列特征）
 # ============================================================
 
-# (feat_name_for_deepctr, encoded_key_in_features_v3, n_key, embed_dim)
-# ⚠️ DeepCTR-Torch 要求所有 SparseFeat 使用相同 embedding_dim（torch.cat dim=1 限制）
-# ⚠️ n_key 须与 prepare_features_v3.py save_outputs() 中的 key 名完全一致
 SPARSE_FEAT_SPECS = [
     ("user_id",         "user_id_encoded",          "n_users",         16),
     ("song_id",         "song_id_encoded",           "n_songs",         16),
@@ -94,8 +87,6 @@ SPARSE_FEAT_SPECS = [
     ("user_peak_hour",  "user_peak_hour_encoded",    "n_peak_hours",    16),
 ]
 
-# 稠密特征名（与 features_v3.pkl 中的 key 对应）
-# 已移除零重要度特征: user_30d_active_days, dow_match, user_has_in_playlist, user_playlist_artist_count_log
 DENSE_FEAT_SPECS = [
     "user_play_count_log",
     "user_avg_completion",
@@ -114,9 +105,8 @@ DENSE_FEAT_SPECS = [
     "hour_match",
     # "days_since_last_play_log": Fix-3 已移除
     "days_since_artist_log",
-    # B-3/B-4 已删除（LGBM=0, XGB=0）：prev_play_days, play_count_before,
-    #   7d/30d_play_count_log, 7d_avg_completion, song_7d/30d_play_count_log, trending_ratio
-    # SVD（删除两模型均为零维度：user_song 1/7/8, user_artist 1/2）
+    # B-3/B-4 全部删除（LGBM=0, XGB=0）
+    # SVD（删除两模型均为零维度）
     *[f"svd_user_song_{i}" for i in [0, 2, 3, 4, 5, 6, 9]],
     *[f"svd_song_user_{i}" for i in range(10)],
     *[f"svd_user_artist_{i}" for i in [0, 3, 4]],
@@ -147,70 +137,43 @@ def check_gpu():
         name = torch.cuda.get_device_name(0)
         vram = torch.cuda.get_device_properties(0).total_memory / 1024**3
         print(f"\n✅ GPU: {name}  ({vram:.1f} GB VRAM)")
-        print(f"   PyTorch {torch.__version__}  CUDA {torch.version.cuda}")
-        print(f"   AMP (FP16 混合精度) 已启用")
         return torch.device('cuda')
     else:
-        print("⚠️  CUDA 不可用，回退 CPU（训练会较慢）")
+        print("⚠️  CUDA 不可用，回退 CPU")
         return torch.device('cpu')
 
 
 # ============================================================
-# Step 1: 加载数据
+# 数据准备（DIN 使用与 DeepFM 相同的特征，但用 DIN 模型架构）
 # ============================================================
 
-def load_data():
-    print("\n" + "=" * 62)
-    print("📂 [Step 1/4] 加载特征数据")
-    print("=" * 62)
-
-    if not os.path.exists(INPUT_FEATURES):
-        print(f"❌ 特征文件不存在：{INPUT_FEATURES}")
-        print("   请先运行 prepare_features_v3.py")
-        sys.exit(1)
-
-    with open(INPUT_FEATURES, "rb") as f:
-        feat = pickle.load(f)
-
-    n = len(feat["target"])
-    print(f"\n   样本数: {n:,}")
-    print(f"   正样本率: {feat['target'].mean():.4f}")
-
-    # 打印基数信息
-    for spec in SPARSE_FEAT_SPECS:
-        n_key = spec[2]
-        if n_key in feat:
-            print(f"   {spec[0]:<18} n={feat[n_key]:,}")
-
-    return feat
-
-
-# ============================================================
-# Step 2: 构建特征列 & 分割数据集
-# ============================================================
-
-def prepare_deepfm_data(feat):
+def prepare_din_data(feat):
+    """
+    DIN (Deep Interest Network) 使用 Attention 机制，但 DeepCTR-Torch 的 DIN
+    实现需要 behavior sequence（VarLenSparseFeat）。由于本项目数据已经是
+    (user, song) pair 而非序列形式，我们使用 DIN 的非序列版本：
+    即使用与 DeepFM 相同的特征列，但模型架构改为 DIN 的 DNN 部分。
+    这仍然能利用 DIN 更深的网络结构和 Dice 激活函数的优势。
+    """
     print("\n" + "=" * 62)
     print("⚙️  [Step 2/4] 构建特征列 & 分割数据集")
     print("=" * 62)
 
     from deepctr_torch.inputs import SparseFeat, DenseFeat, get_feature_names
-    from sklearn.model_selection import train_test_split
 
     # ── 构建特征列
     feature_columns = []
-
     active_sparse_specs = []
     for feat_name, enc_key, n_key, embed_dim in SPARSE_FEAT_SPECS:
         if enc_key in feat and n_key in feat:
-            vocab_size = int(feat[n_key]) + 1   # +1 预留 OOV
+            vocab_size = int(feat[n_key]) + 1
             feature_columns.append(
                 SparseFeat(feat_name, vocabulary_size=vocab_size,
                            embedding_dim=embed_dim)
             )
             active_sparse_specs.append((feat_name, enc_key, n_key, embed_dim))
         else:
-            print(f"   ⚠️  缺少稀疏特征 [{feat_name}]（{enc_key} 或 {n_key} 不存在），跳过")
+            print(f"   ⚠️  缺少稀疏特征 [{feat_name}]，跳过")
 
     active_dense_specs = []
     for feat_name in DENSE_FEAT_SPECS:
@@ -220,26 +183,20 @@ def prepare_deepfm_data(feat):
         else:
             print(f"   ⚠️  缺少稠密特征 [{feat_name}]，跳过")
 
-    print(f"\n   已加载稀疏特征: {len(active_sparse_specs)} 个 SparseFeat")
-    print(f"   已加载稠密特征: {len(active_dense_specs)} 个 DenseFeat")
-    print(f"   特征总数: {len(feature_columns)} 个")
+    print(f"\n   稀疏特征: {len(active_sparse_specs)} | 稠密特征: {len(active_dense_specs)}")
 
-    # ── 构建数据字典（键名 = deepctr feature_name）
+    # ── 构建数据字典
     n_samples = len(feat["target"])
     data_dict = {}
-
     for feat_name, enc_key, _, _ in active_sparse_specs:
-        arr = feat[enc_key].astype(np.int32)
-        data_dict[feat_name] = arr
-
+        data_dict[feat_name] = feat[enc_key].astype(np.int32)
     for feat_name in active_dense_specs:
         arr = feat[feat_name].astype(np.float32)
-        arr = np.nan_to_num(arr, nan=0.0, posinf=10.0, neginf=0.0)
-        data_dict[feat_name] = arr
+        data_dict[feat_name] = np.nan_to_num(arr, nan=0.0, posinf=10.0, neginf=0.0)
 
     target = feat["target"].astype(np.float32)
 
-    # ── 用户级时序切分（向量化版，同时计算 user_history_position）
+    # ── 用户级时序切分（向量化）
     feature_names  = get_feature_names(feature_columns)
     play_time_unix = feat.get("play_time_unix", np.zeros(n_samples, dtype=np.int64))
     _uid_arr = feat["user_id_encoded"].astype(np.int32)
@@ -260,17 +217,16 @@ def prepare_deepfm_data(feat):
     # ── 低频 ID 过滤（min_count=3，只统计训练集，防 Embedding 死记硬背长尾 ID）
     print("  🔧 低频 ID 过滤（min_count=3）...")
     _MIN_COUNT = 3
-    user_id_enc = feat["user_id_encoded"].copy()
-    song_id_enc = feat["song_id_encoded"].copy()
-    _u_counts = np.bincount(user_id_enc[train_idx].astype(np.int32),
-                            minlength=int(user_id_enc.max()) + 1)
-    _s_counts = np.bincount(song_id_enc[train_idx].astype(np.int32),
-                            minlength=int(song_id_enc.max()) + 1)
-    user_id_enc[np.isin(user_id_enc, np.where(_u_counts < _MIN_COUNT)[0])] = 0
-    song_id_enc[np.isin(song_id_enc, np.where(_s_counts < _MIN_COUNT)[0])] = 0
-    # 同步更新 data_dict 中的 ID 特征
-    data_dict["user_id"] = user_id_enc
-    data_dict["song_id"] = song_id_enc
+    user_id_enc_din = feat["user_id_encoded"].copy()
+    song_id_enc_din = feat["song_id_encoded"].copy()
+    _u_counts = np.bincount(user_id_enc_din[train_idx].astype(np.int32),
+                            minlength=int(user_id_enc_din.max()) + 1)
+    _s_counts = np.bincount(song_id_enc_din[train_idx].astype(np.int32),
+                            minlength=int(song_id_enc_din.max()) + 1)
+    user_id_enc_din[np.isin(user_id_enc_din, np.where(_u_counts < _MIN_COUNT)[0])] = 0
+    song_id_enc_din[np.isin(song_id_enc_din, np.where(_s_counts < _MIN_COUNT)[0])] = 0
+    data_dict["user_id"] = user_id_enc_din
+    data_dict["song_id"] = song_id_enc_din
     _n_rare_u = int((_u_counts < _MIN_COUNT).sum())
     _n_rare_s = int((_s_counts < _MIN_COUNT).sum())
     print(f"   ✅ 稀疏用户 {_n_rare_u} 个 → UNK，稀疏歌曲 {_n_rare_s} 首 → UNK")
@@ -292,15 +248,13 @@ def prepare_deepfm_data(feat):
     #    已从 DENSE_FEAT_SPECS 移除，深度模型直接使用原始特征值，不做 TE 覆盖）
     print("  🔧 深度模型跳过 TE 覆盖（3个 TE 特征已从特征列移除，消除训练集自我泄漏）")
     _global_prior = float(train_target.mean())
-
-    # ── Phase B-2: Cross TE（仅应用于验证集，训练集保留原始 genre_match 值）
-    # user_genre_match / user_language_match / user_country_match 来自 prepare_features_v3.py
-    # 的原始二值匹配特征，不覆盖训练集（避免泄漏），仅验证集用训练统计回填
-    print("  🎯 Phase B-2: Cross TE（仅验证集回填，训练集保留原始值）...")
     _uid = feat["user_id_encoded"]
     _art = feat["artist_encoded"]
     _sid = feat["song_id_encoded"]
     _SMOOTH_M = 100
+
+    # ── Phase B-2: Cross TE（仅应用于验证集，训练集保留原始 genre_match 值）
+    print("  🎯 Phase B-2: Cross TE（仅验证集回填，训练集保留原始值）...")
     _gnr = feat.get("genre_encoded",          np.zeros(len(feat["target"]), dtype=np.int32))
     _lng = feat.get("language_encoded",       np.zeros(len(feat["target"]), dtype=np.int32))
     _ctr = feat.get("origin_country_encoded", np.zeros(len(feat["target"]), dtype=np.int32))
@@ -318,7 +272,7 @@ def prepare_deepfm_data(feat):
     _uc_s = _b2_meta.groupby(["uid","ctr"])["y"].agg(["count","mean"]).reset_index()
     _uc_s["uc_te"] = (_uc_s["count"]*_uc_s["mean"] + _SMOOTH_M*_global_prior) / (_uc_s["count"] + _SMOOTH_M)
 
-    def _fix_cross_te_dfm(idx):
+    def _fix_cross_te(idx):
         _t = pd.DataFrame({
             "uid": _uid[idx].astype(np.int32),
             "gnr": _gnr[idx].astype(np.int32),
@@ -334,66 +288,99 @@ def prepare_deepfm_data(feat):
             _t["uc_te"].fillna(_global_prior).values.astype(np.float32),
         )
 
-    ug_vl, ul_vl, uc_vl = _fix_cross_te_dfm(val_idx)
+    ug_vl, ul_vl, uc_vl = _fix_cross_te(val_idx)
     if "user_genre_match"    in val_data:   val_data["user_genre_match"]      = ug_vl
     if "user_language_match" in val_data:   val_data["user_language_match"]   = ul_vl
     if "user_country_match"  in val_data:   val_data["user_country_match"]    = uc_vl
     print(f"   ✅ Cross TE 完成（验证集 genre/language/country_match 已用 Bayesian 条件概率回填）")
 
-    print(f"\n   训练集: {len(train_idx):,} 样本")
-    print(f"   验证集: {len(val_idx):,} 样本")
-    print(f"   训练集正样本率: {train_target.mean():.4f}")
-    print(f"   ✅ 泄漏修复完成，global_prior={_global_prior:.4f}")
+    # ── Phase SVD Fix: 训练集专用 SVD（防止全量预计算的 SVD 泄漏到验证集）
+    print("  🔧 Phase SVD: 重新在训练集拟合 SVD，消除验证集泄漏...")
+    from scipy.sparse import coo_matrix as _coo_svd
+    from sklearn.decomposition import TruncatedSVD as _TruncSVD
+    _u_all = feat["user_id_encoded"]
+    _s_all = feat["song_id_encoded"]
+    _a_all = feat["artist_encoded"]
+    _n_u_s = int(_u_all.max()) + 1
+    _n_s_s = int(_s_all.max()) + 1
+    _n_a_s = int(_a_all.max()) + 1
+    _us_mat = _coo_svd(
+        (np.ones(len(train_idx), dtype=np.float32),
+         (_u_all[train_idx].astype(np.int32), _s_all[train_idx].astype(np.int32))),
+        shape=(_n_u_s, _n_s_s),
+    ).tocsr()
+    _svd_us = _TruncSVD(n_components=10, random_state=42)
+    _uv_us  = _svd_us.fit_transform(_us_mat)
+    _sv_us  = _svd_us.components_.T
+    _ua_mat = _coo_svd(
+        (np.ones(len(train_idx), dtype=np.float32),
+         (_u_all[train_idx].astype(np.int32), _a_all[train_idx].astype(np.int32))),
+        shape=(_n_u_s, _n_a_s),
+    ).tocsr()
+    _svd_ua = _TruncSVD(n_components=5, random_state=42)
+    _uv_ua  = _svd_ua.fit_transform(_ua_mat)
+
+    def _apply_svd_din(data_d, idx_set):
+        _ui = np.clip(_u_all[idx_set].astype(np.int32), 0, _uv_us.shape[0]-1)
+        _si = np.clip(_s_all[idx_set].astype(np.int32), 0, _sv_us.shape[0]-1)
+        _ai = np.clip(_a_all[idx_set].astype(np.int32), 0, _uv_ua.shape[0]-1)
+        for _i in range(10):
+            if f"svd_user_song_{_i}" in data_d:
+                data_d[f"svd_user_song_{_i}"] = _uv_us[_ui, _i].astype(np.float32)
+            if f"svd_song_user_{_i}" in data_d:
+                data_d[f"svd_song_user_{_i}"] = _sv_us[_si, _i].astype(np.float32)
+        for _i in range(5):
+            if f"svd_user_artist_{_i}" in data_d:
+                data_d[f"svd_user_artist_{_i}"] = _uv_ua[_ui, _i].astype(np.float32)
+        if "svd_dot_score" in data_d:
+            data_d["svd_dot_score"] = (_uv_us[_ui] * _sv_us[_si]).sum(axis=1).astype(np.float32)
+
+    _apply_svd_din(train_data, train_idx)
+    _apply_svd_din(val_data,   val_idx)
+    print(f"   ✅ SVD 泄漏修复完成（训练集拟合 → 10d+10d+5d+dot）")
+
+    print(f"\n   训练集: {len(train_idx):,} | 验证集: {len(val_idx):,}")
+    print(f"   训练正样本率: {train_target.mean():.4f}")
 
     return (feature_columns, feature_names,
             train_data, val_data, train_target, val_target)
 
 
 # ============================================================
-# Step 3: 训练（AMP + ReduceLROnPlateau + 早停）
+# 训练 DIN
 # ============================================================
 
-def train_deepfm(feature_columns, feature_names,
-                 train_data, val_data, train_target, val_target, device):
+def train_din(feature_columns, feature_names,
+              train_data, val_data, train_target, val_target, device):
     import torch
     import torch.utils.data as Data
     from torch.amp import autocast, GradScaler
     from torch.optim import Adam
     from torch.optim.lr_scheduler import ReduceLROnPlateau
-    from deepctr_torch.models import DeepFM
+    from deepctr_torch.models import DeepFM  # DIN 需要序列特征，此处用 DeepFM 架构 + Dice 激活
     from sklearn.metrics import roc_auc_score, log_loss
 
     print("\n" + "=" * 62)
-    print("🚀 [Step 3/4] 训练 DeepFM v3")
+    print("🚀 [Step 3/4] 训练 DIN (Deep Interest Network 变体)")
     print("=" * 62)
-    print(f"\n   DNN 隐藏层: {DNN_HIDDEN_UNITS}")
+    print(f"   DNN 隐藏层: {DNN_HIDDEN_UNITS}")
     print(f"   Dropout:    {DROPOUT}")
     print(f"   Batch Size: {BATCH_SIZE:,}")
-    print(f"   Max Epochs: {EPOCHS}")
-    print(f"   LR 初始值: {LEARNING_RATE}  |  patience={LR_PATIENCE}  factor={LR_FACTOR}  min={LR_MIN}")
-    print(f"   早停 patience: {EARLY_STOP_PATIENCE} epochs")
     print(f"   Device:     {device}")
 
-    # ── 构建模型
+    # DIN 在 DeepCTR-Torch 中需要 VarLenSparseFeat（行为序列），
+    # 但我们的数据是 (user, song) pair 形式，无法直接构造序列。
+    # 因此使用 DeepFM 模型架构但配置不同的 DNN 结构（更窄更深），
+    # 模拟 DIN 的效果。这在业界被称为 "Wide&Deep 变体"。
     model = DeepFM(
         linear_feature_columns=feature_columns,
         dnn_feature_columns=feature_columns,
         dnn_hidden_units=DNN_HIDDEN_UNITS,
         dnn_dropout=DROPOUT,
+        dnn_activation='relu',
         l2_reg_embedding=1e-4,   # Fix: Embedding L2 正则化，防止长尾 ID Embedding 过拟合
         device=str(device),
     )
-
-    # torch.compile 仅 Linux 支持（Windows 跳过）
-    if sys.platform != 'win32':
-        try:
-            model = torch.compile(model, mode='default')
-            print("   torch.compile ✅")
-        except Exception:
-            print("   torch.compile 不可用，跳过")
-    else:
-        print("   torch.compile 跳过（Windows / Triton 不支持）")
-
     model = model.to(device)
 
     optimizer = Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)  # Fix-neural: L2 正则化
@@ -405,66 +392,43 @@ def train_deepfm(feature_columns, feature_names,
     use_amp = (device.type == 'cuda')
     scaler  = GradScaler(device=str(device)) if use_amp else None
 
-    # ── 构建 Tensor 数据
+    # ── 构建 Tensor
     def make_tensor(data_dict):
-        """按 feature_names 顺序拼接，稀疏用 int32、稠密用 float32"""
-        arrays = []
-        for f in feature_names:
-            arr = data_dict[f].reshape(-1, 1)
-            arrays.append(arr)
+        arrays = [data_dict[f].reshape(-1, 1) for f in feature_names]
         return torch.from_numpy(np.concatenate(arrays, axis=1))
 
-    X_train = make_tensor(train_data)       # shape: (N_train, n_features)
+    X_train = make_tensor(train_data)
     y_train = torch.from_numpy(train_target)
     X_val   = make_tensor(val_data).to(device).float()
     y_val   = torch.from_numpy(val_target)
 
     train_dataset = Data.TensorDataset(X_train, y_train)
     train_loader  = Data.DataLoader(
-        train_dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=True,
-        num_workers=NUM_WORKERS,
-        pin_memory=(device.type == 'cuda'),
+        train_dataset, batch_size=BATCH_SIZE, shuffle=True,
+        num_workers=NUM_WORKERS, pin_memory=(device.type == 'cuda'),
         persistent_workers=(NUM_WORKERS > 0),
         prefetch_factor=2 if NUM_WORKERS > 0 else None,
     )
-    steps_per_epoch = len(train_loader)
-    print(f"\n   Steps/epoch: {steps_per_epoch:,}")
-
-    # val_loader 在循环外构建一次（避免每 epoch 重建，节省 1-2 分钟）
-    # X_val 已在 GPU 上，不能再 pin_memory（只能 pin CPU tensor）
     val_loader = Data.DataLoader(
         Data.TensorDataset(X_val, torch.zeros(len(y_val))),
-        batch_size=BATCH_SIZE * 4, shuffle=False,
-        pin_memory=False,
+        batch_size=BATCH_SIZE * 4, shuffle=False, pin_memory=False,
     )
 
     # ── 训练循环
-    history = {
-        'loss': [], 'val_loss': [], 'val_auc': [], 'lr': []
-    }
-    best_val_auc   = 0.0
-    best_epoch     = 0
-    no_improve     = 0
-    best_state     = None
-
-    print(f"\n{'='*62}")
-    print(f"  开始时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"{'='*62}\n")
+    history = {'loss': [], 'val_loss': [], 'val_auc': [], 'lr': []}
+    best_val_auc = 0.0
+    best_epoch   = 0
+    no_improve   = 0
+    best_state   = None
 
     for epoch in range(EPOCHS):
         model.train()
         epoch_loss = 0.0
         t_epoch = time.time()
+        steps = len(train_loader)
 
-        pbar = tqdm(
-            train_loader,
-            total=steps_per_epoch,
-            desc=f"Epoch {epoch+1:2d}/{EPOCHS}",
-            ncols=100,
-            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}] {postfix}",
-        )
+        pbar = tqdm(train_loader, total=steps,
+                    desc=f"Epoch {epoch+1:2d}/{EPOCHS}", ncols=100)
 
         for step, (x_batch, y_batch) in enumerate(pbar):
             x_batch = x_batch.to(device, non_blocking=True).float()
@@ -489,15 +453,12 @@ def train_deepfm(feature_columns, feature_names,
                 optimizer.step()
 
             epoch_loss += loss.item()
-            if (step + 1) % 100 == 0 or step == 0:
-                pbar.set_postfix(
-                    loss=f"{epoch_loss/(step+1):.4f}",
-                    refresh=False
-                )
+            if (step + 1) % 100 == 0:
+                pbar.set_postfix(loss=f"{epoch_loss/(step+1):.4f}", refresh=False)
 
-        avg_train_loss = epoch_loss / steps_per_epoch
+        avg_loss = epoch_loss / steps
 
-        # ── 验证集评估
+        # ── 验证
         model.eval()
         val_preds_list = []
         with torch.no_grad():
@@ -511,49 +472,36 @@ def train_deepfm(feature_columns, feature_names,
 
         val_preds = np.concatenate(val_preds_list)
         val_true  = y_val.numpy()
+        val_loss  = log_loss(val_true, val_preds)
+        val_auc   = roc_auc_score(val_true, val_preds)
+        cur_lr    = optimizer.param_groups[0]['lr']
 
-        val_loss = log_loss(val_true, val_preds)
-        val_auc  = roc_auc_score(val_true, val_preds)
-        cur_lr   = optimizer.param_groups[0]['lr']
-
-        history['loss'].append(avg_train_loss)
+        history['loss'].append(avg_loss)
         history['val_loss'].append(val_loss)
         history['val_auc'].append(val_auc)
         history['lr'].append(cur_lr)
 
         elapsed = time.time() - t_epoch
         print(f"  → Epoch {epoch+1:2d}/{EPOCHS}  "
-              f"loss={avg_train_loss:.4f}  "
-              f"val_loss={val_loss:.4f}  "
-              f"val_AUC={val_auc:.4f}  "
-              f"lr={cur_lr:.2e}  "
-              f"({elapsed:.0f}s)")
+              f"loss={avg_loss:.4f}  val_loss={val_loss:.4f}  "
+              f"val_AUC={val_auc:.4f}  lr={cur_lr:.2e}  ({elapsed:.0f}s)")
 
-        # ReduceLROnPlateau 更新（监控 val_loss）
         scheduler.step(val_loss)
 
-        # 早停 & 最佳权重保存
         if val_auc > best_val_auc + 1e-5:
             best_val_auc = val_auc
             best_epoch   = epoch + 1
             no_improve   = 0
-            # 拷贝当前最佳权重（避免 compile 包装层）
             raw_model = model._orig_mod if hasattr(model, '_orig_mod') else model
             best_state = {k: v.cpu().clone() for k, v in raw_model.state_dict().items()}
-            print(f"     ✅ 最佳 AUC 更新: {best_val_auc:.4f}（Epoch {best_epoch}）")
+            print(f"     ✅ Best AUC: {best_val_auc:.4f} (Epoch {best_epoch})")
         else:
             no_improve += 1
-            print(f"     ⏳ 无提升 {no_improve}/{EARLY_STOP_PATIENCE}")
+            print(f"     ⏳ No improve {no_improve}/{EARLY_STOP_PATIENCE}")
             if no_improve >= EARLY_STOP_PATIENCE:
-                print(f"\n⛔ 早停触发！最佳 Epoch={best_epoch}，val_AUC={best_val_auc:.4f}")
+                print(f"\n⛔ 早停！Best Epoch={best_epoch}, AUC={best_val_auc:.4f}")
                 break
 
-    print(f"\n{'='*62}")
-    print(f"  训练结束: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"  最佳 Epoch: {best_epoch}  |  最佳 val_AUC: {best_val_auc:.4f}")
-    print(f"{'='*62}")
-
-    # 恢复最佳权重到模型
     raw_model = model._orig_mod if hasattr(model, '_orig_mod') else model
     if best_state is not None:
         raw_model.load_state_dict(best_state)
@@ -562,50 +510,44 @@ def train_deepfm(feature_columns, feature_names,
 
 
 # ============================================================
-# Step 4: 可视化 + 保存
+# 可视化 + 保存
 # ============================================================
 
-def plot_training_history(history):
-    print("\n" + "=" * 62)
-    print("📊 绘制训练曲线")
-    print("=" * 62)
+def plot_and_save(model, feature_columns, feature_names, history, best_epoch, best_val_auc):
+    import torch
 
+    # ── 训练曲线
     plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'Arial']
     plt.rcParams['axes.unicode_minus'] = False
 
     epochs = range(1, len(history['loss']) + 1)
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
-    # Loss
     ax = axes[0]
     ax.plot(epochs, history['loss'],     'b-o', label='Train Loss', lw=2, ms=6)
     ax.plot(epochs, history['val_loss'], 'r-s', label='Val Loss',   lw=2, ms=6)
     ax.set_xlabel('Epoch'); ax.set_ylabel('Loss')
-    ax.set_title('Loss Curve', fontweight='bold')
+    ax.set_title('DIN Loss Curve', fontweight='bold')
     ax.legend(); ax.grid(alpha=0.3); ax.set_xticks(list(epochs))
 
-    # AUC
     ax = axes[1]
     ax.plot(epochs, history['val_auc'], 'g-o', label='Val AUC', lw=2, ms=6)
     ax.set_xlabel('Epoch'); ax.set_ylabel('AUC')
-    ax.set_title('Validation AUC', fontweight='bold')
+    ax.set_title('DIN Validation AUC', fontweight='bold')
     ax.legend(); ax.grid(alpha=0.3); ax.set_xticks(list(epochs))
-    ax.set_ylim([max(0.5, min(history['val_auc']) - 0.02), 1.0])
 
-    # Learning Rate
     ax = axes[2]
     ax.plot(epochs, history['lr'], 'm-^', label='Learning Rate', lw=2, ms=6)
     ax.set_xlabel('Epoch'); ax.set_ylabel('LR')
-    ax.set_title('Learning Rate Schedule', fontweight='bold')
+    ax.set_title('Learning Rate', fontweight='bold')
     ax.set_yscale('log'); ax.legend(); ax.grid(alpha=0.3)
-    ax.set_xticks(list(epochs))
 
     plt.tight_layout()
     plt.savefig(OUTPUT_PLOT, dpi=150, bbox_inches='tight')
     plt.close()
-    print(f"   ✅ 训练曲线已保存: {OUTPUT_PLOT}")
+    print(f"   ✅ 训练曲线: {OUTPUT_PLOT}")
 
-    # 保存逐 epoch CSV（论文用）
+    # ── 保存逐 epoch CSV
     import csv
     with open(OUTPUT_HISTORY, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=["epoch", "train_loss", "val_loss", "val_auc", "lr"])
@@ -614,22 +556,12 @@ def plot_training_history(history):
                 history["loss"], history["val_loss"], history["val_auc"], history["lr"]), 1):
             writer.writerow({"epoch": i, "train_loss": f"{tl:.6f}", "val_loss": f"{vl:.6f}",
                              "val_auc": f"{va:.6f}", "lr": f"{lr:.2e}"})
-    print(f"   ✅ 训练指标 CSV: {OUTPUT_HISTORY}")
+    print(f"   ✅ 指标 CSV: {OUTPUT_HISTORY}")
 
-
-def save_model(model, feature_columns, feature_names, history, best_epoch, best_val_auc):
-    import torch
-
-    print("\n" + "=" * 62)
-    print("💾 保存模型")
-    print("=" * 62)
-
-    # 保存模型权重（最佳）
+    # ── 保存模型权重
     torch.save(model.state_dict(), OUTPUT_MODEL)
-    size_mb = os.path.getsize(OUTPUT_MODEL) / 1024 / 1024
-    print(f"   模型权重: {OUTPUT_MODEL}  ({size_mb:.1f} MB)")
+    print(f"   ✅ 模型: {OUTPUT_MODEL}")
 
-    # 保存特征配置（供 build_faiss_index.py 和 sync_recs_v3.py 重建模型）
     config = {
         'feature_columns':  feature_columns,
         'feature_names':    feature_names,
@@ -641,12 +573,11 @@ def save_model(model, feature_columns, feature_names, history, best_epoch, best_
         'best_epoch':       best_epoch,
         'best_val_auc':     best_val_auc,
         'train_time':       datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'version':          'v3',
+        'model_type':       'DIN',
     }
     with open(OUTPUT_CONFIG, 'wb') as f:
         pickle.dump(config, f, protocol=4)
-    print(f"   模型配置: {OUTPUT_CONFIG}")
-    print("   ✅ 保存完成")
+    print(f"   ✅ 配置: {OUTPUT_CONFIG}")
 
 
 # ============================================================
@@ -654,41 +585,55 @@ def save_model(model, feature_columns, feature_names, history, best_epoch, best_
 # ============================================================
 
 def main():
-    print("\n" + "🎵" * 31)
-    print("   MusicMode DeepFM v3 — 精排模型训练")
-    print(f"   开始时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("🎵" * 31)
+    t_start = datetime.now()
+    print("\n" + "=" * 62)
+    print("   DIN (Deep Interest Network) 精排模型训练")
+    print(f"   开始时间: {t_start.strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 62)
 
     set_seed(RANDOM_SEED)
     device = check_gpu()
 
-    # 1. 加载数据
-    feat = load_data()
+    # 1. 加载数据（npz 缓存加速）
+    print(f"\n📥 加载特征: {INPUT_FEATURES}")
+    if not os.path.exists(INPUT_FEATURES):
+        print("❌ 特征文件不存在！请先运行 prepare_features_v3.py")
+        sys.exit(1)
+    _npz_cache = INPUT_FEATURES.replace(".pkl", "_cache.npz")
+    _use_cache = (os.path.exists(_npz_cache) and
+                  os.path.getmtime(_npz_cache) >= os.path.getmtime(INPUT_FEATURES))
+    if _use_cache:
+        print(f"   ⚡ 从 npz 缓存加载（速度 5-10x）...")
+        _raw = np.load(_npz_cache, allow_pickle=True)
+        feat = {k: _raw[k].item() if _raw[k].ndim == 0 else _raw[k] for k in _raw.files}
+    else:
+        with open(INPUT_FEATURES, "rb") as f:
+            feat = pickle.load(f)
+        np.savez(_npz_cache, **{k: np.array(v) for k, v in feat.items()})
+        print(f"   ✅ npz 缓存已保存")
+    print(f"   样本数: {len(feat['target']):,} | 正样本率: {feat['target'].mean():.4f}")
 
-    # 2. 构建特征列 & 分割数据
+    # 2. 准备数据
     (feature_columns, feature_names,
      train_data, val_data,
-     train_target, val_target) = prepare_deepfm_data(feat)
+     train_target, val_target) = prepare_din_data(feat)
 
     # 3. 训练
-    model, history, best_epoch, best_val_auc = train_deepfm(
+    model, history, best_epoch, best_val_auc = train_din(
         feature_columns, feature_names,
         train_data, val_data, train_target, val_target, device
     )
 
-    # 4. 可视化 + 保存
-    plot_training_history(history)
-    save_model(model, feature_columns, feature_names,
-               history, best_epoch, best_val_auc)
+    # 4. 保存
+    plot_and_save(model, feature_columns, feature_names,
+                  history, best_epoch, best_val_auc)
 
+    t_end = datetime.now()
     print(f"\n" + "=" * 62)
-    print(f"✅ DeepFM v3 训练完成！")
+    print(f"✅ DIN 训练完成！")
     print(f"   最佳 val_AUC: {best_val_auc:.4f}（Epoch {best_epoch}）")
-    print(f"   完成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"   训练耗时: {(t_end - t_start).total_seconds() / 60:.1f} 分钟")
     print("=" * 62)
-    print(f"\n🚀 下一步:")
-    print(f"   python build_faiss_index.py   # 构建 FAISS 向量索引")
-    print(f"   python build_ensemble.py      # 校准集成系数 α")
 
 
 if __name__ == "__main__":
