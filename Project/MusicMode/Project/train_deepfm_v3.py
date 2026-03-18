@@ -45,13 +45,14 @@ INPUT_FEATURES   = os.path.join(MODE_DIR, "features_v3.pkl")
 OUTPUT_MODEL     = os.path.join(MODE_DIR, "deepfm_model_v3.pth")
 OUTPUT_CONFIG    = os.path.join(MODE_DIR, "model_config_v3.pkl")
 OUTPUT_PLOT      = os.path.join(MODE_DIR, "training_progress_v3.png")
+OUTPUT_HISTORY   = os.path.join(MODE_DIR, "deepfm_training_history.csv")  # 论文用：逐 epoch 指标
 
 # 训练超参数
 BATCH_SIZE       = 8192   # RTX 4060 8GB VRAM 可承载，steps/epoch 减半；OOM时退回 6144
 EPOCHS           = 10
-LEARNING_RATE    = 0.002   # Linear scaling rule: batch 翻倍 → LR × 2
+LEARNING_RATE    = 0.001   # 降低 LR: v3 Epoch3 出现过拟合，从 0.002 调至 0.001
 DNN_HIDDEN_UNITS = (512, 256, 128, 64)   # v3: 更深 DNN（v2 为 256,128,64）
-DROPOUT          = 0.2
+DROPOUT          = 0.3     # 增强正则: 0.2 → 0.3
 NUM_WORKERS      = 4
 RANDOM_SEED      = 42
 
@@ -88,14 +89,15 @@ SPARSE_FEAT_SPECS = [
     ("age_bucket",      "age_bucket_encoded",        "n_age_buckets",   16),
     ("tenure_bucket",   "tenure_bucket_encoded",     "n_tenures",       16),
     ("duration_bucket", "duration_bucket_encoded",   "n_dur_buckets",   16),
+    ("user_peak_hour",  "user_peak_hour_encoded",    "n_peak_hours",    16),
 ]
 
 # 稠密特征名（与 features_v3.pkl 中的 key 对应）
+# 已移除零重要度特征: user_30d_active_days, dow_match, user_has_in_playlist, user_playlist_artist_count_log
 DENSE_FEAT_SPECS = [
     "user_play_count_log",
     "user_avg_completion",
     "user_genre_diversity",
-    "user_30d_active_days",
     "song_play_count_log",
     "song_avg_completion",
     "song_popularity_norm",
@@ -104,6 +106,23 @@ DENSE_FEAT_SPECS = [
     "user_artist_match",
     "user_language_match",
     "user_country_match",
+    "user_target_rate",
+    "song_target_rate",
+    "user_skip_rate",
+    "song_skip_rate",
+    "hour_match",
+    "days_since_last_play_log",
+    "days_since_artist_log",
+    "user_artist_repeat_rate",
+    # Phase B-3/B-4（仅在 prepare_features_v3.py 生成后生效）
+    "user_song_prev_play_days",
+    "user_song_play_count_before",
+    "user_7d_play_count_log",
+    "user_30d_play_count_log",
+    "user_7d_avg_completion",
+    "song_7d_play_count_log",
+    "song_30d_play_count_log",
+    "song_trending_ratio",
 ]
 
 
@@ -220,22 +239,130 @@ def prepare_deepfm_data(feat):
 
     target = feat["target"].astype(np.float32)
 
-    # ── 训练集 / 验证集分割（stratified）
-    feature_names = get_feature_names(feature_columns)
-    indices = np.arange(n_samples)
-    train_idx, val_idx = train_test_split(
-        indices, test_size=VALID_RATIO,
-        random_state=RANDOM_SEED, stratify=target
-    )
+    # ── 用户级时序切分（每位用户最后 10% 作为验证集）
+    feature_names  = get_feature_names(feature_columns)
+    play_time_unix = feat.get("play_time_unix", np.zeros(n_samples, dtype=np.int64))
+    _uid_arr = feat["user_id_encoded"].astype(np.int32)
+    MIN_INTERACTIONS = 5
+    _df_meta = pd.DataFrame({
+        "orig_idx": np.arange(n_samples),
+        "uid":      _uid_arr,
+        "time":     play_time_unix,
+    })
+    _train_list, _val_list = [], []
+    for _u, _grp in _df_meta.groupby("uid", sort=False):
+        _grp_sorted = _grp.sort_values("time")
+        _n = len(_grp_sorted)
+        if _n < MIN_INTERACTIONS:
+            _train_list.append(_grp_sorted["orig_idx"].values)
+        else:
+            _n_val = max(1, int(_n * VALID_RATIO))
+            _train_list.append(_grp_sorted.iloc[:-_n_val]["orig_idx"].values)
+            _val_list.append(_grp_sorted.iloc[-_n_val:]["orig_idx"].values)
+    train_idx = np.concatenate(_train_list)
+    val_idx   = np.concatenate(_val_list) if _val_list else np.array([], dtype=np.int64)
 
-    train_data = {k: v[train_idx] for k, v in data_dict.items()}
-    val_data   = {k: v[val_idx]   for k, v in data_dict.items()}
+    train_data   = {k: v[train_idx] for k, v in data_dict.items()}
+    val_data     = {k: v[val_idx]   for k, v in data_dict.items()}
     train_target = target[train_idx]
     val_target   = target[val_idx]
+
+    # ── Target Leakage 修复
+    print("  🔧 修复 Target Leakage（user_artist_repeat_rate / user_target_rate / song_target_rate）...")
+    _global_prior = float(train_target.mean())
+    _uid = feat["user_id_encoded"]
+    _art = feat["artist_encoded"]
+    _sid = feat["song_id_encoded"]
+    _tmeta = pd.DataFrame({
+        "uid": _uid[train_idx].astype(np.int32),
+        "art": _art[train_idx].astype(np.int32),
+        "sid": _sid[train_idx].astype(np.int32),
+        "y":   train_target.astype(np.float32),
+    })
+    # Bayesian Smoothing: TE_smoothed = (n × mean + m × prior) / (n + m)
+    _SMOOTH_M = 15
+    _ua_stats = _tmeta.groupby(["uid", "art"])["y"].agg(["count", "mean"]).reset_index()
+    _ua_stats["uar"] = (_ua_stats["count"] * _ua_stats["mean"] + _SMOOTH_M * _global_prior) / (_ua_stats["count"] + _SMOOTH_M)
+    _ua_df = _ua_stats[["uid", "art", "uar"]]
+    _u_stats = _tmeta.groupby("uid")["y"].agg(["count", "mean"]).reset_index()
+    _u_stats["utr"] = (_u_stats["count"] * _u_stats["mean"] + _SMOOTH_M * _global_prior) / (_u_stats["count"] + _SMOOTH_M)
+    _u_df = _u_stats[["uid", "utr"]]
+    _s_stats = _tmeta.groupby("sid")["y"].agg(["count", "mean"]).reset_index()
+    _s_stats["str_v"] = (_s_stats["count"] * _s_stats["mean"] + _SMOOTH_M * _global_prior) / (_s_stats["count"] + _SMOOTH_M)
+    _s_df = _s_stats[["sid", "str_v"]]
+
+    def _fix_leaky_deepfm(uid_arr, art_arr, sid_arr):
+        _tmp = pd.DataFrame({"uid": uid_arr.astype(np.int32),
+                              "art": art_arr.astype(np.int32),
+                              "sid": sid_arr.astype(np.int32)})
+        _tmp = _tmp.merge(_ua_df, on=["uid", "art"], how="left")
+        _tmp = _tmp.merge(_u_df,  on="uid",          how="left")
+        _tmp = _tmp.merge(_s_df,  on="sid",          how="left")
+        _tmp["uar"]   = _tmp["uar"].fillna(_tmp["utr"]).fillna(_global_prior)
+        _tmp["utr"]   = _tmp["utr"].fillna(_global_prior)
+        _tmp["str_v"] = _tmp["str_v"].fillna(_global_prior)
+        return (_tmp["uar"].values.astype(np.float32),
+                _tmp["utr"].values.astype(np.float32),
+                _tmp["str_v"].values.astype(np.float32))
+
+    uar_tr, utr_tr, str_tr = _fix_leaky_deepfm(_uid[train_idx], _art[train_idx], _sid[train_idx])
+    if "user_artist_repeat_rate" in train_data: train_data["user_artist_repeat_rate"] = uar_tr
+    if "user_target_rate"        in train_data: train_data["user_target_rate"]        = utr_tr
+    if "song_target_rate"        in train_data: train_data["song_target_rate"]        = str_tr
+    uar_vl, utr_vl, str_vl = _fix_leaky_deepfm(_uid[val_idx], _art[val_idx], _sid[val_idx])
+    if "user_artist_repeat_rate" in val_data: val_data["user_artist_repeat_rate"] = uar_vl
+    if "user_target_rate"        in val_data: val_data["user_target_rate"]        = utr_vl
+    if "song_target_rate"        in val_data: val_data["song_target_rate"]        = str_vl
+
+    # ── Phase B-2: Cross TE（user×genre/language/country → P(target=1)，仅训练集计算）
+    print("  🎯 Phase B-2: Cross TE（genre/language/country → Bayesian 条件概率）...")
+    _gnr = feat.get("genre_encoded",          np.zeros(len(feat["target"]), dtype=np.int32))
+    _lng = feat.get("language_encoded",       np.zeros(len(feat["target"]), dtype=np.int32))
+    _ctr = feat.get("origin_country_encoded", np.zeros(len(feat["target"]), dtype=np.int32))
+    _b2_meta = pd.DataFrame({
+        "uid": _uid[train_idx].astype(np.int32),
+        "gnr": _gnr[train_idx].astype(np.int32),
+        "lng": _lng[train_idx].astype(np.int32),
+        "ctr": _ctr[train_idx].astype(np.int32),
+        "y":   train_target.astype(np.float32),
+    })
+    _ug_s = _b2_meta.groupby(["uid","gnr"])["y"].agg(["count","mean"]).reset_index()
+    _ug_s["ug_te"] = (_ug_s["count"]*_ug_s["mean"] + _SMOOTH_M*_global_prior) / (_ug_s["count"] + _SMOOTH_M)
+    _ul_s = _b2_meta.groupby(["uid","lng"])["y"].agg(["count","mean"]).reset_index()
+    _ul_s["ul_te"] = (_ul_s["count"]*_ul_s["mean"] + _SMOOTH_M*_global_prior) / (_ul_s["count"] + _SMOOTH_M)
+    _uc_s = _b2_meta.groupby(["uid","ctr"])["y"].agg(["count","mean"]).reset_index()
+    _uc_s["uc_te"] = (_uc_s["count"]*_uc_s["mean"] + _SMOOTH_M*_global_prior) / (_uc_s["count"] + _SMOOTH_M)
+
+    def _fix_cross_te_dfm(idx):
+        _t = pd.DataFrame({
+            "uid": _uid[idx].astype(np.int32),
+            "gnr": _gnr[idx].astype(np.int32),
+            "lng": _lng[idx].astype(np.int32),
+            "ctr": _ctr[idx].astype(np.int32),
+        })
+        _t = _t.merge(_ug_s[["uid","gnr","ug_te"]], on=["uid","gnr"], how="left")
+        _t = _t.merge(_ul_s[["uid","lng","ul_te"]], on=["uid","lng"], how="left")
+        _t = _t.merge(_uc_s[["uid","ctr","uc_te"]], on=["uid","ctr"], how="left")
+        return (
+            _t["ug_te"].fillna(_global_prior).values.astype(np.float32),
+            _t["ul_te"].fillna(_global_prior).values.astype(np.float32),
+            _t["uc_te"].fillna(_global_prior).values.astype(np.float32),
+        )
+
+    ug_tr, ul_tr, uc_tr = _fix_cross_te_dfm(train_idx)
+    ug_vl, ul_vl, uc_vl = _fix_cross_te_dfm(val_idx)
+    if "user_genre_match"    in train_data: train_data["user_genre_match"]    = ug_tr
+    if "user_language_match" in train_data: train_data["user_language_match"] = ul_tr
+    if "user_country_match"  in train_data: train_data["user_country_match"]  = uc_tr
+    if "user_genre_match"    in val_data:   val_data["user_genre_match"]      = ug_vl
+    if "user_language_match" in val_data:   val_data["user_language_match"]   = ul_vl
+    if "user_country_match"  in val_data:   val_data["user_country_match"]    = uc_vl
+    print(f"   ✅ Cross TE 完成")
 
     print(f"\n   训练集: {len(train_idx):,} 样本")
     print(f"   验证集: {len(val_idx):,} 样本")
     print(f"   训练集正样本率: {train_target.mean():.4f}")
+    print(f"   ✅ 泄漏修复完成，global_prior={_global_prior:.4f}")
 
     return (feature_columns, feature_names,
             train_data, val_data, train_target, val_target)
@@ -495,6 +622,17 @@ def plot_training_history(history):
     plt.savefig(OUTPUT_PLOT, dpi=150, bbox_inches='tight')
     plt.close()
     print(f"   ✅ 训练曲线已保存: {OUTPUT_PLOT}")
+
+    # 保存逐 epoch CSV（论文用）
+    import csv
+    with open(OUTPUT_HISTORY, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["epoch", "train_loss", "val_loss", "val_auc", "lr"])
+        writer.writeheader()
+        for i, (tl, vl, va, lr) in enumerate(zip(
+                history["loss"], history["val_loss"], history["val_auc"], history["lr"]), 1):
+            writer.writerow({"epoch": i, "train_loss": f"{tl:.6f}", "val_loss": f"{vl:.6f}",
+                             "val_auc": f"{va:.6f}", "lr": f"{lr:.2e}"})
+    print(f"   ✅ 训练指标 CSV: {OUTPUT_HISTORY}")
 
 
 def save_model(model, feature_columns, feature_names, history, best_epoch, best_val_auc):

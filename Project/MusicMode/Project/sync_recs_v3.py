@@ -104,6 +104,10 @@ class Resources:
         if os.path.exists(USER_STATS_PATH):
             with open(USER_STATS_PATH, "rb") as f:
                 self.user_stats = pickle.load(f)
+            # 将 user_basic DataFrame 转为 dict 以便 O(1) 查询
+            ub = self.user_stats.get("user_basic")
+            if ub is not None and hasattr(ub, "iterrows"):
+                self.user_stats["user_basic"] = ub.set_index("user_id").to_dict("index")
 
         # 歌曲统计（keyed by song_encoded）
         self.song_stats = {}
@@ -589,8 +593,8 @@ def _safe_encode(encoder, value, default=0):
 
 def build_pair_features(user_id, song_ids, db, res: Resources):
     """
-    为 (user_id, song_ids[]) 构建 25 个特征的矩阵
-    返回 np.ndarray shape (len(song_ids), 25)
+    为 (user_id, song_ids[]) 构建 36 个特征的矩阵（14稀疏+22稠密）
+    返回 np.ndarray shape (len(song_ids), 36)
     """
     encoders = res.encoders
 
@@ -614,7 +618,7 @@ def build_pair_features(user_id, song_ids, db, res: Resources):
 
         # 查询候选歌曲信息
         if not song_ids:
-            return np.zeros((0, 25), dtype=np.float32)
+            return np.zeros((0, 36), dtype=np.float32)
         fmt = ",".join(["%s"] * len(song_ids))
         cur.execute(f"""
             SELECT s.id, s.genre, s.language, s.artist, s.origin_country,
@@ -622,6 +626,27 @@ def build_pair_features(user_id, song_ids, db, res: Resources):
             FROM songs s WHERE s.id IN ({fmt})
         """, song_ids)
         song_rows = {r["id"]: r for r in cur.fetchall()}
+
+        # ── 新增：用户播放历史时序数据（用于 skip_rate, days_since, peak_hour）
+        cur.execute("""
+            SELECT ph.song_id, ph.play_time,
+                   CASE WHEN s.duration > 0 THEN LEAST(1.0, ph.play_duration/s.duration) ELSE 0.5 END AS comp,
+                   s.artist
+            FROM play_history ph
+            LEFT JOIN songs s ON s.id = ph.song_id
+            WHERE ph.user_id = %s
+        """, (user_id,))
+        user_history = cur.fetchall()
+
+        # ── 新增：用户歌单歌曲集合
+        cur.execute("""
+            SELECT ps.song_id, s.artist
+            FROM playlist_songs ps
+            JOIN user_playlists up ON ps.playlist_id = up.id
+            LEFT JOIN songs s ON s.id = ps.song_id
+            WHERE up.user_id = %s
+        """, (user_id,))
+        pl_rows = cur.fetchall()
 
     # ── 用户稀疏编码
     gender_enc = _safe_encode(encoders.get("gender"), urow.get("gender") or "unknown")
@@ -671,15 +696,63 @@ def build_pair_features(user_id, song_ids, db, res: Resources):
             prob = 1.0 / len(reg_artists)
             u_artist_dist = {a: prob for a in reg_artists}
 
-    # 用户流派多样性
-    user_diversity = float(res.user_stats.get("user_basic", {}).get(user_id, {}).get(
-        "user_genre_diversity", 0.5) if isinstance(res.user_stats.get("user_basic"), dict)
-        else 0.5)
+    # 用户流派多样性 & 重复收听倾向
+    _u_basic = res.user_stats.get("user_basic", {}).get(user_id, {}) if isinstance(res.user_stats.get("user_basic"), dict) else {}
+    user_diversity    = float(_u_basic.get("user_genre_diversity", 0.5))
+    user_target_rate  = float(_u_basic.get("user_target_rate", 0.5))
+    user_peak_hour_v  = int(_u_basic.get("user_peak_hour", 0))
+    user_skip_rate    = float(_u_basic.get("user_skip_rate", 0.2))
 
     # 用户 encoded id
     user_enc = _safe_encode(encoders.get("user_id"), str(user_id))
+    user_peak_enc = _safe_encode(encoders.get("user_peak_hour"), str(user_peak_hour_v))
     # source_channel 默认 RECOMMENDATION
     src_enc = _safe_encode(encoders.get("source_channel"), "RECOMMENDATION")
+
+    # ── 新增：从播放历史计算时序/跳过/最近交互特征
+    today_date = datetime.date.today()
+    now_hour   = datetime.datetime.now().hour
+    now_dow    = datetime.datetime.now().weekday()   # 0=Monday
+
+    # 用户 top-3 收听时段 & 星期
+    _top3_hours = res.user_stats.get("user_top3_hours", {}).get(user_id, set())
+    _top3_dows  = res.user_stats.get("user_top3_dows",  {}).get(user_id, set())
+    hour_match_v = 1.0 if now_hour in _top3_hours else 0.0
+    dow_match_v  = 1.0 if now_dow  in _top3_dows  else 0.0
+
+    # 用户跳过率（从 user_history 实时计算，若无则用 user_stats 中预计算值）
+    if user_history:
+        skip_count = sum(1 for r in user_history if (r.get("comp") or 0.5) < 0.10)
+        user_skip_rate = skip_count / len(user_history)
+
+    # 最近播放该歌 / 该艺术家 的时间（days, log1p）
+    # song_last_play: {song_id: last_play_date}
+    song_last_play: dict[int, datetime.date] = {}
+    artist_last_play: dict[str, datetime.date] = {}
+    for row in user_history:
+        sid_h = row.get("song_id")
+        pt    = row.get("play_time")
+        art_h = str(row.get("artist") or "")
+        if pt is None:
+            continue
+        d = pt.date() if hasattr(pt, "date") else pt
+        if sid_h and (sid_h not in song_last_play or d > song_last_play[sid_h]):
+            song_last_play[sid_h] = d
+        if art_h and (art_h not in artist_last_play or d > artist_last_play[art_h]):
+            artist_last_play[art_h] = d
+
+    # 用户-艺术家重复收听率（从 user_stats 先验，若无则用 user_target_rate 代替）
+    # 这里无法在线精确计算，使用离线预计算值（通过 user_target_rate 近似）
+    # (精确值需要 per-artist groupby，成本较高；用全局先验 fallback)
+
+    # 用户歌单歌曲集合 & 艺术家计数
+    pl_song_set: set[int] = set()
+    pl_artist_cnt: dict[str, int] = {}
+    for pr in pl_rows:
+        pl_song_set.add(pr["song_id"])
+        art_pl = str(pr.get("artist") or "")
+        if art_pl:
+            pl_artist_cnt[art_pl] = pl_artist_cnt.get(art_pl, 0) + 1
 
     rows = []
     for sid in song_ids:
@@ -715,11 +788,13 @@ def build_pair_features(user_id, song_ids, db, res: Resources):
 
         # 歌曲稠密特征（从 song_stats 查询，若无则从 MySQL）
         s_stats = res.song_stats.get(res.mysql2enc.get(sid, -1), {})
-        song_play_log  = float(s_stats.get("play_count_log", math.log1p(pop)))
-        song_avg_comp  = float(s_stats.get("avg_completion", 0.5))
-        song_pop_norm  = float(pop) / 100.0
-        age_days       = max(0, (datetime.date.today().year - rel_year) * 365) if rel_year > 0 else 0
-        song_age_log   = math.log1p(age_days)
+        song_play_log    = float(s_stats.get("play_count_log", math.log1p(pop)))
+        song_avg_comp    = float(s_stats.get("avg_completion", 0.5))
+        song_pop_norm    = float(pop) / 100.0
+        age_days         = max(0, (datetime.date.today().year - rel_year) * 365) if rel_year > 0 else 0
+        song_age_log     = math.log1p(age_days)
+        song_target_rate = float(s_stats.get("song_target_rate", 0.5))
+        song_skip_rate_v = float(s_stats.get("song_skip_rate", 0.2))
 
         # 交互特征：用 play-history 分布匹配（新用户用注册偏好近似）
         user_genre_match    = float(u_genre_dist.get(genre,   0.0))
@@ -727,29 +802,63 @@ def build_pair_features(user_id, song_ids, db, res: Resources):
         user_language_match = float(u_lang_dist.get(language,  0.0))
         user_country_match  = float(u_country_dist.get(country, 0.5))
 
+        # ── 新增：9 个特征的在线推断
+        # days_since_last_play_log
+        _last_song = song_last_play.get(sid)
+        days_since_play = (today_date - _last_song).days if _last_song else 9999
+        days_since_play_log = math.log1p(max(0, days_since_play))
+
+        # days_since_artist_log
+        _last_art = artist_last_play.get(artist)
+        days_since_art = (today_date - _last_art).days if _last_art else 9999
+        days_since_artist_log_v = math.log1p(max(0, days_since_art))
+
+        # user_artist_repeat_rate（近似：用 user_artist_match 作为先验代理）
+        # 当用户在这个艺术家上有高匹配度，重复率也高
+        user_artist_repeat_rate_v = user_artist_match if user_artist_match > 0 else user_target_rate
+
+        # user_has_in_playlist
+        user_has_playlist = 1.0 if sid in pl_song_set else 0.0
+
+        # user_playlist_artist_count_log
+        pl_art_cnt = pl_artist_cnt.get(artist, 0)
+        user_pl_artist_log = math.log1p(pl_art_cnt)
+
         row = [
-            # 13 稀疏特征（严格对齐 train_deepfm_v3.py SPARSE_FEAT_SPECS 顺序）
-            user_enc,    # 0: user_id
-            song_enc,    # 1: song_id
-            genre_enc,   # 2: genre
-            lang_enc,    # 3: language
-            art_enc,     # 4: artist
-            ctry_enc,    # 5: origin_country
-            year_enc,    # 6: year_bucket
-            src_enc,     # 7: source_channel
-            city_enc,    # 8: city
-            gender_enc,  # 9: gender
-            age_enc,     # 10: age_bucket
-            tenure_enc,  # 11: tenure_bucket
-            dur_enc,     # 12: duration_bucket
-            # 12 稠密特征（对齐 DENSE_FEAT_SPECS 顺序）
-            user_play_count_log, avg_comp_u,
-            user_diversity,
-            user_30d_active,
-            song_play_log, song_avg_comp,
-            song_pop_norm,  song_age_log,
-            user_genre_match, user_artist_match,
-            user_language_match, user_country_match,
+            # 14 稀疏特征（严格对齐 train_deepfm_v3.py SPARSE_FEAT_SPECS 顺序）
+            user_enc,       # 0: user_id
+            song_enc,       # 1: song_id
+            genre_enc,      # 2: genre
+            lang_enc,       # 3: language
+            art_enc,        # 4: artist
+            ctry_enc,       # 5: origin_country
+            year_enc,       # 6: year_bucket
+            src_enc,        # 7: source_channel
+            city_enc,       # 8: city
+            gender_enc,     # 9: gender
+            age_enc,        # 10: age_bucket
+            tenure_enc,     # 11: tenure_bucket
+            dur_enc,        # 12: duration_bucket
+            user_peak_enc,  # 13: user_peak_hour（新增）
+            # 22 稠密特征（对齐 DENSE_FEAT_SPECS 顺序）
+            user_play_count_log, avg_comp_u,    # 0-1
+            user_diversity,                     # 2
+            user_30d_active,                    # 3
+            song_play_log, song_avg_comp,       # 4-5
+            song_pop_norm, song_age_log,        # 6-7
+            user_genre_match, user_artist_match,        # 8-9
+            user_language_match, user_country_match,    # 10-11
+            user_target_rate,                   # 12
+            song_target_rate,                   # 13
+            user_skip_rate,                     # 14
+            song_skip_rate_v,                   # 15
+            hour_match_v,                       # 16
+            dow_match_v,                        # 17
+            days_since_play_log,                # 18
+            days_since_artist_log_v,            # 19
+            user_artist_repeat_rate_v,          # 20
+            user_has_playlist,                  # 21
+            user_pl_artist_log,                 # 22
         ]
         rows.append(row)
 

@@ -19,6 +19,7 @@ import os
 import sys
 import pickle
 import numpy as np
+import pandas as pd
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -82,22 +83,30 @@ def load_val_data():
     with open(INPUT_FEATURES, "rb") as f:
         feat = pickle.load(f)
 
-    # ── LightGBM 需要的特征矩阵
+    # ── LightGBM 需要的特征矩阵（与 train_lgbm.py 保持完全一致，Phase C 已移除零重要度特征）
     SPARSE_FEATURES = [
         "user_id_encoded", "song_id_encoded",
-        "gender_encoded", "age_bucket_encoded", "city_encoded",
+        "age_bucket_encoded", "city_encoded",
         "tenure_bucket_encoded", "genre_encoded", "language_encoded",
         "artist_encoded", "origin_country_encoded",
         "year_bucket_encoded", "duration_bucket_encoded",
         "source_channel_encoded",
+        "user_peak_hour_encoded",
     ]
     DENSE_FEATURES = [
         "user_play_count_log", "user_avg_completion",
-        "user_genre_diversity", "user_30d_active_days",
+        "user_genre_diversity",
         "song_play_count_log", "song_avg_completion",
         "song_popularity_norm", "song_age_days_log",
         "user_genre_match", "user_artist_match",
         "user_language_match", "user_country_match",
+        "user_target_rate", "song_target_rate",
+        "user_skip_rate",
+        "song_skip_rate",
+        "hour_match",
+        "days_since_last_play_log",
+        "days_since_artist_log",
+        "user_artist_repeat_rate",
     ]
     ALL_FEATURES = SPARSE_FEATURES + DENSE_FEATURES
 
@@ -111,13 +120,161 @@ def load_val_data():
     X = np.column_stack([arrays[c] for c in ALL_FEATURES]).astype(np.float32)
     y = feat["target"].astype(np.int8)
 
-    from sklearn.model_selection import train_test_split
-    X_train, X_val, y_train, y_val = train_test_split(
-        X, y, test_size=VALID_RATIO, random_state=RANDOM_SEED, stratify=y
-    )
-    print(f"   验证集: {len(y_val):,} 样本  |  正样本率: {y_val.mean():.4f}")
+    # ── 时序切分（与 train_lgbm.py / train_deepfm_v3.py 保持一致）
+    play_time_unix = feat.get("play_time_unix", np.zeros(len(y), dtype=np.int64))
+    user_id_enc    = feat["user_id_encoded"]
+    song_id_enc    = feat["song_id_encoded"]
+    artist_enc     = feat["artist_encoded"]
 
-    return X_val, y_val, feat, ALL_FEATURES
+    # 用户级时序切分（与 train_lgbm.py / train_deepfm_v3.py 保持完全一致）
+    MIN_INTERACTIONS = 5
+    _df_meta = pd.DataFrame({
+        "orig_idx": np.arange(len(play_time_unix)),
+        "uid":      user_id_enc.astype(np.int32),
+        "time":     play_time_unix,
+    })
+    _train_list, _val_list = [], []
+    for _u, _grp in _df_meta.groupby("uid", sort=False):
+        _grp_sorted = _grp.sort_values("time")
+        _n = len(_grp_sorted)
+        if _n < MIN_INTERACTIONS:
+            _train_list.append(_grp_sorted["orig_idx"].values)
+        else:
+            _n_val = max(1, int(_n * VALID_RATIO))
+            _train_list.append(_grp_sorted.iloc[:-_n_val]["orig_idx"].values)
+            _val_list.append(_grp_sorted.iloc[-_n_val:]["orig_idx"].values)
+    train_idx = np.concatenate(_train_list)
+    val_idx   = np.concatenate(_val_list) if _val_list else np.array([], dtype=np.int64)
+
+    # ── Target Leakage 修复（训练集先验 → 验证集）
+    _global_prior = float(y[train_idx].mean())
+    _train_meta = pd.DataFrame({
+        "uid": user_id_enc[train_idx].astype(np.int32),
+        "art": artist_enc[train_idx].astype(np.int32),
+        "sid": song_id_enc[train_idx].astype(np.int32),
+        "y":   y[train_idx].astype(np.float32),
+    })
+    _ua_df = _train_meta.groupby(["uid", "art"])["y"].mean().reset_index()
+    _ua_df.columns = ["uid", "art", "uar"]
+    _u_df  = _train_meta.groupby("uid")["y"].mean().reset_index()
+    _u_df.columns  = ["uid", "utr"]
+    _s_df  = _train_meta.groupby("sid")["y"].mean().reset_index()
+    _s_df.columns  = ["sid", "str_v"]
+
+    def _fix_leaky_ens(idx):
+        _tmp = pd.DataFrame({"uid": user_id_enc[idx].astype(np.int32),
+                              "art": artist_enc[idx].astype(np.int32),
+                              "sid": song_id_enc[idx].astype(np.int32)})
+        _tmp = _tmp.merge(_ua_df, on=["uid", "art"], how="left")
+        _tmp = _tmp.merge(_u_df,  on="uid",          how="left")
+        _tmp = _tmp.merge(_s_df,  on="sid",          how="left")
+        _tmp["uar"]   = _tmp["uar"].fillna(_tmp["utr"]).fillna(_global_prior)
+        _tmp["utr"]   = _tmp["utr"].fillna(_global_prior)
+        _tmp["str_v"] = _tmp["str_v"].fillna(_global_prior)
+        return (_tmp["uar"].values.astype(np.float32),
+                _tmp["utr"].values.astype(np.float32),
+                _tmp["str_v"].values.astype(np.float32))
+
+    IDX_UAR = ALL_FEATURES.index("user_artist_repeat_rate")
+    IDX_UTR = ALL_FEATURES.index("user_target_rate")
+    IDX_STR = ALL_FEATURES.index("song_target_rate")
+
+    X_val = X[val_idx].copy()
+    uar_vl, utr_vl, str_vl = _fix_leaky_ens(val_idx)
+    X_val[:, IDX_UAR] = uar_vl
+    X_val[:, IDX_UTR] = utr_vl
+    X_val[:, IDX_STR] = str_vl
+
+    # ── Phase B-2: Cross TE（user×genre/language/country，与 train_lgbm.py 完全一致）
+    _SMOOTH_M = 15
+    _global_prior = float(y[train_idx].mean())
+    _genre_enc   = feat.get("genre_encoded",          np.zeros(len(y), dtype=np.int32))
+    _lang_enc    = feat.get("language_encoded",       np.zeros(len(y), dtype=np.int32))
+    _country_enc = feat.get("origin_country_encoded", np.zeros(len(y), dtype=np.int32))
+    _b2_meta = pd.DataFrame({
+        "uid": user_id_enc[train_idx].astype(np.int32),
+        "gnr": _genre_enc[train_idx].astype(np.int32),
+        "lng": _lang_enc[train_idx].astype(np.int32),
+        "ctr": _country_enc[train_idx].astype(np.int32),
+        "y":   y[train_idx].astype(np.float32),
+    })
+    _ug_s = _b2_meta.groupby(["uid","gnr"])["y"].agg(["count","mean"]).reset_index()
+    _ug_s["ug_te"] = (_ug_s["count"]*_ug_s["mean"] + _SMOOTH_M*_global_prior) / (_ug_s["count"] + _SMOOTH_M)
+    _ul_s = _b2_meta.groupby(["uid","lng"])["y"].agg(["count","mean"]).reset_index()
+    _ul_s["ul_te"] = (_ul_s["count"]*_ul_s["mean"] + _SMOOTH_M*_global_prior) / (_ul_s["count"] + _SMOOTH_M)
+    _uc_s = _b2_meta.groupby(["uid","ctr"])["y"].agg(["count","mean"]).reset_index()
+    _uc_s["uc_te"] = (_uc_s["count"]*_uc_s["mean"] + _SMOOTH_M*_global_prior) / (_uc_s["count"] + _SMOOTH_M)
+
+    def _fix_cross_te_ens(idx):
+        _t = pd.DataFrame({
+            "uid": user_id_enc[idx].astype(np.int32),
+            "gnr": _genre_enc[idx].astype(np.int32),
+            "lng": _lang_enc[idx].astype(np.int32),
+            "ctr": _country_enc[idx].astype(np.int32),
+        })
+        _t = _t.merge(_ug_s[["uid","gnr","ug_te"]], on=["uid","gnr"], how="left")
+        _t = _t.merge(_ul_s[["uid","lng","ul_te"]], on=["uid","lng"], how="left")
+        _t = _t.merge(_uc_s[["uid","ctr","uc_te"]], on=["uid","ctr"], how="left")
+        return (
+            _t["ug_te"].fillna(_global_prior).values.astype(np.float32),
+            _t["ul_te"].fillna(_global_prior).values.astype(np.float32),
+            _t["uc_te"].fillna(_global_prior).values.astype(np.float32),
+        )
+
+    IDX_GM = ALL_FEATURES.index("user_genre_match")
+    IDX_LM = ALL_FEATURES.index("user_language_match")
+    IDX_CM = ALL_FEATURES.index("user_country_match")
+    ug_vl, ul_vl, uc_vl = _fix_cross_te_ens(val_idx)
+    X_val[:, IDX_GM] = ug_vl
+    X_val[:, IDX_LM] = ul_vl
+    X_val[:, IDX_CM] = uc_vl
+    print(f"   ✅ B-2 Cross TE 完成")
+
+    # ── Phase B-1: ALS 向量注入（仅训练集重训，与 train_lgbm.py 完全一致）
+    ALS_MODEL_PATH = os.path.join(MODE_DIR, "als_model.pkl")
+    _als_col = None
+    try:
+        from implicit.als import AlternatingLeastSquares as _ALS
+        from scipy.sparse import csr_matrix as _csr
+        if os.path.exists(ALS_MODEL_PATH):
+            _n_u = int(user_id_enc.max()) + 1
+            _n_s = int(song_id_enc.max()) + 1
+            _tr_agg = (
+                pd.DataFrame({
+                    "u": user_id_enc[train_idx].astype(np.int32),
+                    "s": song_id_enc[train_idx].astype(np.int32),
+                    "y": y[train_idx].astype(np.float32),
+                }).groupby(["u","s"])["y"].sum()
+            )
+            _mat = _csr(
+                (_tr_agg.values.astype(np.float32),
+                 (_tr_agg.index.get_level_values("u"), _tr_agg.index.get_level_values("s"))),
+                shape=(_n_u, _n_s), dtype=np.float32,
+            )
+            _als_m = _ALS(factors=50, iterations=10, regularization=0.1, use_gpu=False)
+            _als_m.fit(_mat.T, show_progress=False)
+            _user_emb = _als_m.item_factors
+            _song_emb = _als_m.user_factors
+
+            def _als_score_only(u_enc, s_enc):
+                _ue = np.clip(u_enc.astype(np.int32), 0, _user_emb.shape[0]-1)
+                _se = np.clip(s_enc.astype(np.int32), 0, _song_emb.shape[0]-1)
+                return (_user_emb[_ue] * _song_emb[_se]).sum(axis=1, keepdims=True).astype(np.float32)
+
+            _als_col = _als_score_only(user_id_enc[val_idx], song_id_enc[val_idx])
+            ALL_FEATURES = ALL_FEATURES + ["als_score"]
+            print(f"   ✅ B-1 ALS 注入完成: als_score（1 维 dot-product）")
+    except Exception as _e:
+        print(f"   ⚠️  ALS 注入跳过: {_e}")
+
+    if _als_col is not None:
+        X_val = np.hstack([X_val, _als_col])
+
+    y_val = y[val_idx]
+    print(f"   验证集: {len(y_val):,} 样本  |  正样本率: {y_val.mean():.4f}")
+    print(f"   ✅ 时序切分 + 泄漏修复完成  |  X_val.shape={X_val.shape}")
+
+    return X_val, y_val, feat, ALL_FEATURES, val_idx
 
 
 # ============================================================
@@ -145,7 +302,7 @@ def lgbm_predict(X_val):
 # Step 3: DeepFM 推断
 # ============================================================
 
-def deepfm_predict(feat, y_val_size):
+def deepfm_predict(feat, val_idx):
     print("\n" + "=" * 62)
     print("🧠 [Step 3/4] DeepFM v3 预测")
     print("=" * 62)
@@ -153,7 +310,6 @@ def deepfm_predict(feat, y_val_size):
     import torch
     from deepctr_torch.models import DeepFM
     from deepctr_torch.inputs import get_feature_names
-    from sklearn.model_selection import train_test_split
 
     with open(INPUT_DEEPFM_CFG, "rb") as f:
         cfg = pickle.load(f)
@@ -176,15 +332,8 @@ def deepfm_predict(feat, y_val_size):
     model.eval()
     print(f"   DeepFM v3 加载完成  |  特征列: {len(feature_columns)} 个")
 
-    # 重建数据字典
+    # 重建数据字典（使用时序切分的 val_idx，与 LightGBM 验证集保持一致）
     feature_names = get_feature_names(feature_columns)
-    n_total = len(feat["target"])
-    target  = feat["target"].astype(np.float32)
-    indices = np.arange(n_total)
-
-    _, val_idx = train_test_split(
-        indices, test_size=VALID_RATIO, random_state=RANDOM_SEED, stratify=target
-    )
 
     data_dict = {}
     for feat_name, enc_key, n_key, _ in sparse_specs:
@@ -194,6 +343,31 @@ def deepfm_predict(feat, y_val_size):
         if feat_name in feat:
             arr = feat[feat_name][val_idx].astype(np.float32)
             data_dict[feat_name] = np.nan_to_num(arr, nan=0.0)
+
+    # ── Target Leakage 修复（使用时序训练集先验）
+    n_total   = len(feat["target"])
+    sort_idx  = np.argsort(feat.get("play_time_unix", np.zeros(n_total, dtype=np.int64)), kind="stable")
+    n_val     = len(val_idx)
+    train_idx = sort_idx[:n_total - n_val]
+    y_train   = feat["target"][train_idx].astype(np.float32)
+    _gp = float(y_train.mean())
+    _uid = feat["user_id_encoded"]; _art = feat["artist_encoded"]; _sid = feat["song_id_encoded"]
+    _tm = pd.DataFrame({"uid": _uid[train_idx].astype(np.int32),
+                         "art": _art[train_idx].astype(np.int32),
+                         "sid": _sid[train_idx].astype(np.int32), "y": y_train})
+    _ua = _tm.groupby(["uid","art"])["y"].mean().reset_index(); _ua.columns=["uid","art","uar"]
+    _uu = _tm.groupby("uid")["y"].mean().reset_index();        _uu.columns=["uid","utr"]
+    _ss = _tm.groupby("sid")["y"].mean().reset_index();        _ss.columns=["sid","str_v"]
+    _tv = pd.DataFrame({"uid": _uid[val_idx].astype(np.int32),
+                         "art": _art[val_idx].astype(np.int32),
+                         "sid": _sid[val_idx].astype(np.int32)})
+    _tv = _tv.merge(_ua, on=["uid","art"], how="left").merge(_uu, on="uid", how="left").merge(_ss, on="sid", how="left")
+    _tv["uar"]   = _tv["uar"].fillna(_tv["utr"]).fillna(_gp)
+    _tv["utr"]   = _tv["utr"].fillna(_gp)
+    _tv["str_v"] = _tv["str_v"].fillna(_gp)
+    if "user_artist_repeat_rate" in data_dict: data_dict["user_artist_repeat_rate"] = _tv["uar"].values.astype(np.float32)
+    if "user_target_rate"        in data_dict: data_dict["user_target_rate"]        = _tv["utr"].values.astype(np.float32)
+    if "song_target_rate"        in data_dict: data_dict["song_target_rate"]        = _tv["str_v"].values.astype(np.float32)
 
     # 构建 Tensor
     arrays = [data_dict[f].reshape(-1, 1) for f in feature_names]
@@ -288,9 +462,9 @@ def main():
 
     check_files()
 
-    X_val, y_val, feat, all_features = load_val_data()
+    X_val, y_val, feat, all_features, val_idx = load_val_data()
     lgbm_preds   = lgbm_predict(X_val)
-    deepfm_preds = deepfm_predict(feat, len(y_val))
+    deepfm_preds = deepfm_predict(feat, val_idx)
 
     best_alpha, best_auc, lgbm_auc, deepfm_auc, results = search_alpha(
         y_val, lgbm_preds, deepfm_preds

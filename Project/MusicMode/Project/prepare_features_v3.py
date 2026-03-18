@@ -129,7 +129,16 @@ def load_raw_data(engine):
     """, engine)
     print(f"     ✅ users: {len(users_df):,} 个用户")
 
-    return ph_df, songs_df, users_df
+    # ── 1D. 加载 playlist_songs（用户主动收藏 = 强正向信号）
+    print("\n  📥 加载 playlist_songs（用户歌单数据）...")
+    pl_df = pd.read_sql("""
+        SELECT up.user_id, ps.song_id
+        FROM playlist_songs ps
+        JOIN user_playlists up ON ps.playlist_id = up.id
+    """, engine)
+    print(f"     ✅ playlist_songs: {len(pl_df):,} 条")
+
+    return ph_df, songs_df, users_df, pl_df
 
 
 # ============================================================
@@ -214,15 +223,67 @@ def compute_user_stats(ph_df: pd.DataFrame, songs_df: pd.DataFrame) -> pd.DataFr
 
     user_basic["user_genre_diversity"] = user_basic["user_id"].map(user_genre_entropy).fillna(0)
 
+    # 用户重复收听率：该用户历史中 target=1 的比例（直接预测目标的先验）
+    user_target_rate = ph_df.groupby("user_id")["target"].mean().rename("user_target_rate")
+    user_basic = user_basic.merge(user_target_rate, on="user_id", how="left")
+    user_basic["user_target_rate"] = user_basic["user_target_rate"].fillna(0.5)
+
+    # ── 新增：时序特征
+    print("     计算时序特征（peak_hour / top3_hours / top3_dows）...")
+    ph_songs["hour"] = ph_songs["play_time"].dt.hour
+    ph_songs["dow"]  = ph_songs["play_time"].dt.dayofweek  # 0=Monday...6=Sunday
+
+    # user_peak_hour（稀疏，0-23）：用户最高频收听时段
+    user_peak_hour = (
+        ph_songs.dropna(subset=["hour"])
+        .groupby("user_id")["hour"]
+        .agg(lambda x: int(x.value_counts().index[0]) if len(x) > 0 else 0)
+        .rename("user_peak_hour")
+        .reset_index()
+    )
+    user_basic = user_basic.merge(user_peak_hour, on="user_id", how="left")
+    user_basic["user_peak_hour"] = user_basic["user_peak_hour"].fillna(0).astype(int)
+
+    # user_top3_hours / user_top3_dows（中间变量，用于 hour_match / dow_match）
+    _hour_counts = (
+        ph_songs.dropna(subset=["hour"])
+        .groupby(["user_id", "hour"]).size()
+        .reset_index(name="_cnt")
+        .sort_values(["user_id", "_cnt"], ascending=[True, False])
+    )
+    user_top3_hours = _hour_counts.groupby("user_id")["hour"].apply(
+        lambda x: set(x.head(3).tolist())
+    ).to_dict()
+
+    _dow_counts = (
+        ph_songs.dropna(subset=["dow"])
+        .groupby(["user_id", "dow"]).size()
+        .reset_index(name="_cnt")
+        .sort_values(["user_id", "_cnt"], ascending=[True, False])
+    )
+    user_top3_dows = _dow_counts.groupby("user_id")["dow"].apply(
+        lambda x: set(x.head(3).tolist())
+    ).to_dict()
+
+    # ── 新增：跳过率特征
+    print("     计算用户跳过率...")
+    ph_songs["is_skip"] = (ph_songs["completion"] < 0.10).astype(float)
+    user_skip_rate = ph_songs.groupby("user_id")["is_skip"].mean().rename("user_skip_rate").reset_index()
+    user_basic = user_basic.merge(user_skip_rate, on="user_id", how="left")
+    user_basic["user_skip_rate"] = user_basic["user_skip_rate"].fillna(0.2)
+
     # 合并
     stats_dict = {
         "user_basic":        user_basic[["user_id", "user_play_count_log",
                                          "user_avg_completion", "user_30d_active_days",
-                                         "user_genre_diversity"]],
+                                         "user_genre_diversity", "user_target_rate",
+                                         "user_peak_hour", "user_skip_rate"]],
         "user_genre_dist":    user_genre_dist,
         "user_artist_dist":   user_artist_dist,
         "user_language_dist": user_language_dist,
         "user_country_dist":  user_country_dist,
+        "user_top3_hours":    user_top3_hours,
+        "user_top3_dows":     user_top3_dows,
     }
     print(f"     ✅ 用户统计特征计算完成（{len(user_genre_dist)} 个用户）")
     return stats_dict
@@ -257,6 +318,17 @@ def compute_song_stats(ph_df: pd.DataFrame, songs_df: pd.DataFrame) -> pd.DataFr
     song_stats["song_play_count_log"] = np.log1p(song_stats["play_count"])
     song_stats["song_avg_completion"] = song_stats["avg_completion"].fillna(0).clip(0, 1)
 
+    # 歌曲重复收听率：被播放后触发重复收听的比例（直接预测目标的先验）
+    song_target_rate = ph_df.groupby("song_id")["target"].mean().rename("song_target_rate")
+    song_stats = song_stats.merge(song_target_rate, on="song_id", how="left")
+    song_stats["song_target_rate"] = song_stats["song_target_rate"].fillna(0.5)
+
+    # ── 新增：歌曲跳过率
+    ph_songs["is_skip"] = (ph_songs["completion"] < 0.10).astype(float)
+    song_skip_rate = ph_songs.groupby("song_id")["is_skip"].mean().rename("song_skip_rate")
+    song_stats = song_stats.merge(song_skip_rate, on="song_id", how="left")
+    song_stats["song_skip_rate"] = song_stats["song_skip_rate"].fillna(0.2)
+
     # 归一化 popularity
     max_pop = songs_df["popularity"].max()
     songs_df["song_popularity_norm"] = (songs_df["popularity"].fillna(0) /
@@ -274,9 +346,116 @@ def compute_song_stats(ph_df: pd.DataFrame, songs_df: pd.DataFrame) -> pd.DataFr
     )
     song_stats["song_popularity_norm"] = song_stats["song_popularity_norm"].fillna(0)
     song_stats["song_age_days_log"]    = song_stats["song_age_days_log"].fillna(0)
+    song_stats["song_skip_rate"]       = song_stats["song_skip_rate"].fillna(0.2)
 
     print(f"     ✅ 歌曲统计特征计算完成（{len(song_stats):,} 首）")
     return song_stats
+
+
+# ============================================================
+# Step 3b: 时序特征（B-3 记忆衰减 + B-4 滚动窗口）
+# ============================================================
+
+def compute_temporal_features(ph_df: pd.DataFrame, songs_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    严格无泄漏时序特征（窗口上界 < 当前行 play_time）。
+
+    B-3 记忆衰减：
+      user_song_prev_play_days     : 距上次听同一首歌的天数（-1 = 首次）
+      user_song_play_count_before  : 当前播放之前听过该首歌的次数
+
+    B-4 滚动窗口（使用 pandas rolling closed="left" 排除当前行）：
+      user_7d_play_count_log       : 近 7 天用户播放总量 log1p
+      user_30d_play_count_log      : 近 30 天用户播放总量 log1p
+      user_7d_avg_completion       : 近 7 天用户平均完播率
+      song_7d_play_count_log       : 近 7 天歌曲播放总量 log1p
+      song_30d_play_count_log      : 近 30 天歌曲播放总量 log1p
+      song_trending_ratio          : 热度趋势 = (7d_count+1) / (30d_daily_avg+1)
+
+    返回：与 ph_df 等行数等顺序的 DataFrame（通过 _orig_idx 对齐）。
+    """
+    print("\n  ⚙️  计算时序特征（B-3 记忆衰减 + B-4 滚动窗口）...")
+
+    ph = ph_df[["user_id", "song_id", "play_time", "play_duration"]].copy()
+    ph["_orig_idx"] = np.arange(len(ph))
+    ph["play_time"] = pd.to_datetime(ph["play_time"], errors="coerce")
+
+    # 合入 duration，用于计算 completion
+    ph = ph.merge(songs_df[["song_id", "duration"]], on="song_id", how="left")
+    ph["completion_fill"] = np.where(
+        (ph["duration"] > 0) & ph["duration"].notna(),
+        np.clip(ph["play_duration"] / ph["duration"], 0, 1).astype(np.float32),
+        0.0,
+    ).astype(np.float32)
+
+    # ── B-3: 记忆衰减
+    print("     B-3 记忆衰减特征...")
+    ph_us = (
+        ph.dropna(subset=["play_time"])
+        .sort_values(["user_id", "song_id", "play_time"])
+        .reset_index(drop=True)
+    )
+    ph_us["user_song_play_count_before"] = (
+        ph_us.groupby(["user_id", "song_id"]).cumcount()   # 0 for first play
+    )
+    ph_us["_prev_time"] = ph_us.groupby(["user_id", "song_id"])["play_time"].shift(1)
+    ph_us["user_song_prev_play_days"] = (
+        (ph_us["play_time"] - ph_us["_prev_time"]).dt.total_seconds() / 86400
+    ).fillna(-1.0).astype(np.float32)
+
+    b3 = ph_us[["_orig_idx", "user_song_prev_play_days", "user_song_play_count_before"]]
+
+    # ── B-4: 滚动窗口（closed="left" 严格排除当前行）
+    print("     B-4 滚动窗口特征（7d / 30d）...")
+    ph_t = (
+        ph.dropna(subset=["play_time"])
+        .sort_values("play_time")
+        .reset_index(drop=True)
+    )
+    ph_t["_one"] = 1.0
+    ph_idx = ph_t.set_index("play_time")
+
+    def _roll(gb_col, agg_col, window):
+        return (
+            ph_idx.groupby(gb_col)[agg_col]
+            .rolling(window, min_periods=0, closed="left")
+            .sum()
+            .reset_index(level=gb_col, drop=True)
+        )
+
+    u7   = _roll("user_id", "_one",           "7D")
+    u30  = _roll("user_id", "_one",           "30D")
+    u7c  = _roll("user_id", "completion_fill","7D")
+    s7   = _roll("song_id", "_one",           "7D")
+    s30  = _roll("song_id", "_one",           "30D")
+
+    ph_t["user_7d_play_count_log"]  = np.log1p(u7.values).astype(np.float32)
+    ph_t["user_30d_play_count_log"] = np.log1p(u30.values).astype(np.float32)
+    ph_t["user_7d_avg_completion"]  = (u7c.values / (u7.values + 1)).astype(np.float32)
+    ph_t["song_7d_play_count_log"]  = np.log1p(s7.values).astype(np.float32)
+    ph_t["song_30d_play_count_log"] = np.log1p(s30.values).astype(np.float32)
+    ph_t["song_trending_ratio"]     = (
+        (s7.values + 1) / (s30.values / 30.0 + 1)
+    ).astype(np.float32)
+
+    b4 = ph_t[["_orig_idx",
+               "user_7d_play_count_log", "user_30d_play_count_log",
+               "user_7d_avg_completion",
+               "song_7d_play_count_log", "song_30d_play_count_log",
+               "song_trending_ratio"]]
+
+    # ── 对齐回原始行顺序
+    base = pd.DataFrame({"_orig_idx": np.arange(len(ph_df))})
+    result = base.merge(b3, on="_orig_idx", how="left").merge(b4, on="_orig_idx", how="left")
+
+    result["user_song_prev_play_days"]    = result["user_song_prev_play_days"].fillna(-1.0).astype(np.float32)
+    result["user_song_play_count_before"] = result["user_song_play_count_before"].fillna(0).astype(np.float32)
+    for col in ["user_7d_play_count_log", "user_30d_play_count_log", "user_7d_avg_completion",
+                "song_7d_play_count_log", "song_30d_play_count_log", "song_trending_ratio"]:
+        result[col] = result[col].fillna(0.0).astype(np.float32)
+
+    print(f"     ✅ 时序特征完成: {len(result):,} 行 × 8 个新特征")
+    return result
 
 
 # ============================================================
@@ -342,23 +521,25 @@ def duration_bucket(duration_sec):
 # Step 5: 组装 25 特征矩阵
 # ============================================================
 
-def build_feature_matrix(ph_df, songs_df, users_df, user_stats_dict, song_stats):
+def build_feature_matrix(ph_df, songs_df, users_df, user_stats_dict, song_stats, pl_df):
     """
-    将全部 25 个特征组装成训练矩阵
+    将全部 36 个特征组装成训练矩阵
     返回：
       df_features   : 全量特征 DataFrame（含 target）
       encoders      : LabelEncoder 字典（用于 DeepFM）
     """
     print("\n" + "=" * 62)
-    print("⚙️  [Step 4/5] 组装 25 特征矩阵")
+    print("⚙️  [Step 4/5] 组装 36 特征矩阵")
     print("=" * 62)
 
     # 从 stats_dict 取出各子结构
-    user_basic       = user_stats_dict["user_basic"]
-    user_genre_dist  = user_stats_dict["user_genre_dist"]
-    user_artist_dist = user_stats_dict["user_artist_dist"]
-    user_lang_dist   = user_stats_dict["user_language_dist"]
-    user_cntry_dist  = user_stats_dict["user_country_dist"]
+    user_basic        = user_stats_dict["user_basic"]
+    user_genre_dist   = user_stats_dict["user_genre_dist"]
+    user_artist_dist  = user_stats_dict["user_artist_dist"]
+    user_lang_dist    = user_stats_dict["user_language_dist"]
+    user_cntry_dist   = user_stats_dict["user_country_dist"]
+    user_top3_hours   = user_stats_dict["user_top3_hours"]
+    user_top3_dows    = user_stats_dict["user_top3_dows"]
 
     # ── 合并 users 特征到 play_history
     print("\n  合并 users 特征...")
@@ -375,6 +556,9 @@ def build_feature_matrix(ph_df, songs_df, users_df, user_stats_dict, song_stats)
     df["user_avg_completion"]  = df["user_avg_completion"].fillna(0)
     df["user_30d_active_days"] = df["user_30d_active_days"].fillna(0)
     df["user_genre_diversity"] = df["user_genre_diversity"].fillna(0)
+    df["user_target_rate"]     = df["user_target_rate"].fillna(0.5)
+    df["user_peak_hour"]       = df["user_peak_hour"].fillna(0).astype(int)
+    df["user_skip_rate"]       = df["user_skip_rate"].fillna(0.2)
 
     # ── 合并 songs 特征
     print("  合并 songs 特征...")
@@ -384,7 +568,7 @@ def build_feature_matrix(ph_df, songs_df, users_df, user_stats_dict, song_stats)
 
     df = df.merge(
         songs_feat[["song_id", "genre", "language", "artist",
-                    "origin_country", "year_bucket", "duration_bucket"]],
+                    "origin_country", "year_bucket", "duration_bucket", "duration"]],
         on="song_id", how="left"
     )
 
@@ -392,12 +576,14 @@ def build_feature_matrix(ph_df, songs_df, users_df, user_stats_dict, song_stats)
     df = df.merge(
         song_stats[["song_id", "song_play_count_log",
                     "song_avg_completion", "song_popularity_norm",
-                    "song_age_days_log"]],
+                    "song_age_days_log", "song_target_rate", "song_skip_rate"]],
         on="song_id", how="left"
     )
     for col in ["song_play_count_log", "song_avg_completion",
                 "song_popularity_norm", "song_age_days_log"]:
         df[col] = df[col].fillna(0)
+    df["song_target_rate"] = df["song_target_rate"].fillna(0.5)
+    df["song_skip_rate"]   = df["song_skip_rate"].fillna(0.2)
 
     # ── source_channel
     df["source_channel"] = df["source_channel"].fillna(DEFAULT_SOURCE)
@@ -407,6 +593,8 @@ def build_feature_matrix(ph_df, songs_df, users_df, user_stats_dict, song_stats)
                 "genre", "language", "artist", "origin_country",
                 "year_bucket", "duration_bucket"]:
         df[col] = df[col].fillna("unknown").astype(str)
+    # user_peak_hour: int → str (LabelEncoder 期望 str 输入)
+    df["user_peak_hour"] = df["user_peak_hour"].astype(str)
 
     # ── 交互特征（用户-歌曲匹配度，向量化 merge，替代 4× row-wise apply）
     print("  计算交互特征（向量化 merge，速度提升 10-15×）...")
@@ -427,6 +615,102 @@ def build_feature_matrix(ph_df, songs_df, users_df, user_stats_dict, song_stats)
     df["user_language_match"] = _match_vectorized(df, "language",       "user_language_match")
     df["user_country_match"]  = _match_vectorized(df, "origin_country", "user_country_match")
 
+    # ── 新增：时序特征（hour_match / dow_match）
+    print("  计算时序匹配特征（hour_match / dow_match）...")
+    df["play_time"] = pd.to_datetime(df["play_time"], errors="coerce")
+    df["_hour"] = df["play_time"].dt.hour
+    df["_dow"]  = df["play_time"].dt.dayofweek
+
+    df["hour_match"] = df.apply(
+        lambda r: 1.0 if (r["_hour"] in user_top3_hours.get(r["user_id"], set())) else 0.0,
+        axis=1
+    )
+    df["dow_match"] = df.apply(
+        lambda r: 1.0 if (r["_dow"] in user_top3_dows.get(r["user_id"], set())) else 0.0,
+        axis=1
+    )
+    df.drop(columns=["_hour", "_dow"], inplace=True)
+
+    # ── 新增：最近交互特征（days_since_last_play_log / days_since_artist_log）
+    print("  计算最近交互特征（days_since）...")
+    TODAY_TS = pd.Timestamp(TODAY)
+
+    # days_since_last_play: per (user_id, song_id)
+    last_play = (
+        df.dropna(subset=["play_time"])
+        .groupby(["user_id", "song_id"])["play_time"].max()
+        .reset_index(name="_last_play")
+    )
+    last_play["days_since_last_play_log"] = np.log1p(
+        (TODAY_TS - last_play["_last_play"]).dt.days.clip(lower=0).fillna(9999)
+    )
+    df = df.merge(last_play[["user_id", "song_id", "days_since_last_play_log"]],
+                  on=["user_id", "song_id"], how="left")
+    df["days_since_last_play_log"] = df["days_since_last_play_log"].fillna(np.log1p(9999))
+
+    # days_since_artist: per (user_id, artist)
+    last_artist = (
+        df.dropna(subset=["play_time"])
+        .groupby(["user_id", "artist"])["play_time"].max()
+        .reset_index(name="_last_artist")
+    )
+    last_artist["days_since_artist_log"] = np.log1p(
+        (TODAY_TS - last_artist["_last_artist"]).dt.days.clip(lower=0).fillna(9999)
+    )
+    df = df.merge(last_artist[["user_id", "artist", "days_since_artist_log"]],
+                  on=["user_id", "artist"], how="left")
+    df["days_since_artist_log"] = df["days_since_artist_log"].fillna(np.log1p(9999))
+
+    # ── 新增：用户-艺术家重复收听率
+    print("  计算用户-艺术家重复收听率...")
+    global_prior = ph_df["target"].mean()
+    ua_repeat = (
+        df.groupby(["user_id", "artist"])["target"].mean()
+        .reset_index(name="user_artist_repeat_rate")
+    )
+    df = df.merge(ua_repeat, on=["user_id", "artist"], how="left")
+    df["user_artist_repeat_rate"] = df["user_artist_repeat_rate"].fillna(global_prior)
+
+    # ── 新增：歌单亲和力特征
+    print("  计算歌单亲和力特征（user_has_in_playlist / user_playlist_artist_count_log）...")
+    if len(pl_df) > 0:
+        # user_has_in_playlist: 该 (user, song) 是否在用户歌单中
+        pl_flag = pl_df[["user_id", "song_id"]].drop_duplicates()
+        pl_flag["user_has_in_playlist"] = 1.0
+        df = df.merge(pl_flag, on=["user_id", "song_id"], how="left")
+        df["user_has_in_playlist"] = df["user_has_in_playlist"].fillna(0.0)
+
+        # user_playlist_artist_count_log: 用户歌单中该艺术家的歌曲数量
+        pl_with_artist = pl_df.merge(
+            songs_df[["song_id", "artist"]], on="song_id", how="left"
+        )
+        pl_artist_cnt = (
+            pl_with_artist.groupby(["user_id", "artist"]).size()
+            .reset_index(name="_pl_art_cnt")
+        )
+        pl_artist_cnt["user_playlist_artist_count_log"] = np.log1p(pl_artist_cnt["_pl_art_cnt"])
+        df = df.merge(
+            pl_artist_cnt[["user_id", "artist", "user_playlist_artist_count_log"]],
+            on=["user_id", "artist"], how="left"
+        )
+        df["user_playlist_artist_count_log"] = df["user_playlist_artist_count_log"].fillna(0.0)
+    else:
+        df["user_has_in_playlist"]           = 0.0
+        df["user_playlist_artist_count_log"] = 0.0
+
+    # ── Phase B-3/B-4: 时序特征（记忆衰减 + 滚动窗口）
+    print("  计算时序特征（B-3/B-4）...")
+    df = df.reset_index(drop=True)
+    temporal = compute_temporal_features(ph_df, songs_df)
+    df["user_song_prev_play_days"]    = temporal["user_song_prev_play_days"].values
+    df["user_song_play_count_before"] = temporal["user_song_play_count_before"].values
+    df["user_7d_play_count_log"]      = temporal["user_7d_play_count_log"].values
+    df["user_30d_play_count_log"]     = temporal["user_30d_play_count_log"].values
+    df["user_7d_avg_completion"]      = temporal["user_7d_avg_completion"].values
+    df["song_7d_play_count_log"]      = temporal["song_7d_play_count_log"].values
+    df["song_30d_play_count_log"]     = temporal["song_30d_play_count_log"].values
+    df["song_trending_ratio"]         = temporal["song_trending_ratio"].values
+
     print(f"\n  ✅ 特征矩阵组装完成: {len(df):,} 行 × {len(df.columns)} 列")
     return df
 
@@ -446,12 +730,13 @@ def encode_features(df: pd.DataFrame):
     print("🏷️  [Step 5/5] LabelEncoder 编码")
     print("=" * 62)
 
-    # 需要编码的分类特征
+    # 需要编码的分类特征（14个：新增 user_peak_hour）
     SPARSE_FEATURES = [
         "user_id", "song_id",
         "gender", "age_bucket", "city", "tenure_bucket",
         "genre", "language", "artist", "origin_country",
         "year_bucket", "duration_bucket", "source_channel",
+        "user_peak_hour",
     ]
 
     encoders = {}
@@ -477,14 +762,37 @@ def save_outputs(df, encoders, user_stats_dict, song_stats):
     print("💾 保存输出文件")
     print("=" * 62)
 
-    # ── features_v3.pkl
+    # ── features_v3.pkl（36 特征：14 稀疏 + 22 稠密）
     DENSE_FEATURES = [
+        # 原 14 个
         "user_play_count_log", "user_avg_completion",
         "user_genre_diversity", "user_30d_active_days",
         "song_play_count_log", "song_avg_completion",
         "song_popularity_norm", "song_age_days_log",
         "user_genre_match", "user_artist_match",
         "user_language_match", "user_country_match",
+        "user_target_rate",
+        "song_target_rate",
+        # 新增 8 个
+        "user_skip_rate",                   # 用户跳过率
+        "song_skip_rate",                   # 歌曲被跳过率
+        "hour_match",                       # 当前时段是否在用户 Top-3 时段
+        "dow_match",                        # 当前星期是否在用户 Top-3 活跃日
+        "days_since_last_play_log",         # 最近一次听该歌距今（天，log1p）
+        "days_since_artist_log",            # 最近一次听该艺术家距今（天，log1p）
+        "user_artist_repeat_rate",          # 用户对该艺术家的精准复听率
+        "user_has_in_playlist",             # 该歌是否在用户歌单中（0/1）
+        "user_playlist_artist_count_log",   # 用户歌单中该艺术家歌曲数（log1p）
+        # Phase B-3: 记忆衰减特征
+        "user_song_prev_play_days",         # 距上次听同一首歌的天数（-1=首次）
+        "user_song_play_count_before",      # 此前听这首歌的次数
+        # Phase B-4: 滚动窗口特征
+        "user_7d_play_count_log",           # 近7天用户播放总量 log1p
+        "user_30d_play_count_log",          # 近30天用户播放总量 log1p
+        "user_7d_avg_completion",           # 近7天用户平均完播率
+        "song_7d_play_count_log",           # 近7天歌曲播放总量 log1p
+        "song_30d_play_count_log",          # 近30天歌曲播放总量 log1p
+        "song_trending_ratio",              # 歌曲热度趋势（7d/30d_daily_avg）
     ]
     SPARSE_ENCODED = [
         "user_id_encoded", "song_id_encoded",
@@ -493,10 +801,17 @@ def save_outputs(df, encoders, user_stats_dict, song_stats):
         "artist_encoded", "origin_country_encoded",
         "year_bucket_encoded", "duration_bucket_encoded",
         "source_channel_encoded",
+        "user_peak_hour_encoded",           # 新增：用户收听高峰时段
     ]
+
+    # ── 时序切分元数据：UNIX 秒时间戳（不作为模型特征，仅供训练脚本切分用）
+    _pt = pd.to_datetime(df["play_time"], errors="coerce").fillna(pd.Timestamp("2000-01-01"))
+    _play_time_unix = (_pt.astype("int64") // 10**9).values
 
     feature_data = {
         "target": df["target"].values.astype(np.int8),
+        # 元数据（时序切分用，非模型特征）
+        "play_time_unix": _play_time_unix,
         # 稀疏特征（encoded）
         **{col: df[col].values for col in SPARSE_ENCODED if col in df.columns},
         # 稠密特征（float32）
@@ -515,6 +830,7 @@ def save_outputs(df, encoders, user_stats_dict, song_stats):
         "n_year_buckets": int(df["year_bucket_encoded"].max() + 1),
         "n_dur_buckets":  int(df["duration_bucket_encoded"].max() + 1),
         "n_sources":      int(df["source_channel_encoded"].max() + 1),
+        "n_peak_hours":   int(df["user_peak_hour_encoded"].max() + 1),
     }
 
     print(f"\n  保存 features_v3.pkl ...")
@@ -558,15 +874,15 @@ def save_outputs(df, encoders, user_stats_dict, song_stats):
 
 def main():
     print("\n" + "🎵" * 31)
-    print("   MusicMode 特征工程 v3.0")
-    print("   全量 MySQL 数据 + 25 特征体系")
+    print("   MusicMode 特征工程 v3.1")
+    print("   全量 MySQL 数据 + 36 特征体系（含歌单/时序/跳过/复听/最近交互）")
     print("🎵" * 31)
     print(f"\n  今天: {TODAY}")
 
     engine = get_engine()
 
     # Step 1: 加载原始数据
-    ph_df, songs_df, users_df = load_raw_data(engine)
+    ph_df, songs_df, users_df, pl_df = load_raw_data(engine)
     engine.dispose()
 
     if len(ph_df) == 0:
@@ -586,8 +902,8 @@ def main():
     print("=" * 62)
     song_stats = compute_song_stats(ph_df, songs_df)
 
-    # Step 4: 组装 25 特征矩阵
-    df = build_feature_matrix(ph_df, songs_df, users_df, user_stats_dict, song_stats)
+    # Step 4: 组装 36 特征矩阵
+    df = build_feature_matrix(ph_df, songs_df, users_df, user_stats_dict, song_stats, pl_df)
 
     # Step 5: LabelEncoder 编码
     df, encoders = encode_features(df)

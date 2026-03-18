@@ -166,6 +166,7 @@ CREATE TABLE `songs` (
   `genre_ids` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'KKBOX genre IDs separated by |',
   `language` varchar(10) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Language code',
   `popularity` int DEFAULT '0' COMMENT 'Popularity score based on KKBOX interactions',
+  `origin_country` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '歌曲原产地（外部元数据补全）',
   PRIMARY KEY (`id`),
   KEY `idx_kkbox_id` (`kkbox_id`),
   KEY `idx_genre_ids` (`genre_ids`),
