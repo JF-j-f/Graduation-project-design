@@ -33,12 +33,20 @@
 | CatBoost | ~~0.6499~~ | 已移除（过拟合差距 0.306） |
 | XGBoost | ~~—~~ | 已移除（与 LightGBM 冗余） |
 
+### 📊 双轨评估体系建立
+
+- **离线评估脚本** (`evaluate_offline.py`，全新建立)：面向论文指标，基于 KKBOX 验证集（28,172 用户，726,047 样本）计算 Hit Rate@K、Precision@K、Recall@K、NDCG@K、MRR 五项指标；结果输出至 `Mode/offline_evaluation_report.txt`。
+  - NDCG@10 = **0.721**，MRR = **0.811**（Stacking 集成模型）
+- **在线评估脚本** (`evaluate_recs.py`，更新评估标签逻辑)：面向系统验证，读取 jf/jf2 真实推荐交互记录（337 条），以播放完成率≥0.3 为正反馈阈值，计算 CTR、平均完播率、NDCG@10；结果输出至 `Mode/online_evaluation_report.txt`。
+  - CTR = **10.39%**（基于 jf/jf2 真实播放记录）
+
 ### 🧹 清理
 
 - 删除 `Project/__pycache__/`、`scripts/__pycache__/` 等编译缓存
 - 删除 `Project/catboost_info/` 临时目录
 - 删除 `scripts/test_api_composer.py`、`scripts/test_enrich_100.py` 一次性测试脚本
 - 删除 `catboost_train.log`、`xgboost_train.log`、`lgbm_train.log` 训练日志
+- **git 历史重写**：从版本历史中彻底清除 `features_v3_cache.npz`（2GB）、`song_index.faiss`（703MB）及历史 `Mode/*.pkl` 大文件，仓库体积从 3.8GB 压缩至 2.1GB（LFS 管理）
 
 ### 📁 新增/修改文件
 
@@ -52,6 +60,8 @@
 | `Project/train_deepfm_v3.py` | [UPDATE] EPOCHS 10→15，L2 正则，min-count |
 | `Project/train_din.py` | [UPDATE] EPOCHS 10→15，L2 正则，min-count |
 | `Project/build_ensemble.py` | [UPDATE] Stacking 集成：LightGBM + DeepFM + DIN |
+| `Project/evaluate_offline.py` | [NEW] KKBOX 离线评估脚本（NDCG@10=0.721，MRR=0.811）|
+| `Project/evaluate_recs.py` | [UPDATE] 在线评估标签逻辑更新（CTR=10.39%）|
 | `Document/README.md` | [UPDATE] 模型阵容更新，移除 CatBoost/XGBoost |
 
 ---
