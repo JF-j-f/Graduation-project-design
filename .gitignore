@@ -22,3 +22,4 @@ __pycache__/
 # 空占位文件
 Project/MusicMode/scripts/null
 Project/MusicWeb/scripts/null
+Project/MusicWeb/src/main/webapp/MusicServer/unblock
