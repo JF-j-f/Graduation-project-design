@@ -945,12 +945,12 @@ public class SongDAO {
     private static final java.util.Map<String, String> LANG_TO_COUNTRY;
     static {
         java.util.Map<String, String> m = new java.util.HashMap<>();
-        m.put("国语", "TW"); m.put("普通话", "CN"); m.put("粤语", "HK");
+        m.put("国语", "TW"); m.put("普通话", "CN"); m.put("粤语", "HK"); m.put("台语", "TW");
         m.put("英语", "US"); m.put("日语", "JP"); m.put("韩语", "KR");
         m.put("法语", "FR"); m.put("西班牙语", "ES"); m.put("葡萄牙语", "BR");
         m.put("德语", "DE"); m.put("意大利语", "IT"); m.put("俄语", "RU");
         m.put("泰语", "TH"); m.put("越南语", "VN"); m.put("印尼语", "ID");
-        m.put("马来语", "MY"); m.put("印地语", "IN"); m.put("阿拉伯语", "SA");
+        m.put("马来语", "MY"); m.put("印地语", "IN"); m.put("印度语", "IN"); m.put("阿拉伯语", "SA");
         m.put("土耳其语", "TR"); m.put("菲律宾语", "PH"); m.put("蒙古语", "MN");
         m.put("Chinese", "CN"); m.put("Mandarin", "TW"); m.put("Cantonese", "HK");
         m.put("English", "US"); m.put("Japanese", "JP"); m.put("Korean", "KR");

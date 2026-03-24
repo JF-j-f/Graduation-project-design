@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-sync_recs_v3.py — 三路召回 + LightGBM+DeepFM 集成精排
+sync_recs_v3.py — 三路召回 + LightGBM/DeepFM/DIN 三模型加权集成精排
 
 架构：
   召回层  (230万 → ~300): FAISS向量召回 + 热度召回 + ALS协同过滤
   精排层  (300 → 50):     LightGBM 打分
-  集成层  (50 → 25):      DeepFM 打分 + α 加权融合
+  集成层  (50 → 25):      LightGBM + DeepFM + DIN 三模型加权融合
+                          权重由离线 build_ensemble.py 训练得出
   重排层  (25 → 20):      多样性约束（同艺术家 ≤ 3 首）+ 冷却/屏蔽过滤
 
 计划任务：每天凌晨 4 点运行
@@ -38,10 +39,13 @@ MODE_DIR    = os.path.join(os.path.dirname(PROJECT_DIR), "Mode")
 # 模型文件
 FAISS_INDEX_PATH   = os.path.join(MODE_DIR, "song_index.faiss")
 SONG_ID_MAP_PATH   = os.path.join(MODE_DIR, "song_id_map.pkl")
-LGBM_MODEL_PATH    = os.path.join(MODE_DIR, "lgbm_model.pkl")
-DEEPFM_MODEL_PATH  = os.path.join(MODE_DIR, "deepfm_model_v3.pth")
-DEEPFM_CONFIG_PATH = os.path.join(MODE_DIR, "model_config_v3.pkl")
-ENSEMBLE_PATH      = os.path.join(MODE_DIR, "ensemble_config.pkl")
+LGBM_MODEL_PATH    = os.path.join(MODE_DIR, "lgbm",   "lgbm_model.pkl")
+DEEPFM_MODEL_PATH  = os.path.join(MODE_DIR, "deepfm", "deepfm_model.pth")
+DEEPFM_CONFIG_PATH = os.path.join(MODE_DIR, "deepfm", "model_config.pkl")
+DIN_MODEL_PATH     = os.path.join(MODE_DIR, "din", "din_model.pth")
+DIN_CONFIG_PATH    = os.path.join(MODE_DIR, "din", "model_config.pkl")
+# 集成配置：由 build_ensemble.py 生成，保存在 ensemble 子目录下
+ENSEMBLE_PATH      = os.path.join(MODE_DIR, "ensemble", "ensemble_config.pkl")
 ALS_MODEL_PATH     = os.path.join(MODE_DIR, "als_model.pkl")
 ENCODERS_PATH      = os.path.join(MODE_DIR, "encoders_v3.pkl")
 USER_STATS_PATH    = os.path.join(MODE_DIR, "user_stats.pkl")
@@ -154,13 +158,57 @@ class Resources:
             self.deepfm_dense      = cfg.get("dense_feat_specs", [])
             print(f"   ✅ DeepFM v3 加载（val_AUC={cfg.get('best_val_auc', 0):.4f}）")
 
-        # 集成系数
-        self.alpha = 0.5  # 默认 50/50
+        # DIN（与 DeepFM 共用相同特征，架构为 DeepFM + Dice 激活，无需行为序列）
+        self.din_model      = None
+        self.din_feat_names = None
+        self.din_sparse     = []
+        self.din_dense      = []
+        if os.path.exists(DIN_CONFIG_PATH) and os.path.exists(DIN_MODEL_PATH):
+            import torch
+            from deepctr_torch.models import DeepFM as _DeepFM_DIN
+            from deepctr_torch.inputs import get_feature_names as _get_feat_names_din
+            with open(DIN_CONFIG_PATH, "rb") as f:
+                din_cfg = pickle.load(f)
+            din_feature_columns = din_cfg["feature_columns"]
+            din_m = _DeepFM_DIN(
+                linear_feature_columns=din_feature_columns,
+                dnn_feature_columns=din_feature_columns,
+                dnn_hidden_units=din_cfg.get("dnn_hidden_units", (256, 128, 64)),
+                dnn_dropout=din_cfg.get("dnn_dropout", 0.5),
+                device='cpu',
+            )
+            din_sd = torch.load(DIN_MODEL_PATH, map_location='cpu', weights_only=True)
+            din_m.load_state_dict(din_sd)
+            din_m.eval()
+            self.din_model      = din_m
+            self.din_feat_names = _get_feat_names_din(din_feature_columns)
+            self.din_sparse     = din_cfg.get("sparse_feat_specs", [])
+            self.din_dense      = din_cfg.get("dense_feat_specs", [])
+            print(f"   ✅ DIN 加载（val_AUC={din_cfg.get('best_val_auc', 0):.4f}）")
+
+        # 三模型集成权重（由 build_ensemble.py 离线训练，保存在 ensemble_config.pkl）
+        # 默认等权分配；若配置文件存在则使用离线优化权重并归一化到三模型
+        self.w_lgbm   = 1 / 3
+        self.w_deepfm = 1 / 3
+        self.w_din    = 1 / 3
         if os.path.exists(ENSEMBLE_PATH):
             with open(ENSEMBLE_PATH, "rb") as f:
                 ec = pickle.load(f)
-            self.alpha = ec["alpha"]
-            print(f"   ✅ 集成系数 α={self.alpha:.2f}（集成 AUC={ec.get('ensemble_auc', 0):.4f}）")
+            bw = ec.get("best_weights", {})
+            raw_lgbm   = bw.get("LightGBM", 0.0)
+            raw_deepfm = bw.get("DeepFM",   0.0)
+            raw_din    = bw.get("DIN",       0.0)
+            total = raw_lgbm + raw_deepfm + raw_din
+            if total > 0:
+                # 归一化到三模型（排除已移除的 XGBoost/CatBoost 权重）
+                self.w_lgbm   = raw_lgbm   / total
+                self.w_deepfm = raw_deepfm / total
+                self.w_din    = raw_din    / total
+            print(
+                f"   ✅ 集成权重: LightGBM={self.w_lgbm:.3f}, "
+                f"DeepFM={self.w_deepfm:.3f}, DIN={self.w_din:.3f}"
+                f"（集成 AUC={ec.get('best_overall_auc', 0):.4f}）"
+            )
 
         # ALS
         self.als_model = None
@@ -790,7 +838,7 @@ def build_pair_features(user_id, song_ids, db, res: Resources):
         s_stats = res.song_stats.get(res.mysql2enc.get(sid, -1), {})
         song_play_log    = float(s_stats.get("play_count_log", math.log1p(pop)))
         song_avg_comp    = float(s_stats.get("avg_completion", 0.5))
-        song_pop_norm    = float(pop) / 100.0
+        song_unique_users_log_v = float(s_stats.get("song_unique_users_log", 0.0))
         age_days         = max(0, (datetime.date.today().year - rel_year) * 365) if rel_year > 0 else 0
         song_age_log     = math.log1p(age_days)
         song_target_rate = float(s_stats.get("song_target_rate", 0.5))
@@ -845,7 +893,7 @@ def build_pair_features(user_id, song_ids, db, res: Resources):
             user_diversity,                     # 2
             user_30d_active,                    # 3
             song_play_log, song_avg_comp,       # 4-5
-            song_pop_norm, song_age_log,        # 6-7
+            song_unique_users_log_v, song_age_log,  # 6-7
             user_genre_match, user_artist_match,        # 8-9
             user_language_match, user_country_match,    # 10-11
             user_target_rate,                   # 12
@@ -866,13 +914,106 @@ def build_pair_features(user_id, song_ids, db, res: Resources):
 
 
 def rank_with_lgbm(candidate_ids: list, X: np.ndarray, res: Resources) -> list:
-    """LightGBM 打分，返回 (song_id, lgbm_score) 列表，按分降序"""
+    """LightGBM 打分，返回 (song_id, lgbm_score) 列表，按分降序。
+    build_pair_features 输出 37 列（14稀疏+23稠密），LightGBM 训练时为 47 列
+    （7稀疏+17稠密+21 SVD+1 ALS+1 历史位置）。这里从 X 中抽取匹配列并对
+    缺失的 SVD/ALS/位置特征补零，保持特征顺序与训练时一致。
+
+    build_pair_features 列索引参考（共37列）：
+      稀疏: 0=user_id,1=song_id,2=genre,3=lang,4=artist,5=country,
+            6=year_bucket,7=src_channel,8=city,9=gender,10=age,11=tenure,12=dur,13=peak_hour
+      稠密: 14=user_play_cnt_log,15=user_avg_comp,16=user_diversity,17=user_30d_active,
+            18=song_play_log,19=song_avg_comp,20=song_pop_norm,21=song_age_log,
+            22=user_genre_match,23=user_artist_match,24=user_lang_match,25=user_country_match,
+            26=user_target_rate,27=song_target_rate,28=user_skip_rate,29=song_skip_rate,
+            30=hour_match,31=dow_match,32=days_since_play_log,33=days_since_artist_log,
+            34=user_artist_repeat_rate,35=user_has_playlist,36=user_pl_artist_log
+    """
     if res.lgbm_model is None or len(candidate_ids) == 0:
         return [(sid, 0.5) for sid in candidate_ids]
 
-    scores = res.lgbm_model.predict(X, num_iteration=res.lgbm_iter)
+    n = X.shape[0]
+    # 构建 47 列特征矩阵（与训练时 ALL_FEATURES 顺序一致）
+    X47 = np.zeros((n, 47), dtype=np.float32)
+    # 稀疏特征（7列）
+    X47[:, 0] = X[:, 0]   # user_id_encoded
+    X47[:, 1] = X[:, 1]   # song_id_encoded
+    X47[:, 2] = X[:, 2]   # genre_encoded
+    X47[:, 3] = X[:, 3]   # language_encoded
+    X47[:, 4] = X[:, 4]   # artist_encoded
+    X47[:, 5] = X[:, 5]   # origin_country_encoded
+    X47[:, 6] = X[:, 7]   # source_channel_encoded
+    # 稠密特征（17列）
+    X47[:, 7]  = X[:, 14]  # user_play_count_log
+    X47[:, 8]  = X[:, 15]  # user_avg_completion
+    X47[:, 9]  = X[:, 18]  # song_play_count_log
+    X47[:, 10] = X[:, 19]  # song_avg_completion
+    X47[:, 11] = X[:, 20]  # song_unique_users_log
+    X47[:, 12] = X[:, 21]  # song_age_days_log
+    X47[:, 13] = X[:, 22]  # user_genre_match
+    X47[:, 14] = X[:, 23]  # user_artist_match
+    X47[:, 15] = X[:, 24]  # user_language_match
+    X47[:, 16] = X[:, 25]  # user_country_match
+    X47[:, 17] = X[:, 26]  # user_target_rate
+    X47[:, 18] = X[:, 27]  # song_target_rate
+    X47[:, 19] = X[:, 28]  # user_skip_rate
+    X47[:, 20] = X[:, 29]  # song_skip_rate
+    X47[:, 21] = X[:, 30]  # hour_match
+    X47[:, 22] = X[:, 33]  # days_since_artist_log
+    X47[:, 23] = X[:, 34]  # user_artist_repeat_rate
+    # cols 24-44: SVD特征（21列）→ 补零
+    # col 45: als_score → 补零
+    # col 46: user_history_position → 用验证集均值近似
+    X47[:, 46] = 0.952
+
+    scores = res.lgbm_model.predict(X47, num_iteration=res.lgbm_iter)
     ranked = sorted(zip(candidate_ids, scores.tolist()), key=lambda x: -x[1])
     return ranked
+
+
+def _build_deep_input(X: np.ndarray, n_feat: int) -> np.ndarray:
+    """
+    将 build_pair_features 输出的 37 列矩阵转为 DeepFM/DIN 期望的 49 列输入。
+
+    build_pair_features 列索引（37列）：
+      稀疏(14): 0=user_id,1=song_id,2=genre,3=lang,4=artist,5=country,
+                6=year_bucket,7=src_channel,8=city,9=gender,10=age,11=tenure,12=dur,13=peak_hour
+      稠密(23): 14=user_play_cnt_log,15=user_avg_comp,16=user_diversity,17=user_30d_active,
+                18=song_play_log,19=song_avg_comp,20=song_unique_users_log,21=song_age_log,
+                22=user_genre_match,23=user_artist_match,24=user_lang_match,25=user_country_match,
+                26=user_target_rate,27=song_target_rate,28=user_skip_rate,29=song_skip_rate,
+                30=hour_match,31=dow_match,32=days_since_play,33=days_since_artist,
+                34=user_artist_repeat_rate,35=user_has_playlist,36=user_pl_artist_log
+
+    DeepFM feat_names(49列，由 get_feature_names 确定）：
+      稀疏(14): user_id,song_id,genre,language,artist,origin_country,year_bucket,
+                source_channel,city,gender,age_bucket,tenure_bucket,duration_bucket,user_peak_hour
+      稠密(35): user_play_count_log,user_avg_completion,song_play_count_log,song_avg_completion,
+                song_unique_users_log,song_age_days_log,user_genre_match,user_artist_match,
+                user_language_match,user_country_match,user_skip_rate,song_skip_rate,hour_match,
+                days_since_artist_log, + 21 SVD维 → 0, svd_dot_score → 0
+    """
+    n = X.shape[0]
+    X49 = np.zeros((n, n_feat), dtype=np.float32)
+    # 稀疏特征（14列，位置与 feat_names 完全对应）
+    X49[:, :14] = X[:, :14]
+    # 稠密特征（按 feat_names[14:] 顺序映射）
+    X49[:, 14] = X[:, 14]   # user_play_count_log
+    X49[:, 15] = X[:, 15]   # user_avg_completion
+    X49[:, 16] = X[:, 18]   # song_play_count_log
+    X49[:, 17] = X[:, 19]   # song_avg_completion
+    X49[:, 18] = X[:, 20]   # song_unique_users_log
+    X49[:, 19] = X[:, 21]   # song_age_days_log
+    X49[:, 20] = X[:, 22]   # user_genre_match
+    X49[:, 21] = X[:, 23]   # user_artist_match
+    X49[:, 22] = X[:, 24]   # user_language_match
+    X49[:, 23] = X[:, 25]   # user_country_match
+    X49[:, 24] = X[:, 28]   # user_skip_rate
+    X49[:, 25] = X[:, 29]   # song_skip_rate
+    X49[:, 26] = X[:, 30]   # hour_match
+    X49[:, 27] = X[:, 33]   # days_since_artist_log
+    # cols 28-48: SVD 特征 (21维) + svd_dot_score → 补零（已由 np.zeros 初始化）
+    return X49
 
 
 def rank_with_deepfm(candidate_ids: list, X: np.ndarray, res: Resources) -> list:
@@ -881,11 +1022,34 @@ def rank_with_deepfm(candidate_ids: list, X: np.ndarray, res: Resources) -> list
         return [(sid, 0.5) for sid in candidate_ids]
 
     import torch
-    feat_names = res.deepfm_feat_names
-    X_tensor   = torch.from_numpy(X).float()
+    n_feat = len(res.deepfm_feat_names) if res.deepfm_feat_names else 49
+    X49 = _build_deep_input(X, n_feat)
+    X_tensor = torch.from_numpy(X49).float()
 
     with torch.no_grad():
         preds = res.deepfm_model(X_tensor).squeeze().cpu().numpy()
+
+    if preds.ndim == 0:
+        preds = np.array([float(preds)])
+
+    return list(zip(candidate_ids, preds.tolist()))
+
+
+def rank_with_din(candidate_ids: list, X: np.ndarray, res: Resources) -> list:
+    """
+    DIN 打分，返回 (song_id, din_score) 列表。
+    DIN 与 DeepFM 共用相同 49 列特征矩阵（SVD 特征在线补零）。
+    """
+    if res.din_model is None or len(candidate_ids) == 0:
+        return [(sid, 0.5) for sid in candidate_ids]
+
+    import torch
+    n_feat = len(res.din_feat_names) if res.din_feat_names else 49
+    X49 = _build_deep_input(X, n_feat)
+    X_tensor = torch.from_numpy(X49).float()
+
+    with torch.no_grad():
+        preds = res.din_model(X_tensor).squeeze().cpu().numpy()
 
     if preds.ndim == 0:
         preds = np.array([float(preds)])
@@ -1000,15 +1164,18 @@ def generate_recommendations():
             lgbm_score_map = {sid: s for sid, s in top50}
             print(f"      LightGBM 精排: top {len(top50_ids)} 首")
 
-            # ── DeepFM 集成：50 → 25
+            # ── 三模型集成：50 → 25（LightGBM + DeepFM + DIN 加权融合）
             if top50_ids:
                 X50 = build_pair_features(uid, top50_ids, db, res)
-                deepfm_scored = rank_with_deepfm(top50_ids, X50, res)
+                deepfm_scored   = rank_with_deepfm(top50_ids, X50, res)
+                din_scored      = rank_with_din(top50_ids, X50, res)
                 deepfm_score_map = {sid: s for sid, s in deepfm_scored}
-                alpha = res.alpha
+                din_score_map    = {sid: s for sid, s in din_scored}
                 ensemble_scored = [
-                    (sid, alpha * lgbm_score_map.get(sid, 0.5)
-                          + (1 - alpha) * deepfm_score_map.get(sid, 0.5))
+                    (sid,
+                     res.w_lgbm   * lgbm_score_map.get(sid, 0.5)
+                     + res.w_deepfm * deepfm_score_map.get(sid, 0.5)
+                     + res.w_din    * din_score_map.get(sid, 0.5))
                     for sid in top50_ids
                 ]
                 ensemble_scored.sort(key=lambda x: -x[1])
@@ -1016,7 +1183,7 @@ def generate_recommendations():
             else:
                 top25 = top50[:ENSEMBLE_TOP]
 
-            print(f"      集成排序: top {len(top25)} 首")
+            print(f"      集成排序（LightGBM×{res.w_lgbm:.2f} + DeepFM×{res.w_deepfm:.2f} + DIN×{res.w_din:.2f}）: top {len(top25)} 首")
 
             # ── 多样性重排：25 → 20
             final_recs = diversity_rerank(top25, song_meta_map)

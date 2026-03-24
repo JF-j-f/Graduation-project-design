@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-train_din.py — DIN (Deep Interest Network) 精排模型训练
+train_din.py — DIN 精排模型训练
 
 特点：
-  - 输入: features_v3.pkl（62特征，来自 prepare_features_v3.py v3.2）
+  - 输入: features_v3.pkl（来自 prepare_features_v3.py）
   - 目标: 预测"30天内重复收听"概率（二分类）
-  - 模型: DIN (Deep Interest Network, Alibaba 2018)
-         通过 Attention 机制对用户历史行为序列建模
-  - 输出: Mode/din/din_model.pth + din_metrics.csv
-  - 框架: DeepCTR-Torch (与 DeepFM 共用)
+  - 模型: DeepFM 架构变体（DNN=(256,128,64)，与 DeepFM 形成模型多样性）
+  - 输出: din_model.pth + din_metrics.csv
+  - 框架: DeepCTR-Torch
 
 执行：
   python train_din.py
@@ -46,30 +45,32 @@ OUTPUT_PLOT      = os.path.join(DIN_DIR, "training_progress.png")
 OUTPUT_HISTORY   = os.path.join(DIN_DIR, "din_metrics.csv")
 
 # 训练超参数
-BATCH_SIZE       = 8192
-EPOCHS           = 20     # Fix-3: 10→15，上轮 Epoch9 仍在提升，延长训练
-LEARNING_RATE    = 0.001
-DNN_HIDDEN_UNITS = (256, 128, 64)
-DROPOUT          = 0.5     # Fix-neural: 0.3→0.5，增强正则化
-NUM_WORKERS      = 4
-RANDOM_SEED      = 42
+BATCH_SIZE       = 8192        # 每批样本数，较大批次梯度更稳定
+EPOCHS           = 30          # 最大训练轮数，配合早停使用
+LEARNING_RATE    = 0.001       # 初始学习率
+DNN_HIDDEN_UNITS = (256, 128, 64)  # DNN 各隐藏层维度
+DROPOUT          = 0.4         # Dropout 丢弃比例
+NUM_WORKERS      = 4           # DataLoader 并行工作进程数
+RANDOM_SEED      = 42          # 随机种子，保证实验可复现
 
-# ReduceLROnPlateau
-LR_PATIENCE      = 3
-LR_FACTOR        = 0.5
-LR_MIN           = 1e-5
+# ReduceLROnPlateau 学习率衰减参数
+LR_PATIENCE      = 3           # 验证 loss 连续 N 轮无改善后触发 LR 衰减
+LR_FACTOR        = 0.5         # 每次触发后 LR 乘以该因子
+LR_MIN           = 5e-6        # LR 下限，低于此值不再衰减
 
-# 早停
-EARLY_STOP_PATIENCE = 8   # Fix-neural: 5→8，防止过早停止
+# 早停参数
+EARLY_STOP_PATIENCE = 10       # 验证 AUC 连续 N 轮无提升则终止训练
 
-# 验证集比例（80/20 划分）
-VALID_RATIO = 0.1    # 13%（20%时序偏移过大，改回10%）
+# 验证集比例
+VALID_RATIO = 0.1              # 10%，与 LightGBM/DeepFM 一致
 
 
 # ============================================================
 # 特征列定义（与 DeepFM 基本一致，但 DIN 需要 behavior 序列特征）
 # ============================================================
 
+# (deepctr特征名, pkl编码键, pkl基数键, embedding维度)
+# ⚠️ DeepCTR-Torch 要求所有 SparseFeat embedding_dim 一致
 SPARSE_FEAT_SPECS = [
     ("user_id",         "user_id_encoded",          "n_users",         16),
     ("song_id",         "song_id_encoded",           "n_songs",         16),
@@ -90,28 +91,22 @@ SPARSE_FEAT_SPECS = [
 DENSE_FEAT_SPECS = [
     "user_play_count_log",
     "user_avg_completion",
-    # user_genre_diversity: 删除（LGBM=0, XGB=0）
     "song_play_count_log",
     "song_avg_completion",
-    "song_popularity_norm",
+    "song_unique_users_log",
     "song_age_days_log",
     "user_genre_match",
     "user_artist_match",
     "user_language_match",
     "user_country_match",
-    # user_target_rate / song_target_rate / user_artist_repeat_rate: 已移除（深度模型 TE 泄漏，改为直接用原始值）
     "user_skip_rate",
     "song_skip_rate",
     "hour_match",
-    # "days_since_last_play_log": Fix-3 已移除
     "days_since_artist_log",
-    # B-3/B-4 全部删除（LGBM=0, XGB=0）
-    # SVD（删除两模型均为零维度）
     *[f"svd_user_song_{i}" for i in [0, 2, 3, 4, 5, 6, 9]],
     *[f"svd_song_user_{i}" for i in range(10)],
     *[f"svd_user_artist_{i}" for i in [0, 3, 4]],
     "svd_dot_score",
-    # 新增：用户历史位置比例（对抗时序概念漂移）
     "user_history_position",
 ]
 
@@ -148,13 +143,6 @@ def check_gpu():
 # ============================================================
 
 def prepare_din_data(feat):
-    """
-    DIN (Deep Interest Network) 使用 Attention 机制，但 DeepCTR-Torch 的 DIN
-    实现需要 behavior sequence（VarLenSparseFeat）。由于本项目数据已经是
-    (user, song) pair 而非序列形式，我们使用 DIN 的非序列版本：
-    即使用与 DeepFM 相同的特征列，但模型架构改为 DIN 的 DNN 部分。
-    这仍然能利用 DIN 更深的网络结构和 Dice 激活函数的优势。
-    """
     print("\n" + "=" * 62)
     print("⚙️  [Step 2/4] 构建特征列 & 分割数据集")
     print("=" * 62)
@@ -244,17 +232,15 @@ def prepare_din_data(feat):
     train_target = target[train_idx]
     val_target   = target[val_idx]
 
-    # ── Target Leakage 修复（user_target_rate / song_target_rate / user_artist_repeat_rate
-    #    已从 DENSE_FEAT_SPECS 移除，深度模型直接使用原始特征值，不做 TE 覆盖）
-    print("  🔧 深度模型跳过 TE 覆盖（3个 TE 特征已从特征列移除，消除训练集自我泄漏）")
+    # ── 训练集不做 TE 覆盖（防止自我泄漏），仅验证集用贝叶斯平滑条件概率回填
+    print("  🔧 深度模型跳过 TE 覆盖（消除训练集自我泄漏）")
     _global_prior = float(train_target.mean())
     _uid = feat["user_id_encoded"]
     _art = feat["artist_encoded"]
     _sid = feat["song_id_encoded"]
     _SMOOTH_M = 100
 
-    # ── Phase B-2: Cross TE（仅应用于验证集，训练集保留原始 genre_match 值）
-    print("  🎯 Phase B-2: Cross TE（仅验证集回填，训练集保留原始值）...")
+    print("  🎯 Cross TE（仅验证集回填，训练集保留原始值）...")
     _gnr = feat.get("genre_encoded",          np.zeros(len(feat["target"]), dtype=np.int32))
     _lng = feat.get("language_encoded",       np.zeros(len(feat["target"]), dtype=np.int32))
     _ctr = feat.get("origin_country_encoded", np.zeros(len(feat["target"]), dtype=np.int32))
@@ -294,7 +280,7 @@ def prepare_din_data(feat):
     if "user_country_match"  in val_data:   val_data["user_country_match"]    = uc_vl
     print(f"   ✅ Cross TE 完成（验证集 genre/language/country_match 已用 Bayesian 条件概率回填）")
 
-    # ── Phase SVD Fix: 训练集专用 SVD（防止全量预计算的 SVD 泄漏到验证集）
+    # ── Phase SVD: 训练集专用 SVD（消除全量预计算导致的验证集泄漏）
     print("  🔧 Phase SVD: 重新在训练集拟合 SVD，消除验证集泄漏...")
     from scipy.sparse import coo_matrix as _coo_svd
     from sklearn.decomposition import TruncatedSVD as _TruncSVD
@@ -353,11 +339,12 @@ def prepare_din_data(feat):
 def train_din(feature_columns, feature_names,
               train_data, val_data, train_target, val_target, device):
     import torch
+    import torch.nn.functional as F
     import torch.utils.data as Data
     from torch.amp import autocast, GradScaler
     from torch.optim import Adam
     from torch.optim.lr_scheduler import ReduceLROnPlateau
-    from deepctr_torch.models import DeepFM  # DIN 需要序列特征，此处用 DeepFM 架构 + Dice 激活
+    from deepctr_torch.models import DeepFM
     from sklearn.metrics import roc_auc_score, log_loss
 
     print("\n" + "=" * 62)
@@ -368,22 +355,18 @@ def train_din(feature_columns, feature_names,
     print(f"   Batch Size: {BATCH_SIZE:,}")
     print(f"   Device:     {device}")
 
-    # DIN 在 DeepCTR-Torch 中需要 VarLenSparseFeat（行为序列），
-    # 但我们的数据是 (user, song) pair 形式，无法直接构造序列。
-    # 因此使用 DeepFM 模型架构但配置不同的 DNN 结构（更窄更深），
-    # 模拟 DIN 的效果。这在业界被称为 "Wide&Deep 变体"。
     model = DeepFM(
         linear_feature_columns=feature_columns,
         dnn_feature_columns=feature_columns,
         dnn_hidden_units=DNN_HIDDEN_UNITS,
         dnn_dropout=DROPOUT,
         dnn_activation='relu',
-        l2_reg_embedding=1e-4,   # Fix: Embedding L2 正则化，防止长尾 ID Embedding 过拟合
+        l2_reg_embedding=1e-3,
         device=str(device),
     )
     model = model.to(device)
 
-    optimizer = Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)  # Fix-neural: L2 正则化
+    optimizer = Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-3)
     scheduler = ReduceLROnPlateau(
         optimizer, mode='min', factor=LR_FACTOR,
         patience=LR_PATIENCE, min_lr=LR_MIN, verbose=True

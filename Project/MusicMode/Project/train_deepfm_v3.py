@@ -3,20 +3,14 @@
 train_deepfm_v3.py — DeepFM 精排模型训练 v3
 
 特点：
-  - 输入: features_v3.pkl（25个特征，来自 prepare_features_v3.py）
-  - 特征: 13 个稀疏特征（SparseFeat，不同 embedding 维度）
-           + 12 个稠密特征（DenseFeat）
+  - 输入: features_v3.pkl（来自 prepare_features_v3.py）
+  - 特征: 14 个稀疏特征（SparseFeat）+ 36 个稠密特征（DenseFeat）
   - 目标: 预测"30天内重复收听"概率（二分类）
-  - 模型: DeepFM（DNN=(512,256,128,64)，更深架构）
+  - 模型: DeepFM（DNN=(256,128,64)）
   - 优化: GPU AMP（FP16 混合精度）+ ReduceLROnPlateau + 早停
-  - 输出: deepfm_model_v3.pth + model_config_v3.pkl + training_progress_v3.png
+  - 输出: deepfm_model.pth + model_config.pkl + training_progress.png
 
-执行：
-  python train_deepfm_v3.py
-
-预计时间：约 60 分钟（7.37M 样本，GPU RTX 4060）
-预期 AUC：0.88-0.92
-
+预计时间：约 30 分钟（7.37M 样本，GPU RTX 4060）
 作者：MusicMode 推荐系统
 """
 
@@ -50,78 +44,70 @@ OUTPUT_PLOT      = os.path.join(DEEPFM_DIR, "training_progress.png")
 OUTPUT_HISTORY   = os.path.join(DEEPFM_DIR, "deepfm_metrics.csv")  # 论文用：逐 epoch 指标
 
 # 训练超参数
-BATCH_SIZE       = 8192   # RTX 4060 8GB VRAM 可承载，steps/epoch 减半；OOM时退回 6144
-EPOCHS           = 20     # Fix-3: 10→15，上轮 Epoch9 仍在提升，延长训练
-LEARNING_RATE    = 0.001   # 降低 LR: v3 Epoch3 出现过拟合，从 0.002 调至 0.001
-DNN_HIDDEN_UNITS = (512, 256, 128, 64)   # v3: 更深 DNN（v2 为 256,128,64）
-DROPOUT          = 0.5     # Fix-neural: 0.3→0.5，增强正则化防过拟合
-NUM_WORKERS      = 4
-RANDOM_SEED      = 42
+BATCH_SIZE       = 8192        # 每批样本数，较大批次梯度更稳定
+EPOCHS           = 40          # 最大训练轮数，配合早停使用
+LEARNING_RATE    = 0.001       # 初始学习率，较高初始值有助于跳出局部最优
+DNN_HIDDEN_UNITS = (512, 256, 128)  # DNN 各隐藏层维度，缩小网络防止过拟合
+DROPOUT          = 0.4         # Dropout 丢弃比例，提升正则化强度
+NUM_WORKERS      = 5           # DataLoader 并行工作进程数
+RANDOM_SEED      = 42          # 随机种子，保证实验可复现
 
-# ReduceLROnPlateau 参数
-LR_PATIENCE      = 3      # 验证 loss 连续 N 轮不降 → LR × factor
-LR_FACTOR        = 0.5
-LR_MIN           = 1e-5
+# ReduceLROnPlateau 学习率衰减参数
+LR_PATIENCE      = 5           # 验证 loss 连续 N 轮无改善后触发 LR 衰减
+LR_FACTOR        = 0.5         # 每次触发后 LR 乘以该因子
+LR_MIN           = 5e-6        # LR 下限，低于此值不再衰减
 
 # 早停参数
-EARLY_STOP_PATIENCE = 8   # Fix-neural: 5→8，防止过早停止
+EARLY_STOP_PATIENCE = 12       # 验证 AUC 连续 N 轮无提升则终止训练
 
 # 验证集比例
-VALID_RATIO = 0.15    # 15%（20%时序偏移过大，正样本率差12.71%，改回10%）
+VALID_RATIO = 0.1              # 10%，与 LightGBM/DIN 一致
 
 
 # ============================================================
 # 特征列定义
 # ============================================================
 
-# (feat_name_for_deepctr, encoded_key_in_features_v3, n_key, embed_dim)
-# ⚠️ DeepCTR-Torch 要求所有 SparseFeat 使用相同 embedding_dim（torch.cat dim=1 限制）
+# (deepctr特征名, pkl编码键, pkl基数键, embedding维度)
+# ⚠️ DeepCTR-Torch 要求所有 SparseFeat embedding_dim 一致
 # ⚠️ n_key 须与 prepare_features_v3.py save_outputs() 中的 key 名完全一致
 SPARSE_FEAT_SPECS = [
-    ("user_id",         "user_id_encoded",          "n_users",         16),
-    ("song_id",         "song_id_encoded",           "n_songs",         16),
-    ("genre",           "genre_encoded",             "n_genres",        16),
-    ("language",        "language_encoded",          "n_languages",     16),
-    ("artist",          "artist_encoded",            "n_artists",       16),
-    ("origin_country",  "origin_country_encoded",    "n_countries",     16),
-    ("year_bucket",     "year_bucket_encoded",       "n_year_buckets",  16),
-    ("source_channel",  "source_channel_encoded",    "n_sources",       16),
-    ("city",            "city_encoded",              "n_cities",        16),
-    ("gender",          "gender_encoded",            "n_genders",       16),
-    ("age_bucket",      "age_bucket_encoded",        "n_age_buckets",   16),
-    ("tenure_bucket",   "tenure_bucket_encoded",     "n_tenures",       16),
-    ("duration_bucket", "duration_bucket_encoded",   "n_dur_buckets",   16),
-    ("user_peak_hour",  "user_peak_hour_encoded",    "n_peak_hours",    16),
+    ("user_id",         "user_id_encoded",          "n_users",         32),
+    ("song_id",         "song_id_encoded",           "n_songs",         32),
+    ("genre",           "genre_encoded",             "n_genres",        32),
+    ("language",        "language_encoded",          "n_languages",     32),
+    ("artist",          "artist_encoded",            "n_artists",       32),
+    ("origin_country",  "origin_country_encoded",    "n_countries",     32),
+    ("year_bucket",     "year_bucket_encoded",       "n_year_buckets",  32),
+    ("source_channel",  "source_channel_encoded",    "n_sources",       32),
+    ("city",            "city_encoded",              "n_cities",        32),
+    ("gender",          "gender_encoded",            "n_genders",       32),
+    ("age_bucket",      "age_bucket_encoded",        "n_age_buckets",   32),
+    ("tenure_bucket",   "tenure_bucket_encoded",     "n_tenures",       32),
+    ("duration_bucket", "duration_bucket_encoded",   "n_dur_buckets",   32),
+    ("user_peak_hour",  "user_peak_hour_encoded",    "n_peak_hours",    32),
 ]
 
 # 稠密特征名（与 features_v3.pkl 中的 key 对应）
-# 已移除零重要度特征: user_30d_active_days, dow_match, user_has_in_playlist, user_playlist_artist_count_log
 DENSE_FEAT_SPECS = [
     "user_play_count_log",
     "user_avg_completion",
-    # user_genre_diversity: 删除（LGBM=0, XGB=0）
     "song_play_count_log",
     "song_avg_completion",
-    "song_popularity_norm",
+    "song_unique_users_log",
     "song_age_days_log",
     "user_genre_match",
     "user_artist_match",
     "user_language_match",
     "user_country_match",
-    # user_target_rate / song_target_rate / user_artist_repeat_rate: 已移除（深度模型 TE 泄漏，改为直接用原始值）
     "user_skip_rate",
     "song_skip_rate",
     "hour_match",
-    # "days_since_last_play_log": Fix-3 已移除
     "days_since_artist_log",
-    # B-3/B-4 已删除（LGBM=0, XGB=0）：prev_play_days, play_count_before,
-    #   7d/30d_play_count_log, 7d_avg_completion, song_7d/30d_play_count_log, trending_ratio
-    # SVD（删除两模型均为零维度：user_song 1/7/8, user_artist 1/2）
     *[f"svd_user_song_{i}" for i in [0, 2, 3, 4, 5, 6, 9]],
     *[f"svd_song_user_{i}" for i in range(10)],
     *[f"svd_user_artist_{i}" for i in [0, 3, 4]],
     "svd_dot_score",
-    # 新增：用户历史位置比例（对抗时序概念漂移）
     "user_history_position",
 ]
 
@@ -172,11 +158,25 @@ def load_data():
     with open(INPUT_FEATURES, "rb") as f:
         feat = pickle.load(f)
 
+    # ── pkl 字段完整性验证（user_history_position 由训练脚本动态计算，不在此校验）
+    _req_dense   = [f for f in DENSE_FEAT_SPECS if f != "user_history_position"]
+    _req_enc     = [enc for _, enc, _,   _ in SPARSE_FEAT_SPECS]
+    _req_n       = [nk  for _, _,   nk,  _ in SPARSE_FEAT_SPECS]
+    _req_meta    = ["target", "play_time_unix", "artist_encoded",
+                    "genre_encoded", "language_encoded", "origin_country_encoded"]
+    _all_required = _req_dense + _req_enc + _req_n + _req_meta
+    _missing = [k for k in _all_required if k not in feat]
+    if _missing:
+        print(f"\n❌ pkl 缺少以下字段（共 {len(_missing)} 个），请重新运行 prepare_features_v3.py：")
+        for k in _missing:
+            print(f"   - {k}")
+        sys.exit(1)
+    print(f"   ✅ pkl 字段验证通过（{len(_all_required)} 个必要字段均存在）")
+
     n = len(feat["target"])
     print(f"\n   样本数: {n:,}")
     print(f"   正样本率: {feat['target'].mean():.4f}")
 
-    # 打印基数信息
     for spec in SPARSE_FEAT_SPECS:
         n_key = spec[2]
         if n_key in feat:
@@ -201,24 +201,31 @@ def prepare_deepfm_data(feat):
     feature_columns = []
 
     active_sparse_specs = []
+    skipped_sparse = []
     for feat_name, enc_key, n_key, embed_dim in SPARSE_FEAT_SPECS:
         if enc_key in feat and n_key in feat:
-            vocab_size = int(feat[n_key]) + 1   # +1 预留 OOV
+            vocab_size = int(feat[n_key]) + 1
             feature_columns.append(
                 SparseFeat(feat_name, vocabulary_size=vocab_size,
                            embedding_dim=embed_dim)
             )
             active_sparse_specs.append((feat_name, enc_key, n_key, embed_dim))
         else:
-            print(f"   ⚠️  缺少稀疏特征 [{feat_name}]（{enc_key} 或 {n_key} 不存在），跳过")
+            skipped_sparse.append(feat_name)
 
     active_dense_specs = []
+    skipped_dense = []
     for feat_name in DENSE_FEAT_SPECS:
-        if feat_name in feat:
+        if feat_name in feat or feat_name == "user_history_position":
             feature_columns.append(DenseFeat(feat_name, dimension=1))
             active_dense_specs.append(feat_name)
         else:
-            print(f"   ⚠️  缺少稠密特征 [{feat_name}]，跳过")
+            skipped_dense.append(feat_name)
+
+    if skipped_sparse:
+        print(f"\n   ⚠️  跳过稀疏特征 ({len(skipped_sparse)} 个): {skipped_sparse}")
+    if skipped_dense:
+        print(f"   ⚠️  跳过稠密特征 ({len(skipped_dense)} 个): {skipped_dense}")
 
     print(f"\n   已加载稀疏特征: {len(active_sparse_specs)} 个 SparseFeat")
     print(f"   已加载稠密特征: {len(active_dense_specs)} 个 DenseFeat")
@@ -288,62 +295,91 @@ def prepare_deepfm_data(feat):
     train_target = target[train_idx]
     val_target   = target[val_idx]
 
-    # ── Target Leakage 修复（user_target_rate / song_target_rate / user_artist_repeat_rate
-    #    已从 DENSE_FEAT_SPECS 移除，深度模型直接使用原始特征值，不做 TE 覆盖）
-    print("  🔧 深度模型跳过 TE 覆盖（3个 TE 特征已从特征列移除，消除训练集自我泄漏）")
+    # ── 5折 OOF Target Encoding（训练集无泄漏，训练/验证分布一致）
     _global_prior = float(train_target.mean())
-
-    # ── Phase B-2: Cross TE（仅应用于验证集，训练集保留原始 genre_match 值）
-    # user_genre_match / user_language_match / user_country_match 来自 prepare_features_v3.py
-    # 的原始二值匹配特征，不覆盖训练集（避免泄漏），仅验证集用训练统计回填
-    print("  🎯 Phase B-2: Cross TE（仅验证集回填，训练集保留原始值）...")
-    _uid = feat["user_id_encoded"]
-    _art = feat["artist_encoded"]
-    _sid = feat["song_id_encoded"]
+    _uid  = feat["user_id_encoded"]
+    _gnr  = feat.get("genre_encoded",          np.zeros(n_samples, dtype=np.int32))
+    _lng  = feat.get("language_encoded",       np.zeros(n_samples, dtype=np.int32))
+    _ctr  = feat.get("origin_country_encoded", np.zeros(n_samples, dtype=np.int32))
     _SMOOTH_M = 100
-    _gnr = feat.get("genre_encoded",          np.zeros(len(feat["target"]), dtype=np.int32))
-    _lng = feat.get("language_encoded",       np.zeros(len(feat["target"]), dtype=np.int32))
-    _ctr = feat.get("origin_country_encoded", np.zeros(len(feat["target"]), dtype=np.int32))
-    _b2_meta = pd.DataFrame({
+    _N_OOF    = 5
+
+    print(f"  🎯 5折 OOF Target Encoding（user×genre/language/country_match）...")
+    _fold_edges = np.linspace(0, len(train_idx), _N_OOF + 1, dtype=int)
+    _ug_oof = np.full(n_samples, _global_prior, dtype=np.float32)
+    _ul_oof = np.full(n_samples, _global_prior, dtype=np.float32)
+    _uc_oof = np.full(n_samples, _global_prior, dtype=np.float32)
+
+    for _k in range(_N_OOF):
+        _fold_mask  = np.zeros(len(train_idx), dtype=bool)
+        _fold_mask[_fold_edges[_k]:_fold_edges[_k+1]] = True
+        _other_orig = train_idx[~_fold_mask]
+        _this_orig  = train_idx[_fold_mask]
+
+        _om = pd.DataFrame({
+            "uid": _uid[_other_orig].astype(np.int32),
+            "gnr": _gnr[_other_orig].astype(np.int32),
+            "lng": _lng[_other_orig].astype(np.int32),
+            "ctr": _ctr[_other_orig].astype(np.int32),
+            "y":   target[_other_orig].astype(np.float32),
+        })
+        _ug_o = _om.groupby(["uid","gnr"])["y"].agg(["count","mean"]).reset_index()
+        _ug_o["ug_te"] = (_ug_o["count"]*_ug_o["mean"] + _SMOOTH_M*_global_prior) / (_ug_o["count"] + _SMOOTH_M)
+        _ul_o = _om.groupby(["uid","lng"])["y"].agg(["count","mean"]).reset_index()
+        _ul_o["ul_te"] = (_ul_o["count"]*_ul_o["mean"] + _SMOOTH_M*_global_prior) / (_ul_o["count"] + _SMOOTH_M)
+        _uc_o = _om.groupby(["uid","ctr"])["y"].agg(["count","mean"]).reset_index()
+        _uc_o["uc_te"] = (_uc_o["count"]*_uc_o["mean"] + _SMOOTH_M*_global_prior) / (_uc_o["count"] + _SMOOTH_M)
+
+        _tf = pd.DataFrame({
+            "uid": _uid[_this_orig].astype(np.int32),
+            "gnr": _gnr[_this_orig].astype(np.int32),
+            "lng": _lng[_this_orig].astype(np.int32),
+            "ctr": _ctr[_this_orig].astype(np.int32),
+        })
+        _tf = _tf.merge(_ug_o[["uid","gnr","ug_te"]], on=["uid","gnr"], how="left")
+        _tf = _tf.merge(_ul_o[["uid","lng","ul_te"]], on=["uid","lng"], how="left")
+        _tf = _tf.merge(_uc_o[["uid","ctr","uc_te"]], on=["uid","ctr"], how="left")
+        _ug_oof[_this_orig] = _tf["ug_te"].fillna(_global_prior).values.astype(np.float32)
+        _ul_oof[_this_orig] = _tf["ul_te"].fillna(_global_prior).values.astype(np.float32)
+        _uc_oof[_this_orig] = _tf["uc_te"].fillna(_global_prior).values.astype(np.float32)
+
+    # 训练集：应用 OOF TE（无自我泄漏）
+    if "user_genre_match"    in train_data: train_data["user_genre_match"]    = _ug_oof[train_idx]
+    if "user_language_match" in train_data: train_data["user_language_match"] = _ul_oof[train_idx]
+    if "user_country_match"  in train_data: train_data["user_country_match"]  = _uc_oof[train_idx]
+    print(f"   ✅ 训练集 OOF TE 完成（5折，global_prior={_global_prior:.4f}）")
+
+    # 验证集：用全量训练集统计回填（与 OOF 同分布，无泄漏）
+    _full_meta = pd.DataFrame({
         "uid": _uid[train_idx].astype(np.int32),
         "gnr": _gnr[train_idx].astype(np.int32),
         "lng": _lng[train_idx].astype(np.int32),
         "ctr": _ctr[train_idx].astype(np.int32),
         "y":   train_target.astype(np.float32),
     })
-    _ug_s = _b2_meta.groupby(["uid","gnr"])["y"].agg(["count","mean"]).reset_index()
+    _ug_s = _full_meta.groupby(["uid","gnr"])["y"].agg(["count","mean"]).reset_index()
     _ug_s["ug_te"] = (_ug_s["count"]*_ug_s["mean"] + _SMOOTH_M*_global_prior) / (_ug_s["count"] + _SMOOTH_M)
-    _ul_s = _b2_meta.groupby(["uid","lng"])["y"].agg(["count","mean"]).reset_index()
+    _ul_s = _full_meta.groupby(["uid","lng"])["y"].agg(["count","mean"]).reset_index()
     _ul_s["ul_te"] = (_ul_s["count"]*_ul_s["mean"] + _SMOOTH_M*_global_prior) / (_ul_s["count"] + _SMOOTH_M)
-    _uc_s = _b2_meta.groupby(["uid","ctr"])["y"].agg(["count","mean"]).reset_index()
+    _uc_s = _full_meta.groupby(["uid","ctr"])["y"].agg(["count","mean"]).reset_index()
     _uc_s["uc_te"] = (_uc_s["count"]*_uc_s["mean"] + _SMOOTH_M*_global_prior) / (_uc_s["count"] + _SMOOTH_M)
-
-    def _fix_cross_te_dfm(idx):
-        _t = pd.DataFrame({
-            "uid": _uid[idx].astype(np.int32),
-            "gnr": _gnr[idx].astype(np.int32),
-            "lng": _lng[idx].astype(np.int32),
-            "ctr": _ctr[idx].astype(np.int32),
-        })
-        _t = _t.merge(_ug_s[["uid","gnr","ug_te"]], on=["uid","gnr"], how="left")
-        _t = _t.merge(_ul_s[["uid","lng","ul_te"]], on=["uid","lng"], how="left")
-        _t = _t.merge(_uc_s[["uid","ctr","uc_te"]], on=["uid","ctr"], how="left")
-        return (
-            _t["ug_te"].fillna(_global_prior).values.astype(np.float32),
-            _t["ul_te"].fillna(_global_prior).values.astype(np.float32),
-            _t["uc_te"].fillna(_global_prior).values.astype(np.float32),
-        )
-
-    ug_vl, ul_vl, uc_vl = _fix_cross_te_dfm(val_idx)
-    if "user_genre_match"    in val_data:   val_data["user_genre_match"]      = ug_vl
-    if "user_language_match" in val_data:   val_data["user_language_match"]   = ul_vl
-    if "user_country_match"  in val_data:   val_data["user_country_match"]    = uc_vl
-    print(f"   ✅ Cross TE 完成（验证集 genre/language/country_match 已用 Bayesian 条件概率回填）")
+    _vf = pd.DataFrame({
+        "uid": _uid[val_idx].astype(np.int32),
+        "gnr": _gnr[val_idx].astype(np.int32),
+        "lng": _lng[val_idx].astype(np.int32),
+        "ctr": _ctr[val_idx].astype(np.int32),
+    })
+    _vf = _vf.merge(_ug_s[["uid","gnr","ug_te"]], on=["uid","gnr"], how="left")
+    _vf = _vf.merge(_ul_s[["uid","lng","ul_te"]], on=["uid","lng"], how="left")
+    _vf = _vf.merge(_uc_s[["uid","ctr","uc_te"]], on=["uid","ctr"], how="left")
+    if "user_genre_match"    in val_data: val_data["user_genre_match"]    = _vf["ug_te"].fillna(_global_prior).values.astype(np.float32)
+    if "user_language_match" in val_data: val_data["user_language_match"] = _vf["ul_te"].fillna(_global_prior).values.astype(np.float32)
+    if "user_country_match"  in val_data: val_data["user_country_match"]  = _vf["uc_te"].fillna(_global_prior).values.astype(np.float32)
+    print(f"   ✅ 验证集 TE 完成（全量训练集统计回填）")
 
     print(f"\n   训练集: {len(train_idx):,} 样本")
     print(f"   验证集: {len(val_idx):,} 样本")
     print(f"   训练集正样本率: {train_target.mean():.4f}")
-    print(f"   ✅ 泄漏修复完成，global_prior={_global_prior:.4f}")
 
     return (feature_columns, feature_names,
             train_data, val_data, train_target, val_target)
@@ -356,6 +392,7 @@ def prepare_deepfm_data(feat):
 def train_deepfm(feature_columns, feature_names,
                  train_data, val_data, train_target, val_target, device):
     import torch
+    import torch.nn.functional as F
     import torch.utils.data as Data
     from torch.amp import autocast, GradScaler
     from torch.optim import Adam
@@ -380,7 +417,7 @@ def train_deepfm(feature_columns, feature_names,
         dnn_feature_columns=feature_columns,
         dnn_hidden_units=DNN_HIDDEN_UNITS,
         dnn_dropout=DROPOUT,
-        l2_reg_embedding=1e-4,   # Fix: Embedding L2 正则化，防止长尾 ID Embedding 过拟合
+        l2_reg_embedding=1e-4,
         device=str(device),
     )
 
@@ -396,7 +433,7 @@ def train_deepfm(feature_columns, feature_names,
 
     model = model.to(device)
 
-    optimizer = Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)  # Fix-neural: L2 正则化
+    optimizer = Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
     scheduler = ReduceLROnPlateau(
         optimizer, mode='min', factor=LR_FACTOR,
         patience=LR_PATIENCE, min_lr=LR_MIN, verbose=True

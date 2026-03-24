@@ -1,20 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-train_lgbm.py — LightGBM 精排模型训练
+train_lgbm.py — LightGBM 粗排模型训练
 
 特点：
-  - 输入: features_v3.pkl（25个特征，来自 prepare_features_v3.py）
+  - 输入: features_v3.pkl（来自 prepare_features_v3.py）
   - 目标: 预测"30天内重复收听"概率（二分类）
-  - 模型: LightGBM（num_leaves=127, max_depth=7, n_estimators=2000）
-  - 特征: 所有 13 个稀疏特征（原始值）+ 12 个稠密特征
-  - 输出: lgbm_model.pkl（精排模型）+ lgbm_feature_importance.png
+  - 模型: LightGBM（num_leaves=128, max_depth=6, n_estimators=8000）
+  - 特征: 7 个稀疏特征 + 36 个稠密特征（含 SVD、user_history_position）
+  - 输出: lgbm_model.pkl + lgbm_importance.png
 
 执行：
   python train_lgbm.py
 
-预计时间：约 15-30 分钟（7.37M 样本，CPU 训练）
-预期 AUC：0.87-0.90
-
+预计时间：约 30-60 分钟（7.37M 样本，CPU 训练）
 作者：MusicMode 推荐系统
 """
 
@@ -48,30 +46,30 @@ OUTPUT_PLOT     = os.path.join(LGBM_DIR, "lgbm_importance.png")
 OUTPUT_METRICS  = os.path.join(LGBM_DIR, "lgbm_metrics.csv")       # 论文用：特征重要度 + 评估指标
 
 # 训练配置
-VALID_RATIO  = 0.1    # 验证集比例：10%（20%时序偏移过大，正样本率差12.71%，改回10%）
+VALID_RATIO  = 0.1    # 验证集比例：10%，与 DeepFM/DIN 一致
 RANDOM_SEED  = 42
 N_JOBS       = -1     # 使用全部 CPU 核心
 
 # LightGBM 超参数（KKBOX Kaggle 竞赛最优实践）
 LGBM_PARAMS = {
-    "objective":       "binary",
-    "metric":          "auc",
-    "boosting_type":   "gbdt",
-    "num_leaves":      64,       # Fix-3: 31→64，OOF TE 后泄漏消除，可适当增加容量
-    "max_depth":       6,        # Fix-3: 5→6
-    "min_child_samples": 5000,   # Fix-2: 100→5000，叶节点最少样本
-    "learning_rate":   0.01,     # Fix-2: 0.05→0.01，配合更多轮次
-    "feature_fraction": 0.6,     # Fix-2: 0.8→0.6
-    "bagging_fraction": 0.7,     # Fix-2: 0.8→0.7
-    "bagging_freq":    5,
-    "reg_alpha":       1.0,      # Fix-2: 0.1→1.0
-    "reg_lambda":      5.0,      # Fix-2: 0.1→5.0
-    "n_estimators":    5000,     # Fix-2: 3000→5000，配合小学习率
-    "early_stopping_rounds": 300,# Fix-2: 200→300
-    "verbose":         -1,
-    "n_jobs":          N_JOBS,
-    "random_state":    RANDOM_SEED,
-    "num_threads":     0,
+    "objective":         "binary",   # 目标函数：二分类（输出 sigmoid 概率）
+    "metric":            "auc",      # 评估指标：AUC（排序质量，不受正负样本比例影响）
+    "boosting_type":     "gbdt",     # 提升类型：梯度提升决策树（GBDT）
+    "num_leaves":        128,        # 每棵树最大叶节点数（越大模型越复杂，128≈2^7）
+    "max_depth":         6,          # 树的最大深度（控制树结构复杂度，防止过深过拟合）
+    "min_child_samples": 2000,       # 叶节点所需最少样本数（越大越保守，防止小叶片过拟合）
+    "learning_rate":     0.01,       # 学习率（越小收敛越稳定，须配合大 n_estimators）
+    "feature_fraction":  0.6,        # 列采样比例：每棵树随机使用 60% 特征（防过拟合+加速）
+    "bagging_fraction":  0.7,        # 行采样比例：每轮随机使用 70% 样本（防过拟合）
+    "bagging_freq":      5,          # 每 5 轮执行一次行采样
+    "reg_alpha":         1.0,        # L1 正则化系数（促进稀疏，对无关特征权重归零有效）
+    "reg_lambda":        5.0,        # L2 正则化系数（防止权重过大，减少方差）
+    "n_estimators":      8000,       # 最大迭代轮次（配合 early_stopping，实际轮次由验证集决定）
+    "early_stopping_rounds": 300,    # 早停耐心：验证集 AUC 连续 300 轮无提升则终止训练
+    "verbose":           -1,         # 关闭 LightGBM 内部日志（由训练脚本统一输出）
+    "n_jobs":            N_JOBS,     # 并行线程数（-1 = 自动使用全部 CPU 核心）
+    "random_state":      RANDOM_SEED,# 随机种子（保证实验可复现）
+    "num_threads":       0,          # 0 = 与 n_jobs 一致，自动使用所有线程
 }
 
 
@@ -79,9 +77,7 @@ LGBM_PARAMS = {
 # 特征列定义
 # ============================================================
 
-# 稀疏特征（已删除两模型均为零重要度的6个特征：
-#   age_bucket_encoded, city_encoded, tenure_bucket_encoded,
-#   year_bucket_encoded, duration_bucket_encoded, user_peak_hour_encoded）
+# 稀疏特征
 SPARSE_FEATURES = [
     "user_id_encoded", "song_id_encoded",
     "genre_encoded", "language_encoded",
@@ -89,26 +85,19 @@ SPARSE_FEATURES = [
     "source_channel_encoded",
 ]
 
-# 稠密特征（已删除两模型均为零重要度的特征）
+# 稠密特征
 DENSE_FEATURES = [
     "user_play_count_log", "user_avg_completion",
-    # user_genre_diversity: 删除（LGBM=0, XGB=0）
     "song_play_count_log", "song_avg_completion",
-    "song_popularity_norm", "song_age_days_log",
+    "song_unique_users_log", "song_age_days_log",
     "user_genre_match", "user_artist_match",
     "user_language_match", "user_country_match",
     "user_target_rate", "song_target_rate",
     "user_skip_rate",
     "song_skip_rate",
     "hour_match",
-    # "days_since_last_play_log": Fix-3 已移除（含验证集记录的泄漏特征）
     "days_since_artist_log",
     "user_artist_repeat_rate",
-    # 以下 B-3/B-4 特征已全部删除（LGBM=0, XGB=0）：
-    # user_song_prev_play_days, user_song_play_count_before,
-    # user_7d_play_count_log, user_30d_play_count_log, user_7d_avg_completion,
-    # song_7d_play_count_log, song_30d_play_count_log, song_trending_ratio
-    # SVD 嵌入特征（仅保留两模型有效维度，删除均为零的 1/7/8 和 artist 1/2）
     *[f"svd_user_song_{i}" for i in [0, 2, 3, 4, 5, 6, 9]],
     *[f"svd_song_user_{i}" for i in range(10)],
     *[f"svd_user_artist_{i}" for i in [0, 3, 4]],
@@ -186,15 +175,14 @@ def main():
     train_idx = _df_meta.loc[~_is_val, "orig_idx"].values
     val_idx   = _df_meta.loc[ _is_val, "orig_idx"].values
 
-    # user_history_position: 该条记录在用户全部交互历史中的位置比例（0=最早, 1=最新）
-    # 让模型感知"晚期交互重复率系统性偏低"，直接对抗时序概念漂移
+    # user_history_position：记录在用户历史中的位置比例（0=最早, 1=最新），对抗时序概念漂移
     _df_meta["_seq_ratio"] = (
         _df_meta["_rank"] / (_df_meta["_cnt"] - 1).clip(lower=1)
     ).clip(0, 1).astype(np.float32)
     _seq_ratio_all = np.zeros(len(y), dtype=np.float32)
     _seq_ratio_all[_df_meta["orig_idx"].values] = _df_meta["_seq_ratio"].values
 
-    # ── 3b. Target Leakage 修复：仅用训练集数据重计算 3 个泄漏特征
+    # ── 3b. Target Leakage 修复：仅用训练集统计重计算 3 个 TE 特征，消除自我泄漏
     print("  🔧 修复 Target Leakage（user_artist_repeat_rate / user_target_rate / song_target_rate）...")
     _global_prior = float(y[train_idx].mean())
     _train_meta = pd.DataFrame({
@@ -204,7 +192,7 @@ def main():
         "y":   y[train_idx].astype(np.float32),
     })
     # Bayesian Smoothing: TE_smoothed = (n × mean + m × prior) / (n + m)
-    _SMOOTH_M = 100  # Fix-1: 15→100，强化平滑拉向全局先验，防止 TE 特征在前几轮记忆训练集
+    _SMOOTH_M = 100
     _ua_stats = _train_meta.groupby(["uid", "art"])["y"].agg(["count", "mean"]).reset_index()
     _ua_stats["uar"] = (_ua_stats["count"] * _ua_stats["mean"] + _SMOOTH_M * _global_prior) / (_ua_stats["count"] + _SMOOTH_M)
     _ua_df = _ua_stats[["uid", "art", "uar"]]
@@ -378,7 +366,7 @@ def main():
     print(f"   ✅ 泄漏修复完成，global_prior={_global_prior:.4f}，Bayesian smoothing m={_SMOOTH_M}")
     print(f"   ✅ Cross TE 完成（genre/language/country_match 已替换为 Bayesian 平滑条件概率）")
 
-    # ── Phase B-1: ALS 向量注入（仅训练集重训 ALS，避免验证集软泄漏）
+    # ── Phase B-1: ALS 向量注入（仅训练集重训，避免验证集泄漏）
     _als_features = []
     ALS_MODEL_PATH = os.path.join(MODE_DIR, "als_model.pkl")
     try:
@@ -406,9 +394,6 @@ def main():
         )
         _als_m = _ALS(factors=50, iterations=10, regularization=0.1, use_gpu=False)
         _als_m.fit(_mat.T, show_progress=False)
-        # implicit ALS 语义（fit 了转置矩阵 item×user）：
-        #   user_factors → song embeddings (n_songs × rank)
-        #   item_factors → user embeddings (n_users × rank)
         _user_emb = _als_m.item_factors   # (n_users, 50)
         _song_emb = _als_m.user_factors   # (n_songs, 50)
         _N_DIM = 10
@@ -421,7 +406,6 @@ def main():
             _sc = (_uv * _sv).sum(axis=1, keepdims=True)   # dot-product score
             return np.hstack([_sc, _uv[:, :_N_DIM], _sv[:, :_N_DIM]]).astype(np.float32)  # (N, 21)
 
-        # 仅注入 als_score（dot-product），避免 21 维向量引起快速过拟合
         def _als_score_only(u_enc, s_enc):
             _ue = np.clip(u_enc.astype(np.int32), 0, _user_emb.shape[0]-1)
             _se = np.clip(s_enc.astype(np.int32), 0, _song_emb.shape[0]-1)
@@ -437,9 +421,7 @@ def main():
 
     _eff_features = ALL_FEATURES + _als_features
 
-    # ── Phase SVD Fix: 训练集专用 SVD（防止全量预计算的 SVD 泄漏到验证集）
-    # prepare_features_v3.py 在全量数据上 fit_transform SVD，验证集的用户/歌曲交互
-    # 已编码进 SVD 向量，导致验证 AUC 虚高。此处仅在 train_idx 上重新拟合并替换。
+    # ── Phase SVD: 训练集专用 SVD（消除全量预计算导致的验证集泄漏）
     print("\n🔧 Phase SVD: 重新在训练集拟合 SVD，消除验证集泄漏...")
     from scipy.sparse import coo_matrix as _coo_svd
     from sklearn.decomposition import TruncatedSVD as _TruncSVD
@@ -504,13 +486,8 @@ def main():
                 _leakage_count += 1
     assert _leakage_count == 0, f"❌ 时间泄漏：{_leakage_count} 个用户的 val 记录严格早于 train 最晚记录！"
     print(f"   ✅ 验证1 通过：抽样 {len(_sample_uids)} 用户，无时间泄漏")
-    # 验证2：Cross TE 映射表仅从 train_idx 行构建（行数核对）
     assert len(_ua_df) == _ua_stats.shape[0], "❌ TE 行数异常"
     print(f"   ✅ 验证2 通过：TE 映射表基于 {len(train_idx):,} 条训练样本构建")
-    # 验证3：AUC 合理性（在训练后检查，此处先打印 val 集前5行特征供人工核查）
-    print(f"   📋 验证集前3样本特征（user_artist_repeat_rate, user_target_rate, song_target_rate）:")
-    for _i in range(min(3, len(val_idx))):
-        print(f"      [{_i}] uar={X_val[_i, IDX_UAR]:.4f}  utr={X_val[_i, IDX_UTR]:.4f}  str={X_val[_i, IDX_STR]:.4f}")
     print(f"   ✅ 验证3：训练集正样本率={y_train.mean():.4f}  验证集正样本率={y_val.mean():.4f}")
 
     train_data = lgb.Dataset(X_train, label=y_train, feature_name=_eff_features)
@@ -534,7 +511,7 @@ def main():
         params=base_params,
         train_set=train_data,
         num_boost_round=LGBM_PARAMS["n_estimators"],
-        valid_sets=[val_data],       # 仅 val 集用于早停，避免 train AUC 持续上升干扰早停判断
+        valid_sets=[val_data],
         valid_names=["val"],
         callbacks=callbacks,
     )
@@ -549,7 +526,7 @@ def main():
     print(f"   训练集 AUC: {train_auc:.4f}")
     print(f"   验证集 AUC: {val_auc:.4f}")
     print(f"   最佳迭代轮次: {model.best_iteration}")
-    # 验证6：AUC 合理性断言（异常值触发警告）
+    # AUC 合理性断言
     if not (0.60 < val_auc < 0.99):
         print(f"   ⚠️  警告：val AUC={val_auc:.4f} 超出合理范围 (0.60, 0.99)，请检查泄漏！")
     else:

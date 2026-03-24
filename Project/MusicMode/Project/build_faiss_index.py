@@ -33,8 +33,8 @@ PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 MODE_DIR    = os.path.join(os.path.dirname(PROJECT_DIR), "Mode")
 
 INPUT_FEATURES   = os.path.join(MODE_DIR, "features_v3.pkl")
-INPUT_MODEL      = os.path.join(MODE_DIR, "deepfm_model_v3.pth")
-INPUT_CONFIG     = os.path.join(MODE_DIR, "model_config_v3.pkl")
+INPUT_MODEL      = os.path.join(MODE_DIR, "deepfm", "deepfm_model.pth")
+INPUT_CONFIG     = os.path.join(MODE_DIR, "deepfm", "model_config.pkl")
 
 OUTPUT_FAISS     = os.path.join(MODE_DIR, "song_index.faiss")
 OUTPUT_MAP       = os.path.join(MODE_DIR, "song_id_map.pkl")

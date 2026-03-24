@@ -82,7 +82,7 @@ DENSE_FEATURES = [
     "user_play_count_log", "user_avg_completion",
     # user_genre_diversity: 删除（零重要度）
     "song_play_count_log", "song_avg_completion",
-    "song_popularity_norm", "song_age_days_log",
+    "song_unique_users_log", "song_age_days_log",
     "user_genre_match", "user_artist_match",
     "user_language_match", "user_country_match",
     "user_target_rate", "song_target_rate",

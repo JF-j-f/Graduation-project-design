@@ -1,12 +1,8 @@
 ﻿model,type,val_auc
-LightGBM,single,0.7063349578549977
-XGBoost,single,0.702202212948532
-CatBoost,single,0.6498973718374524
+LightGBM,single,0.7062373862341284
 DeepFM,single,0.7547537691649214
 DIN,single,0.7601890201957069
-Weighted Avg,ensemble,0.7601342890063099
+Weighted Avg,ensemble,0.7602920321505359
 Top-2 Avg,ensemble,0.758869430773975
-Top-3 Avg,ensemble,0.7583786764151288
-Top-4 Avg,ensemble,0.7530747855128116
-Top-5 Avg,ensemble,0.7407374083393983
-Stacking (LR),ensemble,0.7606872356213702
+Top-3 Avg,ensemble,0.758369031438288
+Stacking (LR),ensemble,0.760219917682948
