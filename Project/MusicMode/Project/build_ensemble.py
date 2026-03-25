@@ -3,14 +3,24 @@
 build_ensemble.py — 3 模型横向对比 + 多策略集成
 
 功能：
-  1. 加载 3 个模型（LightGBM, DeepFM, DIN）在验证集上推断
+  1. 加载 3 个模型（LightGBM, DeepFM, DIEN）在验证集上推断
   2. 搜索最优加权系数（scipy.optimize.minimize，Kaggle Best Practice）
-  3. Top-K 等权平均（K=2,3,4,5）
+  3. Top-K 等权平均（K=2,3）
   4. Stacking 二阶段（Logistic Regression, Wolpert 1992）
   5. 输出横向对比报告 + ensemble_config.pkl
 
+模型说明：
+  LightGBM  — 梯度提升树，Val AUC ≈ 0.793
+  DeepFM    — 因子分解机 + DNN，Val AUC ≈ 0.761
+  DIEN      — 深度兴趣演化网络（Zhou et al. AAAI 2019），目标 Val AUC ≥ 0.770
+
 执行：
   python build_ensemble.py
+
+前置条件：
+  - LightGBM:  python train_lgbm.py
+  - DeepFM:    python train_deepfm_v3.py
+  - DIEN:      python prepare_features_v3.py && python train_dien.py
 
 作者：MusicMode 推荐系统
 """
@@ -36,6 +46,7 @@ PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 MODE_DIR    = os.path.join(os.path.dirname(PROJECT_DIR), "Mode")
 
 INPUT_FEATURES = os.path.join(MODE_DIR, "features_v3.pkl")
+INPUT_SEQ      = os.path.join(MODE_DIR, "features_seq.pkl")   # DIEN 序列文件
 ENSEMBLE_DIR   = os.path.join(MODE_DIR, "ensemble")
 os.makedirs(ENSEMBLE_DIR, exist_ok=True)
 OUTPUT_ENSEMBLE = os.path.join(ENSEMBLE_DIR, "ensemble_config.pkl")
@@ -46,7 +57,7 @@ VALID_RATIO  = 0.1   # 与训练脚本保持一致
 RANDOM_SEED  = 42
 BATCH_SIZE   = 8192
 
-# 模型路径配置
+# 模型路径配置（三模型：LightGBM + DeepFM + DIEN）
 MODEL_CONFIGS = {
     "LightGBM": {
         "type": "lgbm",
@@ -57,10 +68,10 @@ MODEL_CONFIGS = {
         "model_path": os.path.join(MODE_DIR, "deepfm", "deepfm_model.pth"),
         "config_path": os.path.join(MODE_DIR, "deepfm", "model_config.pkl"),
     },
-    "DIN": {
-        "type": "din",
-        "model_path": os.path.join(MODE_DIR, "din", "din_model.pth"),
-        "config_path": os.path.join(MODE_DIR, "din", "model_config.pkl"),
+    "DIEN": {
+        "type": "dien",
+        "model_path":  os.path.join(MODE_DIR, "dien", "dien_model.pth"),
+        "config_path": os.path.join(MODE_DIR, "dien", "model_config.pkl"),
     },
 }
 
@@ -337,7 +348,7 @@ def predict_tree_model(name, cfg, X_val):
 
 
 def predict_torch_model(name, cfg, feat, val_idx):
-    """DeepFM / DIN 推断"""
+    """DeepFM 推断（使用 deepctr-torch DeepFM 类加载权重）"""
     if not os.path.exists(cfg["model_path"]) or not os.path.exists(cfg.get("config_path", "")):
         print(f"   ⚠️  {name} 模型不存在，跳过")
         return None
@@ -397,10 +408,219 @@ def predict_torch_model(name, cfg, feat, val_idx):
     return preds
 
 
-def collect_predictions(X_val, y_val, feat, val_idx):
-    """收集所有可用模型的预测"""
+def predict_dien_model(name, cfg, feat, val_idx, train_idx):
+    """
+    DIEN 模型验证集推断。
+
+    与 DeepFM 推断不同，DIEN 需要额外加载序列数据（features_seq.pkl），
+    并对输入数据进行与 train_dien.py 完全一致的预处理：
+      - 低频 ID 过滤（min_count=3，仅统计训练集）
+      - song_id +1 偏移（与序列 Embedding 表对齐）
+      - OOF Target Encoding（全量训练集统计回填验证集）
+      - user_history_position 计算
+
+    Args:
+        name     (str):  模型名称
+        cfg      (dict): MODEL_CONFIGS 中的配置项
+        feat     (dict): features_v3.pkl 内容
+        val_idx  (np.ndarray): 验证集行索引
+        train_idx (np.ndarray): 训练集行索引
+
+    Returns:
+        preds (np.ndarray | None): 验证集预测概率，失败返回 None
+    """
+    # ── 前置检查
+    if not os.path.exists(cfg["model_path"]):
+        print(f"   ⚠️  {name} 模型权重不存在: {cfg['model_path']}")
+        print(f"        请先运行: python train_dien.py")
+        return None
+    if not os.path.exists(cfg.get("config_path", "")):
+        print(f"   ⚠️  {name} 配置文件不存在: {cfg.get('config_path')}")
+        return None
+    if not os.path.exists(INPUT_SEQ):
+        print(f"   ⚠️  序列文件不存在: {INPUT_SEQ}")
+        print(f"        请先运行: python prepare_features_v3.py")
+        return None
+
+    try:
+        # ── 延迟导入（避免 torch 未安装时整个脚本失败）
+        import torch
+        import torch.utils.data as Data
+        # 直接从 train_dien 导入 DIENModel 及相关配置
+        sys.path.insert(0, PROJECT_DIR)
+        from train_dien import (
+            DIENModel, DIENDataset,
+            OTHER_SPARSE_SPECS, DENSE_FEAT_SPECS,
+            SEQ_LEN, EMBEDDING_DIM, GRU_HIDDEN,
+        )
+
+        # ── 加载模型配置
+        with open(cfg["config_path"], "rb") as f:
+            model_cfg = pickle.load(f)
+
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        # ── 重建 DIENModel 并加载权重
+        model = DIENModel(model_cfg).to(device)
+        state_dict = torch.load(cfg["model_path"], map_location=device, weights_only=True)
+        model.load_state_dict(state_dict)
+        model.eval()
+
+        # ── 加载序列文件
+        with open(INPUT_SEQ, "rb") as f:
+            seq = pickle.load(f)
+
+        n_samples    = len(feat["target"])
+        target       = feat["target"].astype(np.float32)
+
+        # ── 低频 ID 过滤（min_count=3，与 train_dien.py 完全一致）
+        _MIN_COUNT  = 3
+        user_id_enc = feat["user_id_encoded"].copy().astype(np.int32)
+        song_id_enc = feat["song_id_encoded"].copy().astype(np.int32)
+        _u_counts = np.bincount(user_id_enc[train_idx],
+                                minlength=int(user_id_enc.max()) + 1)
+        _s_counts = np.bincount(song_id_enc[train_idx],
+                                minlength=int(song_id_enc.max()) + 1)
+        user_id_enc[np.isin(user_id_enc, np.where(_u_counts < _MIN_COUNT)[0])] = 0
+        song_id_enc[np.isin(song_id_enc, np.where(_s_counts < _MIN_COUNT)[0])] = 0
+
+        # 候选歌曲 ID：song_id_enc + 1（与序列 Embedding 表对齐）
+        cand_song_ids = (song_id_enc + 1).astype(np.int32)
+
+        # ── 构建稠密特征矩阵
+        dense_list   = []
+        active_dense = []
+        for feat_name in DENSE_FEAT_SPECS:
+            if feat_name in feat or feat_name == "user_history_position":
+                arr = feat.get(feat_name, np.zeros(n_samples, dtype=np.float32)).astype(np.float32)
+                arr = np.nan_to_num(arr, nan=0.0, posinf=10.0, neginf=0.0)
+                dense_list.append(arr.reshape(-1, 1))
+                active_dense.append(feat_name)
+        dense_mat = np.concatenate(dense_list, axis=1).astype(np.float32)
+
+        # ── user_history_position（用原有 _df_meta 等价重算）
+        play_time_unix = feat.get("play_time_unix", np.zeros(n_samples, dtype=np.int64))
+        _df = pd.DataFrame({
+            "orig_idx": np.arange(n_samples),
+            "uid":      feat["user_id_encoded"].astype(np.int32),
+            "time":     play_time_unix,
+        }).sort_values(["uid", "time"])
+        _df["_cnt"]  = _df.groupby("uid")["uid"].transform("count")
+        _df["_rank"] = _df.groupby("uid").cumcount()
+        _df["_sr"]   = (_df["_rank"] / (_df["_cnt"] - 1).clip(lower=1)).clip(0, 1).astype(np.float32)
+        _sr_all = np.zeros(n_samples, dtype=np.float32)
+        _sr_all[_df["orig_idx"].values] = _df["_sr"].values
+        _hp_idx = next((i for i, fn in enumerate(active_dense)
+                        if fn == "user_history_position"), None)
+        if _hp_idx is not None:
+            dense_mat[:, _hp_idx] = _sr_all
+
+        # ── OOF TE（全量训练集统计回填验证集，无泄漏）
+        train_target  = target[train_idx]
+        _gp           = float(train_target.mean())
+        _uid  = feat["user_id_encoded"]
+        _gnr  = feat.get("genre_encoded",          np.zeros(n_samples, dtype=np.int32))
+        _lng  = feat.get("language_encoded",       np.zeros(n_samples, dtype=np.int32))
+        _ctr  = feat.get("origin_country_encoded", np.zeros(n_samples, dtype=np.int32))
+        _SM   = 100
+        _fm = pd.DataFrame({
+            "uid": _uid[train_idx].astype(np.int32),
+            "gnr": _gnr[train_idx].astype(np.int32),
+            "lng": _lng[train_idx].astype(np.int32),
+            "ctr": _ctr[train_idx].astype(np.int32),
+            "y":   train_target,
+        })
+        def _smooth_te(df, keys):
+            g = df.groupby(keys)["y"].agg(["count", "mean"]).reset_index()
+            g["te"] = (g["count"] * g["mean"] + _SM * _gp) / (g["count"] + _SM)
+            return g
+
+        _ug_s = _smooth_te(_fm, ["uid", "gnr"])
+        _ul_s = _smooth_te(_fm, ["uid", "lng"])
+        _uc_s = _smooth_te(_fm, ["uid", "ctr"])
+        _vf = pd.DataFrame({
+            "uid": _uid[val_idx].astype(np.int32),
+            "gnr": _gnr[val_idx].astype(np.int32),
+            "lng": _lng[val_idx].astype(np.int32),
+            "ctr": _ctr[val_idx].astype(np.int32),
+        })
+        _vf = _vf.merge(_ug_s[["uid", "gnr", "te"]].rename(columns={"te": "ug"}),
+                        on=["uid", "gnr"], how="left")
+        _vf = _vf.merge(_ul_s[["uid", "lng", "te"]].rename(columns={"te": "ul"}),
+                        on=["uid", "lng"], how="left")
+        _vf = _vf.merge(_uc_s[["uid", "ctr", "te"]].rename(columns={"te": "uc"}),
+                        on=["uid", "ctr"], how="left")
+        for _te_col, _col_name in [("ug", "user_genre_match"),
+                                   ("ul", "user_language_match"),
+                                   ("uc", "user_country_match")]:
+            _ci = next((i for i, fn in enumerate(active_dense) if fn == _col_name), None)
+            if _ci is not None:
+                dense_mat[val_idx, _ci] = _vf[_te_col].fillna(_gp).values.astype(np.float32)
+
+        # ── 构建 OTHER_SPARSE 特征矩阵（13 维）
+        sparse_list   = []
+        for feat_name, enc_key, n_key, _ in OTHER_SPARSE_SPECS:
+            if enc_key in feat and n_key in feat:
+                arr = feat[enc_key].astype(np.int32).copy()
+                if feat_name == "user_id":
+                    arr = user_id_enc
+                sparse_list.append(arr.reshape(-1, 1))
+        other_sparse_mat = np.concatenate(sparse_list, axis=1).astype(np.int32) \
+            if sparse_list else np.zeros((n_samples, 1), dtype=np.int32)
+
+        # ── 构建验证集 DIENDataset
+        seq_song_ids = seq["seq_song_ids"].astype(np.int32)
+        seq_lengths  = np.minimum(seq["seq_lengths"], SEQ_LEN).astype(np.int32)
+        val_ds = DIENDataset(
+            other_sparse  = other_sparse_mat[val_idx],
+            cand_song_ids = cand_song_ids[val_idx],
+            dense_vals    = dense_mat[val_idx],
+            hist_seq      = seq_song_ids[val_idx],
+            seq_lengths   = seq_lengths[val_idx],
+            targets       = target[val_idx],
+        )
+        val_loader = Data.DataLoader(
+            val_ds, batch_size=BATCH_SIZE * 2, shuffle=False,
+            num_workers=0, pin_memory=False,
+        )
+
+        # ── 批量推断
+        preds_list = []
+        with torch.no_grad():
+            for sp, cs, dv, hs, sl, _ in val_loader:
+                sp = sp.to(device); cs = cs.to(device)
+                dv = dv.to(device); hs = hs.to(device); sl = sl.to(device)
+                if device.type == 'cuda':
+                    from torch.amp import autocast
+                    with autocast(device_type='cuda'):
+                        vp, _ = model(sp, cs, dv, hs, sl, is_training=False)
+                else:
+                    vp, _ = model(sp, cs, dv, hs, sl, is_training=False)
+                preds_list.append(vp.cpu().float().numpy())
+
+        preds    = np.concatenate(preds_list)
+        best_auc = model_cfg.get("best_val_auc", 0.0)
+        print(f"   {name}: best_val_AUC(训练时)={best_auc:.4f}")
+
+        # 保存 val 预测（供后续调试）
+        np.save(os.path.join(DIEN_DIR_PREDS, "dien_val_preds.npy"), preds)
+        return preds
+
+    except Exception as e:
+        import traceback
+        print(f"   ❌ {name} 推断失败: {e}")
+        traceback.print_exc()
+        return None
+
+
+# DIEN val preds 保存目录（与模型同目录）
+DIEN_DIR_PREDS = os.path.join(MODE_DIR, "dien")
+
+
+def collect_predictions(X_val, y_val, feat, val_idx, train_idx):
+    """收集所有可用模型的预测概率"""
     print("\n" + "=" * 62)
-    print("[Step 2] 各模型验证集推断")
+    print("[Step 2] 各模型验证集推断（LightGBM / DeepFM / DIEN）")
     print("=" * 62)
 
     model_preds = {}
@@ -409,6 +629,8 @@ def collect_predictions(X_val, y_val, feat, val_idx):
     for name, cfg in MODEL_CONFIGS.items():
         if cfg["type"] == "lgbm":
             preds = predict_tree_model(name, cfg, X_val)
+        elif cfg["type"] == "dien":
+            preds = predict_dien_model(name, cfg, feat, val_idx, train_idx)
         else:
             preds = predict_torch_model(name, cfg, feat, val_idx)
 
@@ -416,6 +638,7 @@ def collect_predictions(X_val, y_val, feat, val_idx):
             auc = roc_auc_score(y_val, preds)
             model_preds[name] = preds
             model_aucs[name]  = auc
+            print(f"   [{name}] 验证集 AUC = {auc:.4f}")
 
     return model_preds, model_aucs
 
@@ -530,7 +753,7 @@ def generate_report(model_aucs, ensemble_results, best_weights, weight_names):
     lines.append(f"{'模型':<16} {'Train AUC':>10} {'Val AUC':>10} {'耗时(min)':>10}")
     lines.append("-" * 50)
 
-    for name in ["LightGBM", "DeepFM", "DIN"]:
+    for name in ["LightGBM", "DeepFM", "DIEN"]:
         if name in model_info:
             info = model_info[name]
             lines.append(f"{name:<16} {info['train_auc']:>10.4f} {info['val_auc']:>10.4f} {info['duration_min']:>10.1f}")
@@ -589,7 +812,7 @@ def save_config(model_aucs, ensemble_results, best_weights, weight_names, best_o
         "best_weights":     dict(zip(weight_names, best_weights.tolist())),
         "best_overall_auc": best_overall,
         "calibrated_at":    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "version":          "v4_multi_model",
+        "version":          "v5_dien_ensemble",
     }
     with open(OUTPUT_ENSEMBLE, "wb") as f:
         pickle.dump(config, f, protocol=4)
@@ -602,15 +825,16 @@ def save_config(model_aucs, ensemble_results, best_weights, weight_names, best_o
 
 def main():
     print("\n" + "=" * 62)
-    print("   3 模型横向对比 + 多策略集成（LightGBM + DeepFM + DIN）")
+    print("   3 模型横向对比 + 多策略集成（LightGBM + DeepFM + DIEN）")
     print(f"   开始时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("   目标: 集成 AUC ≥ 0.800")
     print("=" * 62)
 
-    # 1. 加载数据
+    # 1. 加载数据（时序切分 + 泄漏修复）
     X_val, y_val, feat, val_idx, train_idx = load_val_data()
 
     # 2. 各模型推断
-    model_preds, model_aucs = collect_predictions(X_val, y_val, feat, val_idx)
+    model_preds, model_aucs = collect_predictions(X_val, y_val, feat, val_idx, train_idx)
 
     if len(model_preds) == 0:
         print("\n❌ 无可用模型！请先训练至少一个模型。")
@@ -632,9 +856,13 @@ def main():
     # 5. 保存
     save_config(model_aucs, ensemble_results, best_weights, weight_names, best_overall)
 
-    print(f"\n" + "=" * 62)
+    print(f"\n{'=' * 62}")
     print(f"✅ 集成对比完成！最终最佳 AUC: {best_overall:.4f}")
-    print("=" * 62)
+    if best_overall >= 0.80:
+        print(f"   🎉 AUC 已达到 0.80 目标！")
+    else:
+        print(f"   ⚠️  距目标 0.80 还差 {0.80 - best_overall:.4f}")
+    print(f"{'=' * 62}")
 
 
 if __name__ == "__main__":

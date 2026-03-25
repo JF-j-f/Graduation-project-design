@@ -179,11 +179,11 @@ MusicWeb/
 
 #### 1. 用户表 (`users`)
 
-存储用户账号基本信息及状态。
+存储用户账号基本信息及状态，含推荐模型所需的用户画像字段。
 
 - `id` (INT): 主键，自增
 - `username` (VARCHAR): 用户名，唯一
-- `password` (VARCHAR): 密码（推荐加密存储）
+- `password` (VARCHAR): 密码
 - `email` (VARCHAR): 邮箱
 - `nickname` (VARCHAR): 昵称
 - `phone` (VARCHAR): 手机号
@@ -192,181 +192,206 @@ MusicWeb/
 - `frozen_reason` (VARCHAR): 冻结原因
 - `deleted_at` (TIMESTAMP): 逻辑删除时间
 - `create_time` (TIMESTAMP): 注册时间
-- `preferred_genres` (VARCHAR): 偏好流派标签
-- `preferred_artists` (VARCHAR): 偏好歌手标签
+- `preferred_genres` (VARCHAR): 偏好流派标签（分号分隔）
+- `preferred_artists` (VARCHAR): 偏好歌手标签（分号分隔）
+- `city` (VARCHAR): 所在城市（推荐特征）
+- `gender` (VARCHAR): 性别（推荐特征）
+- `bd` (TINYINT): 年龄（推荐特征）
 
 #### 2. 歌曲表 (`songs`)
 
-本地音乐库基础信息。
+本地音乐库核心信息，含 KKBOX 元数据及多轮数据清洗后的语种/国家字段。
 
 - `id` (INT): 主键，自增
 - `title` (VARCHAR): 歌名
 - `artist` (VARCHAR): 歌手
 - `album` (VARCHAR): 专辑
-- `duration` (INT): 时长(秒)
+- `duration` (INT): 时长（秒）
 - `genre` (VARCHAR): 流派
 - `release_year` (INT): 发行年份
 - `file_path` (VARCHAR): 音频文件路径
 - `cover_image` (VARCHAR): 封面图片路径
-- `kkbox_id` (VARCHAR): KKBOX 原曲ID
-- `genre_ids` (VARCHAR): 曲风ID列表
-- `language` (VARCHAR): 语言代码
-- `popularity` (INT): 歌曲热度
-- `origin_country` (VARCHAR): 歌曲原产地（由 `enrich_db.py` 从外部元数据补全）
+- `kkbox_id` (VARCHAR): KKBOX 原曲 ID（与推荐模型对齐）
+- `genre_ids` (VARCHAR): KKBOX 曲风 ID 列表
+- `language` (VARCHAR): 语言标签（经 ISRC 交叉验证修正，未知比例 3.09%）
+- `popularity` (INT): 歌曲热度（KKBOX 已归一化至 0~100，网易云 0~100）
+- `origin_country` (CHAR(2)): 原产国家码（ISRC 推断，用于推荐特征）
 
 #### 3. 播放历史表 (`play_history`)
 
-记录用户播放行为，用于统计和推荐。
+记录用户全量播放行为，是推荐模型的核心训练数据来源。
 
-- `id` (INT): 主键
-- `user_id` (INT): 用户ID
-- `song_id` (INT): 歌曲ID
+- `id` (INT): 主键，自增
+- `user_id` (INT): 用户 ID
+- `song_id` (INT): 歌曲 ID
 - `play_time` (TIMESTAMP): 播放时间
-- `play_duration` (INT): 播放时长(秒)
+- `play_duration` (INT): 播放时长（秒）
+- `source_type` (VARCHAR): 来源类型（如 `kkbox`/`netease`/`local`）
+- `target` (TINYINT): 推荐模型标签（1=完整收听，0=跳过）
+- `source_channel` (VARCHAR): 播放触发渠道（如 `PERSONAL_PLAYLIST`/`RADIO`）
 
 #### 4. 申诉表 (`appeals`)
 
-账号申诉记录。
+账号申诉记录，支持管理员审批及邮件回复。
 
-- `id` (INT): 主键
+- `id` (INT): 主键，自增
 - `username` (VARCHAR): 申诉账号
-- `user_id` (INT): 关联用户ID
-- `appeal_type` (ENUM): 类型 (`frozen`/`deleted`)
+- `user_id` (INT): 关联用户 ID
+- `appeal_type` (ENUM): 申诉类型（`frozen`/`deleted`）
 - `reason` (TEXT): 申诉理由
 - `contact_email` (VARCHAR): 联系邮箱
-- `status` (ENUM): 状态 (`pending`/`approved`/`rejected`)
-- `admin_reply` (TEXT): 管理员回复
+- `status` (ENUM): 审批状态（`pending`/`approved`/`rejected`）
+- `admin_reply` (TEXT): 管理员回复内容
 - `create_time` (TIMESTAMP): 申诉创建时间
-- `update_time` (TIMESTAMP): 最后更新时间
+- `update_time` (TIMESTAMP): 最后更新时间（自动更新）
 
 #### 5. 自建歌单表 (`user_playlists`)
 
-用户创建的歌单。默认歌单(`is_default=TRUE`)即为用户的收藏夹，用以取代已废弃的旧版收藏表。
+用户创建的个人歌单。`is_default=1` 的歌单为系统自动生成的"我喜欢的音乐"默认收藏夹，承接旧版收藏表的功能。
 
-- `id` (INT): 主键
-- `user_id` (INT): 创建者ID
-- `name` (VARCHAR): 歌单名
-- `description` (TEXT): 描述
-- `cover_image` (VARCHAR): 封面
-- `is_default` (BOOLEAN): 是否默认收藏夹 (0/1)
+- `id` (INT): 主键，自增
+- `user_id` (INT): 创建者 ID
+- `name` (VARCHAR): 歌单名称
+- `description` (TEXT): 歌单描述
+- `cover_image` (VARCHAR): 歌单封面路径
+- `is_default` (TINYINT): 是否为默认收藏歌单（0/1）
 - `create_time` (TIMESTAMP): 创建时间
-- `update_time` (TIMESTAMP): 最后更新时间
+- `update_time` (TIMESTAMP): 最后更新时间（自动更新）
 
 #### 6. 歌单歌曲关联表 (`playlist_songs`)
 
-自建歌单与歌曲的多对多关系。
-
-- `id` (INT): 主键
-- `playlist_id` (INT): 歌单ID
-- `song_id` (INT): 歌曲ID
-- `add_time` (TIMESTAMP): 添加时间
-
-#### 7. 推荐反馈表 (`recommendation_feedback`)
-
-记录用户对推荐歌曲的互动行为，用于强化学习修正推荐模型。
-
-- `id` (INT): 主键
-- `user_id` (INT): 目标用户ID
-- `song_id` (INT): 歌曲ID
-- `recommend_date` (DATE): 推荐日期
-- `was_played` (TINYINT): 是否已播放 (0/1)
-- `play_completion` (FLOAT): 播放完成度进度
-- `was_favorited` (TINYINT): 是否收藏 (0/1)
-- `consecutive_ignore_days` (INT): 连续忽略天数
-- `feedback_score` (FLOAT): 综合反馈得分
-- `cooldown_until` (DATE): 推荐冷却期截止
-- `created_at` (TIMESTAMP): 创建时间
-- `updated_at` (TIMESTAMP): 更新时间
-
-#### 8. 用户口味反馈表 (`user_preference_feedback`)
-
-归档用户每日对推荐结果的显式满意度，作为次日推荐调分的训练信号。同一用户同一天多次提交则覆盖，不同天新增一行。
+用户歌单与歌曲的多对多关系表，唯一约束防止重复添加。
 
 - `id` (INT): 主键，自增
-- `user_id` (INT): 用户ID
-- `feedback_date` (DATE): 反馈日期，与 user_id 构成唯一约束
+- `playlist_id` (INT): 关联歌单 ID
+- `song_id` (INT): 关联歌曲 ID
+- `add_time` (TIMESTAMP): 添加时间
+
+#### 7. 用户内容屏蔽表 (`user_content_blocks`)
+
+记录用户主动屏蔽的流派或艺术家，推荐时过滤对应内容，支持有效期与屏蔽次数管理。
+
+- `id` (INT): 主键，自增
+- `user_id` (INT): 用户 ID
+- `block_type` (ENUM): 屏蔽类型（`genre`/`artist`）
+- `block_value` (VARCHAR): 屏蔽的具体值（如"电子"/"周杰伦"）
+- `block_count` (INT): 屏蔽触发次数（默认 1）
+- `blocked_at` (TIMESTAMP): 屏蔽创建时间
+- `blocked_until` (DATE): 屏蔽有效期截止日期
+- `is_active` (TINYINT): 屏蔽是否当前生效（0/1）
+
+#### 8. 推荐反馈表 (`recommendation_feedback`)
+
+记录用户对每条推荐记录的交互行为，驱动推荐冷却与反馈评分机制。
+
+- `id` (INT): 主键，自增
+- `user_id` (INT): 目标用户 ID
+- `song_id` (INT): 推荐歌曲 ID
+- `recommend_date` (DATE): 推荐日期
+- `was_played` (TINYINT): 是否已播放（0/1）
+- `play_completion` (FLOAT): 播放完成比例
+- `was_favorited` (TINYINT): 是否收藏（0/1）
+- `consecutive_ignore_days` (INT): 连续被忽略天数
+- `feedback_score` (FLOAT): 综合反馈得分
+- `cooldown_until` (DATE): 推荐冷却期截止日期
+- `created_at` (TIMESTAMP): 记录创建时间
+- `updated_at` (TIMESTAMP): 最后更新时间（自动更新）
+
+#### 9. 用户口味反馈表 (`user_preference_feedback`)
+
+归档用户每日对推荐结果的显式满意度评价，作为推荐算法调权的训练信号。同一用户同一天多次提交则覆盖。
+
+- `id` (INT): 主键，自增
+- `user_id` (INT): 用户 ID
+- `feedback_date` (DATE): 反馈日期（与 user_id 构成唯一约束）
 - `satisfaction` (ENUM): 满意度（`very_satisfied`/`satisfied`/`neutral`/`dissatisfied`）
 - `genres_added` (VARCHAR): 本次新增流派偏好（分号分隔）
 - `artists_added` (VARCHAR): 本次新增艺术家偏好（分号分隔）
 - `created_at` (TIMESTAMP): 记录时间
 
-#### 9. 推荐表 (`recommendations`)
+#### 10. 推荐结果表 (`recommendations`)
 
-基于算法生成的个性化推荐。
+存储算法生成的个性化推荐列表，供前端实时读取展示。
 
-- `id` (INT): 主键
-- `user_id` (INT): 目标用户
-- `song_id` (INT): 推荐歌曲
+- `id` (INT): 主键，自增
+- `user_id` (INT): 目标用户 ID
+- `song_id` (INT): 推荐歌曲 ID
 - `score` (DOUBLE): 推荐得分
-- `create_time` (DATETIME): 生成时间
-- `source_type` (VARCHAR): 推荐来源 (默认 `deepfm`)
+- `create_time` (DATETIME): 推荐生成时间
+- `source_type` (VARCHAR): 推荐来源标识（默认 `deepfm`）
+
 
 ## 核心功能
 
 ### 1. 用户管理
 
-- **用户注册**: 用户可创建账号，包含用户名、密码、邮箱等信息
-- **用户登录**: 验证用户身份，支持会话管理
-- **用户登出**: 清除会话，安全退出
-- **用户信息管理**: 查看和编辑个人信息
+- **用户注册**: 注册账号，填写用户名、密码、邮箱等基础信息
+- **用户登录**: 账号密码验证，支持管理员自动识别跳转后台
+- **个人信息管理**: 修改昵称、邮箱、手机号、性别、城市（`settings.jsp`）
+- **密码修改**: 当前密码验证 + 新密码强度实时指示器
+- **账户注销**: 需勾选确认并输入密码，操作不可逆
 
-### 2. 音乐管理
+### 2. 音乐播放与搜索
 
-- **歌曲浏览**: 查看所有歌曲列表
-- **歌曲搜索**: Google 风格搜索框，支持按标题、艺术家、专辑、风格搜索
-- **搜索历史**: 自动保存最近 5 条搜索记录，支持快速重复搜索
-- **排行榜**: 热歌榜、新歌榜、收藏榜
-- **在线播放**: HTML5 音频播放器，支持流媒体播放和进度控制
+- **多源搜索**: 支持网易云音乐、QQ 音乐、全部三种来源切换（`SearchServlet` 调用 Node.js API）
+- **VIP 检测**: 搜索结果自动标注 VIP 歌曲（网易云 fee=1/4，QQ pay.pay_play=1）
+- **搜索历史**: 自动保存最近 5 条搜索词，支持一键清空
+- **在线播放器**: 底部固定悬浮播放器，支持上/下一曲、进度拖拽、音量控制、播放模式切换（循环/随机）
+- **播放队列**: 队列侧边栏展示当前播放列表，支持清空队列
+- **排行榜**: 热歌榜（全局播放量）、新歌榜（发行时间）、收藏榜（被收藏次数），各展示 10 首
+- **外部歌曲自动入库**: 播放网易云/QQ 歌曲时自动写入 `songs` 表并下载封面（`UniversalPlayHistoryServlet`）
+- **元数据自动补全**: 缺失 `release_year`/`genre`/`language` 时，自动从 Node.js 或 Python 多源服务拉取补全
 
-### 3. 收藏功能
+### 3. 收藏与歌单管理
 
-- **添加收藏**: 将喜欢的歌曲添加到收藏列表
-- **取消收藏**: 从收藏列表中移除歌曲
-- **收藏列表**: 查看所有收藏的歌曲
-- **收藏状态**: 实时显示歌曲的收藏状态
+- **收藏歌曲**: 点击 ❤️ 收藏至默认"我喜欢的音乐"歌单，再次点击取消（基于 Redis 缓存加速状态判断）
+- **创建歌单**: 用户可创建任意数量的自定义歌单（名称必填，描述可选）
+- **歌单列表**: 网格卡片式展示所有歌单（封面 + 名称）
+- **歌单详情**: 查看歌单内全部歌曲，支持播放全部、单曲播放、收藏、从歌单移除
+- **歌单排序**: 支持按添加时间、歌手、专辑、年份、播放次数共 5 种排序方式及升/降序切换
+- **歌单编辑/删除**: 修改自定义歌单名称和描述，或删除整个歌单（默认歌单不可删除）
+- **分页加载**: 歌单内歌曲每页 25 首，支持分页翻页
 
-### 4. 管理员后台系统
+### 4. 播放历史
 
-- **智能登录识别**: 自动区分管理员和普通用户登录
-- **数据统计仪表板**: 实时显示用户数、歌曲数、收藏数等统计信息
-- **用户管理**: 查看所有用户信息，支持搜索和排序
-- **用户详情管理**: 查看用户详细信息，支持账号冻结和解冻操作
-- **音乐管理**: 查看所有歌曲信息，支持播放预览
-- **收藏管理**: 管理所有用户收藏记录，支持批量操作
-- **安全防护**: 严格的权限控制和SQL注入防护
+- **历史记录**: 自动记录每次播放（含外部歌曲），写入 `play_history` 表
+- **时间范围过滤**: 支持查看最近一周、一个月、三个月的播放记录
+- **分页浏览**: 每页 25 条，显示歌曲封面、名称、艺术家和精确播放时间
+- **播放统计**: 展示所选时间范围内的总播放曲目数
 
-### 5. 账号申诉功能
+### 5. 个性化推荐系统
 
-- **账号状态提示**: 登录时显示账号冻结/删除状态，提供申诉入口
-- **申诉提交**: 用户填写申诉原因和联系邮箱提交申诉
-- **申诉管理**: 管理员查看、审批申诉，支持同意/拒绝操作
-- **邮件通知**: 审批后自动发送163邮件通知用户
-- **自动恢复**: 同意申诉后自动恢复账号状态
+- **ML 模型驱动推荐**: 推荐列表来源于 Python 端 LightGBM + DeepFM + DIEN 集成模型离线计算结果，存储于 `recommendations` 表
+- **每日推荐展示**: 用户主页展示前 5 首高分推荐歌曲，支持播放全部推荐
+- **推荐分页刷新**: `RefreshRecommendServlet` 支持 offset 参数分页加载更多推荐（每次 5 首）
+- **冷启动推荐**: 新用户注册时根据所选流派和歌手偏好生成初始 20 首推荐（`RecommendationService.initForNewUser`）
+- **推荐反馈冷却**: `recommendation_feedback` 表记录每首推荐的播放/收藏/忽略行为，驱动推荐冷却期机制
 
-### 6. 用户设置功能
+### 6. 用户偏好与内容屏蔽
 
-- **个人信息管理**: 修改昵称、邮箱、手机号
-- **密码修改**: 安全的密码修改功能
-- **账户管理**: 注销账户功能
+- **口味偏好反馈**: 用户可提交每日满意度评价（非常满意/满意/中立/不满意），同步更新 `preferred_genres`/`preferred_artists` 偏好标签（`UserPreferenceServlet`）
+  - 不满意：清空旧偏好，替换为新选内容
+  - 满意/中立：与现有偏好合并去重追加
+- **屏蔽流派/艺术家**: 用户可主动屏蔽不喜欢的流派或歌手（`BlockContentServlet`），推荐结果自动过滤
+  - 首次屏蔽 14 天，重复屏蔽每次递增 7 天
+  - 支持手动解除屏蔽
+  - 屏蔽状态通过 Redis 缓存（TTL=1小时）加速查询
 
-### 7. 推荐系统功能
+### 7. 管理员后台
 
-- **个性化推荐**: 基于用户行为和偏好推荐音乐
-- **推荐刷新**: RefreshRecommendServlet 提供推荐算法刷新接口
-- **评分机制**: 基于相似度的推荐评分系统
-- **歌单集成**: 支持网易云歌单数据的导入和推荐
-- **性能优化**: 使用联合索引提升推荐查询效率
+- **数据仪表盘**: 展示总用户数、总歌曲数、总收藏数、近 7 日新增用户四项 KPI
+- **用户管理**: 查看全量用户信息，支持搜索、排序；账号冻结/解冻操作
+- **歌曲管理**: 增删改查歌曲，支持按名称/艺术家/专辑搜索，分页浏览
+- **歌单管理**: 查看所有用户歌单
+- **申诉管理**: 审批用户申诉，同意后自动恢复账号状态并发送 163 邮件通知
 
-### 8. 歌单管理功能
+### 8. 账号申诉
 
-- **创建歌单**: 用户可以创建自定义歌单，自动生成默认"我喜欢的音乐"歌单
-- **歌单列表**: 表格式展示所有歌单，仅显示封面和名称，简洁清晰
-- **歌单详情**: 查看歌单内的所有歌曲，支持播放、收藏、移除操作
-- **歌曲管理**: 添加歌曲到歌单、从歌单移除歌曲
-- **歌单编辑**: 修改歌单名称和描述
-- **歌单删除**: 删除自定义歌单（默认歌单不可删除）
-- **防重复添加**: 唯一约束确保同一首歌不会重复添加到同一歌单
-- **级联删除**: 删除歌单时自动删除关联的歌曲记录
+- **账号状态提示**: 登录时检测冻结/删除状态，跳转至申诉引导页
+- **申诉提交**: 填写申诉类型（冻结/注销）、申诉理由、联系邮箱提交
+- **管理员审批**: 支持同意/拒绝，填写回复内容
+- **邮件通知**: 审批后自动向申诉邮箱发送 163 邮件通知审批结果
+- **自动恢复**: 同意申诉后自动将账号状态恢复为 `active`
 
 ## 主要组件
 
@@ -382,53 +407,82 @@ MusicWeb/
 
 ### Servlet 控制器
 
-- **UserLoginServlet**: 处理用户登录请求，支持管理员自动识别
-- **UserRegisterServlet**: 处理用户注册请求
-- **LogoutServlet**: 处理用户登出请求
-- **FavoriteServlet**: 处理收藏相关请求（添加/取消收藏）
-- **PlaylistServlet**: 处理歌单相关请求（创建/查看/编辑/删除歌单，添加/移除歌曲）
-- **AdminServlet**: 管理员后台主控制器，处理所有后台请求
-- **ChangePasswordServlet**: 处理密码修改请求
-- **UpdateProfileServlet**: 处理个人信息更新请求
-- **DeleteAccountServlet**: 处理账户注销请求
+- **UserLoginServlet**: 用户登录，支持管理员自动识别跳转后台
+- **UserRegisterServlet**: 用户注册，触发冷启动推荐初始化
+- **LogoutServlet**: 用户登出，清除 Session
+- **FavoriteServlet**: 收藏操作（添加/取消），实际写入默认歌单
+- **PlaylistServlet**: 歌单完整 CRUD（创建/编辑/删除，添加/移除歌曲，分页排序）
+- **AdminServlet**: 管理员后台主控制器（用户/歌曲/歌单/申诉管理）
+- **ChangePasswordServlet**: 密码修改（需验证当前密码）
+- **UpdateProfileServlet**: 个人信息更新（昵称/邮箱/手机/性别/城市）
+- **DeleteAccountServlet**: 账户注销（需密码二次确认）
+- **SearchServlet**: 多源音乐搜索（网易云/QQ，含 VIP 检测）
+- **RefreshRecommendServlet**: 分页获取个性化推荐（每次 5 首，支持 offset）
+- **UniversalPlayHistoryServlet**: 通用播放记录（外部歌曲自动入库 + 元数据补全）
+- **PlayHistoryServlet**: 播放历史 CRUD（添加/查询/清空）
+- **UserPreferenceServlet**: 用户口味偏好反馈（更新 preferred_genres/preferred_artists）
+- **BlockContentServlet**: 内容屏蔽管理（屏蔽/解除流派或艺术家）
+- **AppealServlet**: 账号申诉提交与管理员审批
 
 ### DAO 数据访问层
 
-- **UserDAO**: 用户数据操作，包括登录验证、注册、信息管理等
-- **SongDAO**: 歌曲数据操作，包括获取歌曲列表、排行榜等
-- **FavoriteDAO**: 收藏数据操作，包括添加/取消收藏、获取收藏列表等
-- **PlaylistDAO**: 歌单数据操作，包括创建歌单、获取歌单列表、歌单歌曲管理、歌单信息更新等
-- **AdminDAO**: 管理员数据操作，严格防止SQL注入，提供安全的数据库查询接口
+- **UserDAO**: 用户数据操作（登录验证、注册、信息管理、账号状态变更）
+- **SongDAO**: 歌曲数据操作（排行榜、推荐查询、外部歌曲查找/创建）
+- **PlaylistDAO**: 歌单及收藏操作（创建歌单、歌曲增删、收藏状态判断，含 Redis 缓存）
+- **PlayHistoryDAO**: 播放历史增删查（含时间范围过滤和分页）
+- **AdminDAO**: 管理员数据操作（严格 PreparedStatement 防注入）
+- **AppealDAO**: 申诉数据操作（提交、审批状态更新）
+- **RedisUtil**: Redis 缓存工具（收藏状态缓存、屏蔽内容缓存）
 
 ## 前端界面
 
 ### 首页 (index.jsp)
 
-- 未登录用户：显示登录表单和网站介绍
-- 已登录用户：显示收藏列表和推荐歌曲
-- 响应式设计，适配不同屏幕尺寸
+- 未登录用户：显示平台宣传 + 登录表单 + 新歌推荐预览（8首）
+- 已登录用户：自动重定向至 `user.jsp`
 
 ### 用户主页 (user.jsp)
 
-- 用户信息展示和个人统计数据
-- 我的歌单（表格式展示，仅显示封面和名称）
-- 我的收藏歌曲列表
-- 推荐歌曲
-- 热门排行榜（热歌榜、新歌榜、收藏榜）
+- 用户信息卡片（昵称、邮箱、收藏数、歌单数、收听时长、加入日期）
+- 搜索框（含历史下拉）
+- 每日推荐（前 5 首高分推荐，支持刷新加载更多）
+- 我的歌单（网格卡片布局，支持创建歌单弹窗）
+- 我的收藏（默认歌单内歌曲列表）
+- 热门排行榜（热歌榜/新歌榜/收藏榜，各 10 首）
+- 最近播放快速预览
+- 底部固定播放器（队列、播放模式、音量）
+
+### 搜索结果页 (search.jsp)
+
+- 顶部搜索框 + 搜索历史
+- 音乐源切换按钮（网易云 / QQ / 全部）
+- 搜索结果列表（含来源标签、VIP 标签）
+- 每首歌支持：播放、添加到歌单、收藏
+
+### 播放历史页 (playHistory.jsp)
+
+- 时间范围切换（最近一周 / 一个月 / 三个月）
+- 历史记录列表（封面、歌名、艺术家、精确播放时间）
+- 分页浏览（每页 25 条）
 
 ### 歌单详情页 (playlist.jsp)
 
-- 歌单信息展示（名称、描述、歌曲数量）
-- 歌单内所有歌曲列表
-- 歌曲操作（播放、收藏、从歌单移除）
-- 歌单编辑和删除功能
-- 歌曲封面适配显示（50×50px）
+- 歌单封面、名称、描述、歌曲数展示
+- 播放全部、编辑、删除操作（默认歌单仅可编辑）
+- 歌曲列表支持：播放、收藏、从歌单移除
+- 排序方式（添加时间/歌手/专辑/年份/播放次数）+ 升降序切换
+- 分页浏览（每页 25 首）
 
-### 注册页面 (register.jsp)
+### 账户设置页 (settings.jsp)
 
-- 用户注册表单
-- 实时表单验证
-- 用户名重复检查
+- 个人信息标签页：修改昵称、邮箱、手机、性别、城市
+- 账户安全标签页：修改密码（含强度指示器）
+- 账户管理标签页：查看账户信息 + 注销账户（二次确认）
+
+### 注册页 (register.jsp)
+
+- 注册表单（用户名、密码、邮箱）
+- 实时表单验证 + 用户名重复检查
 
 ## 安全特性
 
@@ -491,29 +545,29 @@ MusicWeb/
 
 ## 特色功能
 
-### 1. 智能推荐系统
+### 1. 三模型集成推荐系统
 
-- 基于新歌榜的推荐算法
-- 个性化内容展示
+- Python 端 LightGBM + DeepFM + DIEN 三模型加权集成，离线计算推荐评分
+- 推荐结果存储于 `recommendations` 表，前端实时读取展示
+- 支持冷启动（新用户选择偏好流派/歌手后生成初始推荐）
+- 推荐反馈冷却机制：多次忽略同一首歌自动延长冷却期
 
-### 2. 丰富的排行榜
+### 2. 多源音乐搜索与自动入库
 
-- 热歌榜：基于收藏次数排序
+- 同时接入网易云音乐和 QQ 音乐，三种来源模式可切换
+- 播放外部歌曲时自动写入本地数据库并下载封面图
+- 元数据（语言/流派/发行年份）通过 Node.js 和 Python 服务自动补全
+
+### 3. 用户偏好智能管理
+
+- 口味满意度反馈：每日可提交满意度评价，动态更新偏好流派和歌手标签
+- 内容屏蔽：主动屏蔽不喜欢的流派或艺术家，推荐自动过滤，支持有效期管理
+
+### 4. 丰富的排行榜
+
+- 热歌榜：全局播放量排序
 - 新歌榜：按发行时间排序
-- 收藏榜：用户收藏最多的歌曲
-
-### 3. 用户体验优化
-
-- 响应式设计，支持移动端
-- 平滑的动画效果
-- 实时状态更新
-- 友好的错误提示
-
-### 4. 数据统计
-
-- 用户收藏数量统计
-- 歌曲热度统计
-- 用户注册时间显示
+- 收藏榜：被收藏次数最多的歌曲
 
 ## 开发规范
 
@@ -611,4 +665,4 @@ MusicWeb/
 
 ---
 
-*本文档最后更新时间：2026年3月17日*
+*本文档最后更新时间：2026年3月25日*

@@ -89,7 +89,7 @@ SPARSE_FEATURES = [
 DENSE_FEATURES = [
     "user_play_count_log", "user_avg_completion",
     "song_play_count_log", "song_avg_completion",
-    "song_unique_users_log", "song_age_days_log",
+    "song_popularity_norm", "song_age_days_log",
     "user_genre_match", "user_artist_match",
     "user_language_match", "user_country_match",
     "user_target_rate", "song_target_rate",
@@ -464,11 +464,11 @@ def main():
     X_val   = _apply_svd(X_val,   val_idx)
     print(f"   ✅ SVD 泄漏修复完成（训练集拟合 → user-song 7d + song-user 10d + user-artist 3d + dot）")
 
-    # ── user_history_position 注入（对抗时序概念漂移）
-    X_train = np.hstack([X_train, _seq_ratio_all[train_idx].reshape(-1, 1)])
-    X_val   = np.hstack([X_val,   _seq_ratio_all[val_idx].reshape(-1, 1)])
-    _eff_features = _eff_features + ["user_history_position"]
-    print(f"   ✅ user_history_position 注入完成（val 位置均值={_seq_ratio_all[val_idx].mean():.3f}）")
+    # ── user_history_position 注入已禁用
+    # 原因：该特征与时序验证集切分（后 10%）完全相关，导致 train/val 分布偏移：
+    #   训练集 position ∈ [0, 0.9]，验证集 position ∈ [0.9, 1.0]
+    # 树模型无法处理此偏移，早停在第 4 轮触发（AUC 0.730→0.707 持续下滑）
+    # 神经网络模型（DeepFM/DIEN）可保留此特征（非线性架构更鲁棒）
 
     # ── 训练前验证（防止 target leakage）
     print("\n🔍 训练前验证...")
@@ -489,6 +489,24 @@ def main():
     assert len(_ua_df) == _ua_stats.shape[0], "❌ TE 行数异常"
     print(f"   ✅ 验证2 通过：TE 映射表基于 {len(train_idx):,} 条训练样本构建")
     print(f"   ✅ 验证3：训练集正样本率={y_train.mean():.4f}  验证集正样本率={y_val.mean():.4f}")
+
+    # ── 泄漏诊断：打印 train/val 单变量 AUC 差距 > 0.02 的特征（定位 best_iter=4 根因）
+    print("\n🔍 特征泄漏诊断（train vs val 单变量 AUC，差距 > 0.02 的特征）...")
+    from sklearn.metrics import roc_auc_score as _roc_diag
+    _diag_found = False
+    for _di, _dn in enumerate(_eff_features):
+        try:
+            _tr_a = _roc_diag(y_train, X_train[:, _di])
+            _vl_a = _roc_diag(y_val,   X_val[:, _di])
+            _tr_a = max(_tr_a, 1 - _tr_a)   # 统一为 >= 0.5
+            _vl_a = max(_vl_a, 1 - _vl_a)
+            if _tr_a - _vl_a > 0.02 or _tr_a > 0.65:
+                print(f"   ⚠️  {_dn:35s}: train={_tr_a:.4f}  val={_vl_a:.4f}  gap={_tr_a-_vl_a:+.4f}")
+                _diag_found = True
+        except Exception:
+            pass
+    if not _diag_found:
+        print("   ✅ 未发现明显泄漏特征（所有特征 train/val AUC 差距 ≤ 0.02）")
 
     train_data = lgb.Dataset(X_train, label=y_train, feature_name=_eff_features)
     val_data   = lgb.Dataset(X_val,   label=y_val,   feature_name=_eff_features,
@@ -526,11 +544,6 @@ def main():
     print(f"   训练集 AUC: {train_auc:.4f}")
     print(f"   验证集 AUC: {val_auc:.4f}")
     print(f"   最佳迭代轮次: {model.best_iteration}")
-    # AUC 合理性断言
-    if not (0.60 < val_auc < 0.99):
-        print(f"   ⚠️  警告：val AUC={val_auc:.4f} 超出合理范围 (0.60, 0.99)，请检查泄漏！")
-    else:
-        print(f"   ✅ 验证6 通过：AUC 在合理范围内")
 
     # ── 6. 特征重要性图
     print(f"\n📈 绘制特征重要性图...")

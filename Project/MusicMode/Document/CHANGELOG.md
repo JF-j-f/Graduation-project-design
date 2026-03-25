@@ -2,6 +2,126 @@
 
 本文档记录 MusicMode 项目的所有更新历史。
 
+## v2.5.0 (2026-03-24 ~ 2026-03-25) - DIEN 精排模型上线，数据库语种清洗，LightGBM 全面调优
+
+### 🗑️ 移除
+
+- **train_din.py 移除**：原 `train_din.py` 文件名为 DIN，但实际调用的是 `DeepFM` 模型（DNN 层为 256,128,64），与 `train_deepfm_v3.py` 本质重复，无法体现用户兴趣序列建模能力，予以废弃。同步删除 `Mode/din/` 模型目录。
+
+---
+
+### 🚀 新增功能
+
+- **DIEN 精排模型上线** (`train_dien.py`)：采用 Deep Interest Evolution Network（Zhou et al. AAAI 2019）替代伪 DIN，实现真正的用户行为序列建模：
+  - 兴趣提取层（IEL）：GRU 网络 + 辅助监督损失，显式建模用户兴趣演化
+  - 兴趣演化层（AUGRU）：以候选歌曲 embedding 为查询向量的注意力门控 GRU，动态提取与当前候选相关的兴趣表示
+  - Val AUC = **0.7673**（22 epochs），优于旧 DIN 实现
+  - 依赖 `Mode/features_seq.pkl`（用户行为序列，由 `prepare_features_v3.py Step 6` 生成）
+  - 输出至 `Mode/dien/`（`dien_model.pth` + `model_config.pkl`）
+
+- **特征工程 v3 大幅扩展**（`prepare_features_v3.py`）：
+  - 稀疏特征：7 → **14 个**（新增 `year_bucket`, `city`, `gender`, `age_bucket`, `tenure_bucket`, `duration_bucket`, `user_peak_hour`）
+  - 稠密特征：扩展至 **57 个**（含 OOF TE 统计量：`user_skip_rate`, `song_skip_rate`；SVD 嵌入降维向量；`days_since_artist_log` 等时序交互特征）
+  - 总特征维度：**71 维**（14 sparse + 57 dense），同时兼容 LightGBM / DeepFM / DIEN 三模型
+
+---
+
+### 🐛 Bug 修复
+
+- **修复 LightGBM `user_history_position` 时序泄漏**（`train_lgbm.py` 第 467-471 行）：
+  - 根本原因：该特征 = 记录在用户历史中的时序位置（0=最早，1=最近）。由于验证集使用用户最后 10% 交互，训练集 position ∈ [0, 0.9]，验证集 position ∈ [0.9, 1.0]，构成完美的 train/val 区分器，导致 LightGBM 在第 4 轮即学会此规律，之后验证 AUC 从 0.730 持续下滑至 0.704，`best_iter=4` 假早停。
+  - 修复方式：`train_lgbm.py` 中永久注释禁用该特征注入，添加根因说明注释。
+  - 注：神经网络模型（DeepFM / DIEN）对此特征鲁棒，无需禁用。
+
+- **恢复被意外注释的三个关键特征**（`train_lgbm.py` DENSE_FEATURES）：
+  - `user_skip_rate`：用户跳过率，高重要度特征（重要度排名第 4，4.9 万分）
+  - `song_skip_rate`：歌曲被跳过率（重要度排名第 5，4.1 万分）
+  - `days_since_artist_log`：用户上次收听该艺术家的时间间隔（时序交互强特征）
+  - 三个特征均在 v2.4.0 的 0.7933 最优记录中存在，被错误注释后导致 AUC 下降至 0.72。
+
+- **回滚无效的类别权重策略**：
+  - 验证了 LightGBM `scale_pos_weight=2` 在第 23 轮即触发早停，val AUC 从 0.7062 下降至 0.6994（下降 0.007）。
+  - 根本原因：AUC 是排序指标，与类别平衡无关，`scale_pos_weight` 扭曲梯度方向导致欠训练。三个训练脚本均已回滚至原始损失函数设置。
+
+---
+
+### ⚡ 性能优化
+
+- **LightGBM 超参全面调优**（`train_lgbm.py`）：
+
+  | 参数 | 旧值 | 新值 | 说明 |
+  |------|------|------|------|
+  | `num_leaves` | 64 | 128 | 提升模型表达能力（≈2^7 叶节点）|
+  | `min_child_samples` | 5000 | 2000 | 放宽叶节点限制，允许更细粒度分裂 |
+  | `n_estimators` | 5000 | 8000 | 配合 early_stopping 延长训练 |
+  | `early_stopping_rounds` | 100 | 300 | 充分探索，避免伪早停 |
+  | `reg_alpha` | 0.1 | 1.0 | 加强 L1 正则，促进稀疏 |
+  | `reg_lambda` | 1.0 | 5.0 | 加强 L2 正则，减少方差 |
+
+- **DeepFM 配置升级**（`train_deepfm_v3.py`）：
+
+  | 参数 | 旧值 | 新值 | 说明 |
+  |------|------|------|------|
+  | `embedding_dim` | 16 | 32 | 全部 14 个稀疏特征 embedding 维度加倍 |
+  | `DNN_HIDDEN_UNITS` | (256,128,64) | (512,256,128) | 网络容量提升，与 DIEN 对齐 |
+  | `EARLY_STOP_PATIENCE` | 10 | 12 | 更充分的收敛探索 |
+
+- **数据库 language/origin_country 全面清洗**（ISRC 交叉验证）：
+  - 通过 ISRC 国家码统计分布发现 KKBOX songs.csv language 字段 10 个编码中 8 个映射错误（如 code 52 旧映射"法语"→实为"英语"，code 31 旧映射"国语"→实为"韩语"）
+  - 全量修正 KKBOX 歌曲 language 标签（共 1,419,171 行）
+  - code 31（韩语）精确修复：读取原始 songs.csv 精确匹配 39,201 首，无误差
+  - 未知语言推断：通过 origin_country 反推语言，未知比例从 **27.85% → 3.09%**（约 494,014 首成功推断）
+  - KKBOX popularity 归一化：0~数千 → **0~100**（与网易云 API 热度值统一量纲，供前端热门排行使用）
+  - 外部歌曲 origin_country 补全：9,855 首通过 language 字段反推填充
+
+---
+
+### 📊 模型性能（当前存档状态）
+
+> ⚠️ LightGBM 当前模型含 `user_history_position` 时序泄漏（val AUC=0.7237，待重训）
+
+| 模型 | 验证 AUC | 状态 | 说明 |
+|------|---------|------|------|
+| LightGBM | 0.7237 | ⚠️ 待重训 | best_iter=4，user_history_position bug 导致 |
+| DeepFM v3 | **0.7610** | ✅ 正常 | 40 epochs，embedding_dim=32 |
+| DIEN | **0.7673** | ✅ 正常 | 22 epochs，GRU + AUGRU 序列建模 |
+| Weighted Avg（集成）| **0.7878** | ✅ 参考 | best_weights 加权平均 |
+| Stacking (LR) | ~~0.7892~~ | ⚠️ 含泄漏 | LR 在验证集 fit 后同集预测，不可信 |
+
+---
+
+### 🚧 待解决问题
+
+- **LightGBM 待全量重训**：`user_history_position` bug 修复后，当前磁盘 `lgbm_model.pkl` 为 best_iter=4 的无效模型（val AUC=0.7237），需使用修复后代码重训，预期 val AUC ≥ 0.79。
+- **全量集成重建**：LightGBM 重训后需重新执行 `build_ensemble.py` → `evaluate_offline.py`，获取可信集成 AUC。
+- **evaluate_offline.py Stacking 集成方式**：当前离线评估使用 LR 元学习器存在轻度泄漏（同集 fit+predict），需改为 best_weights 加权平均以与线上 `sync_recs_v3.py` 行为一致。
+
+---
+
+### 📝 拟解决方案
+
+- LightGBM 重训：`python train_lgbm.py`（修复后代码已就绪，预计约 40 分钟）
+- evaluate_offline.py 修复：第 306-322 行改为 best_weights 加权平均（与线上逻辑一致）
+- 若重训后集成 AUC < 0.74，优先考虑 AutoInt 替换 DIEN（30 分钟改动，无需修改特征工程）
+
+---
+
+### 📁 新增/修改文件
+
+| 文件 | 改动 |
+|------|------|
+| `Project/train_dien.py` | 新增：DIEN 精排模型（GRU + AUGRU，替代伪 DIN）|
+| `Project/train_din.py` | 删除：DIN 伪实现已废弃 |
+| `Mode/dien/` | 新增：DIEN 模型目录（dien_model.pth, model_config.pkl, training_progress.png, dien_metrics.csv）|
+| `Mode/din/` | 删除：DIN 模型目录已清理 |
+| `Project/train_lgbm.py` | 更新：超参调优 + user_history_position 永久禁用 + 三特征恢复 |
+| `Project/train_deepfm_v3.py` | 更新：embedding_dim 16→32，DNN_HIDDEN_UNITS 扩容，VALID_RATIO 统一为 0.1 |
+| `Project/prepare_features_v3.py` | 更新：稀疏特征 7→14，稠密特征扩展至 57，总维度 71 |
+| `Mode/features_v3.pkl` | 更新：7,377,700 样本，71 维特征（14 sparse + 57 dense）|
+| `Document/README.md` | 更新：模型阵容、特征维度、文件结构 |
+
+---
+
 ## v2.4.0 (2026-03-18) - 模型精简：移除 CatBoost/XGBoost，OOF Target Encoding，深度模型增强
 
 ### 🗑️ 移除

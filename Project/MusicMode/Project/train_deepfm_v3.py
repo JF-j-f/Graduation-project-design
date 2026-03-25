@@ -94,7 +94,7 @@ DENSE_FEAT_SPECS = [
     "user_avg_completion",
     "song_play_count_log",
     "song_avg_completion",
-    "song_unique_users_log",
+    "song_popularity_norm",
     "song_age_days_log",
     "user_genre_match",
     "user_artist_match",
@@ -108,7 +108,6 @@ DENSE_FEAT_SPECS = [
     *[f"svd_song_user_{i}" for i in range(10)],
     *[f"svd_user_artist_{i}" for i in [0, 3, 4]],
     "svd_dot_score",
-    "user_history_position",
 ]
 
 
@@ -158,8 +157,8 @@ def load_data():
     with open(INPUT_FEATURES, "rb") as f:
         feat = pickle.load(f)
 
-    # ── pkl 字段完整性验证（user_history_position 由训练脚本动态计算，不在此校验）
-    _req_dense   = [f for f in DENSE_FEAT_SPECS if f != "user_history_position"]
+    # ── pkl 字段完整性验证
+    _req_dense   = [f for f in DENSE_FEAT_SPECS]
     _req_enc     = [enc for _, enc, _,   _ in SPARSE_FEAT_SPECS]
     _req_n       = [nk  for _, _,   nk,  _ in SPARSE_FEAT_SPECS]
     _req_meta    = ["target", "play_time_unix", "artist_encoded",
@@ -216,7 +215,7 @@ def prepare_deepfm_data(feat):
     active_dense_specs = []
     skipped_dense = []
     for feat_name in DENSE_FEAT_SPECS:
-        if feat_name in feat or feat_name == "user_history_position":
+        if feat_name in feat:
             feature_columns.append(DenseFeat(feat_name, dimension=1))
             active_dense_specs.append(feat_name)
         else:
@@ -246,7 +245,7 @@ def prepare_deepfm_data(feat):
 
     target = feat["target"].astype(np.float32)
 
-    # ── 用户级时序切分（向量化版，同时计算 user_history_position）
+    # ── 用户级时序切分（向量化版）
     feature_names  = get_feature_names(feature_columns)
     play_time_unix = feat.get("play_time_unix", np.zeros(n_samples, dtype=np.int64))
     _uid_arr = feat["user_id_encoded"].astype(np.int32)
@@ -281,14 +280,6 @@ def prepare_deepfm_data(feat):
     _n_rare_u = int((_u_counts < _MIN_COUNT).sum())
     _n_rare_s = int((_s_counts < _MIN_COUNT).sum())
     print(f"   ✅ 稀疏用户 {_n_rare_u} 个 → UNK，稀疏歌曲 {_n_rare_s} 首 → UNK")
-
-    # user_history_position
-    _df_meta["_seq_ratio"] = (
-        _df_meta["_rank"] / (_df_meta["_cnt"] - 1).clip(lower=1)
-    ).clip(0, 1).astype(np.float32)
-    _seq_ratio_all = np.zeros(n_samples, dtype=np.float32)
-    _seq_ratio_all[_df_meta["orig_idx"].values] = _df_meta["_seq_ratio"].values
-    data_dict["user_history_position"] = _seq_ratio_all
 
     train_data   = {k: v[train_idx] for k, v in data_dict.items()}
     val_data     = {k: v[val_idx]   for k, v in data_dict.items()}

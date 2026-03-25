@@ -16,7 +16,7 @@ prepare_features_v3.py — 特征工程 v3.2（62特征全集，含 SVD 嵌入�
   歌曲侧（11）: song_id, genre, language, artist, origin_country,
                 year_bucket, duration_bucket,
                 song_play_count_log, song_avg_completion,
-                song_unique_users_log, song_age_days_log
+                song_popularity_norm, song_age_days_log
   上下文（1）: source_channel
   交互（4）: user_genre_match, user_artist_match,
               user_language_match, user_country_match
@@ -315,12 +315,10 @@ def compute_song_stats(ph_df: pd.DataFrame, songs_df: pd.DataFrame) -> pd.DataFr
 
     song_stats = ph_songs.groupby("song_id").agg(
         play_count=("user_id", "count"),
-        unique_users=("user_id", "nunique"),   # 独立用户数：替代 popularity 的热度维度
         avg_completion=("completion", "mean"),
     ).reset_index()
-    song_stats["song_play_count_log"]    = np.log1p(song_stats["play_count"])
-    song_stats["song_unique_users_log"]  = np.log1p(song_stats["unique_users"])
-    song_stats["song_avg_completion"]    = song_stats["avg_completion"].fillna(0).clip(0, 1)
+    song_stats["song_play_count_log"] = np.log1p(song_stats["play_count"])
+    song_stats["song_avg_completion"] = song_stats["avg_completion"].fillna(0).clip(0, 1)
 
     # 歌曲重复收听率：被播放后触发重复收听的比例（直接预测目标的先验）
     song_target_rate = ph_df.groupby("song_id")["target"].mean().rename("song_target_rate")
@@ -333,9 +331,10 @@ def compute_song_stats(ph_df: pd.DataFrame, songs_df: pd.DataFrame) -> pd.DataFr
     song_stats = song_stats.merge(song_skip_rate, on="song_id", how="left")
     song_stats["song_skip_rate"] = song_stats["song_skip_rate"].fillna(0.2)
 
-    # 注：song_popularity_norm 已被 song_unique_users_log 替代（在 groupby 中计算）
-    # 原 popularity 字段存在 KKBOX(0~数千) 与外部(0~100) 尺度不一致问题，
-    # 且 84% 歌曲 popularity=0，几乎无区分度。
+    # 归一化 popularity
+    max_pop = songs_df["popularity"].max()
+    songs_df["song_popularity_norm"] = (songs_df["popularity"].fillna(0) /
+                                         max(max_pop, 1)).clip(0, 1)
 
     # 歌曲年龄（距今天数）
     songs_df["song_age_days"] = songs_df["release_year"].apply(
@@ -344,9 +343,10 @@ def compute_song_stats(ph_df: pd.DataFrame, songs_df: pd.DataFrame) -> pd.DataFr
     songs_df["song_age_days_log"] = np.log1p(songs_df["song_age_days"].fillna(0))
 
     song_stats = song_stats.merge(
-        songs_df[["song_id", "song_age_days_log"]],
+        songs_df[["song_id", "song_popularity_norm", "song_age_days_log"]],
         on="song_id", how="left"
     )
+    song_stats["song_popularity_norm"] = song_stats["song_popularity_norm"].fillna(0)
     song_stats["song_age_days_log"]    = song_stats["song_age_days_log"].fillna(0)
     song_stats["song_skip_rate"]       = song_stats["song_skip_rate"].fillna(0.2)
 
@@ -576,13 +576,13 @@ def build_feature_matrix(ph_df, songs_df, users_df, user_stats_dict, song_stats,
 
     # 合并歌曲统计特征
     df = df.merge(
-        song_stats[["song_id", "song_play_count_log", "song_unique_users_log",
-                    "song_avg_completion",
+        song_stats[["song_id", "song_play_count_log",
+                    "song_avg_completion", "song_popularity_norm",
                     "song_age_days_log", "song_target_rate", "song_skip_rate"]],
         on="song_id", how="left"
     )
-    for col in ["song_play_count_log", "song_unique_users_log",
-                "song_avg_completion", "song_age_days_log"]:
+    for col in ["song_play_count_log", "song_avg_completion",
+                "song_popularity_norm", "song_age_days_log"]:
         df[col] = df[col].fillna(0)
     df["song_target_rate"] = df["song_target_rate"].fillna(0.5)
     df["song_skip_rate"]   = df["song_skip_rate"].fillna(0.2)
@@ -809,8 +809,8 @@ def save_outputs(df, encoders, user_stats_dict, song_stats):
         # 原 14 个
         "user_play_count_log", "user_avg_completion",
         "user_genre_diversity", "user_30d_active_days",
-        "song_play_count_log", "song_unique_users_log",
-        "song_avg_completion", "song_age_days_log",
+        "song_play_count_log", "song_avg_completion",
+        "song_popularity_norm", "song_age_days_log",
         "user_genre_match", "user_artist_match",
         "user_language_match", "user_country_match",
         "user_target_rate",
@@ -840,8 +840,6 @@ def save_outputs(df, encoders, user_stats_dict, song_stats):
         *[f"svd_song_user_{i}" for i in range(10)],   # song-user SVD 10d
         *[f"svd_user_artist_{i}" for i in range(5)],  # user-artist SVD 5d
         "svd_dot_score",                    # user·song SVD 点积分数
-        # 用户历史位置（时序特征，对抗概念漂移）
-        "user_history_position",            # 该记录在用户历史中的位置比例（0=最早, 1=最近）
     ]
     SPARSE_ENCODED = [
         "user_id_encoded", "song_id_encoded",
@@ -857,23 +855,6 @@ def save_outputs(df, encoders, user_stats_dict, song_stats):
     _pt = pd.to_datetime(df["play_time"], errors="coerce").fillna(pd.Timestamp("2000-01-01"))
     _play_time_unix = (_pt.astype("int64") // 10**9).values
 
-    # ── 用户历史位置比例（0=最早播放, 1=最近播放，对抗时序概念漂移）
-    # 按 user_id + play_time 排序，计算每条记录在用户全量历史中的位置比例
-    _df_pos = pd.DataFrame({
-        "orig_idx": np.arange(len(df)),
-        "uid":      df["user_id_encoded"].values.astype(np.int32),
-        "time":     _play_time_unix,
-    }).sort_values(["uid", "time"])
-    _df_pos["_cnt"]  = _df_pos.groupby("uid")["uid"].transform("count")
-    _df_pos["_rank"] = _df_pos.groupby("uid").cumcount()
-    _df_pos["user_history_position"] = (
-        _df_pos["_rank"] / (_df_pos["_cnt"] - 1).clip(lower=1)
-    ).clip(0, 1).astype(np.float32)
-    _user_hist_pos = np.zeros(len(df), dtype=np.float32)
-    _user_hist_pos[_df_pos["orig_idx"].values] = _df_pos["user_history_position"].values
-
-    # 直接使用已计算数组，避免 pandas CoW 赋值不生效问题
-    _dense_excl_hist = [c for c in DENSE_FEATURES if c != "user_history_position"]
     feature_data = {
         "target": df["target"].values.astype(np.int8),
         # 元数据（时序切分用，非模型特征）
@@ -881,8 +862,7 @@ def save_outputs(df, encoders, user_stats_dict, song_stats):
         # 稀疏特征（encoded）
         **{col: df[col].values for col in SPARSE_ENCODED if col in df.columns},
         # 稠密特征（float32）
-        **{col: df[col].values.astype(np.float32) for col in _dense_excl_hist},
-        "user_history_position": _user_hist_pos,  # 直接写入，不经过 df
+        **{col: df[col].values.astype(np.float32) for col in DENSE_FEATURES},
         # 基数统计（用于 DeepFM Embedding 层初始化）
         "n_users":        int(df["user_id_encoded"].max() + 1),
         "n_songs":        int(df["song_id_encoded"].max() + 1),

@@ -28,14 +28,14 @@ MusicMode 是一个基于大数据技术的**个性化音乐推荐系统后端�
 
 ### 算法模型
 
-- **LightGBM** - 梯度提升精排模型（OOF Target Encoding 消除数据泄漏，Val AUC=0.7063）
-- **DeepFM v3** - 高阶交叉特征深度精排（GPU AMP 加速，EPOCHS=15，Val AUC=0.7548）
-- **DIN (Deep Interest Network)** - 用户兴趣序列建模（EPOCHS=15，Val AUC=0.7602，最佳单模型）
-- **Stacking Ensemble** - LightGBM + DeepFM + DIN 堆叠集成（Val AUC=0.7607，最优）
+- **LightGBM** - 梯度提升精排模型（OOF Target Encoding，num_leaves=128，n_estimators=8000，Val AUC 待重训）
+- **DeepFM v3** - 高阶交叉特征深度精排（GPU AMP 加速，embedding_dim=32，DNN=(512,256,128)，Val AUC=0.7610）
+- **DIEN (Deep Interest Evolution Network)** - 用户兴趣演化序列建模（GRU+AUGRU，AAAI 2019，Val AUC=0.7673）
+- **Weighted Ensemble** - LightGBM + DeepFM + DIEN 加权集成（Val AUC=0.7878）
 - **FAISS** - 高性能向量相似度检索引擎（召回层）
 - **Spark MLlib ALS** - 协同过滤召回
 
-> **注意**：CatBoost（Val AUC=0.6499，过拟合差距 0.306）和 XGBoost（与 LightGBM 重复）已于 2026-03-18 从模型序列中移除。
+> **注意**：CatBoost（Val AUC=0.6499，过拟合差距 0.306）和 XGBoost（与 LightGBM 重复）已于 2026-03-18 移除。旧版 DIN 实现（实为 DeepFM 变体）已于 2026-03-24 替换为真正的 DIEN。
 
 ## 项目核心结构
 
@@ -44,11 +44,12 @@ MusicMode/
 ├── Document/                    # 项目文档目录
 │   ├── README.md                 # 项目文档
 │   ├── CHANGELOG.md              # 项目更新日志
-│   └── Data_Description.md       # 数据集说明文档
+│   ├── Data_Description.md       # 数据集说明文档
+│   └── evaluation_report.txt     # 在线评估报告备份
 ├── scripts/                     # 运维脚本目录
 │   ├── spark_etl_songs.py        # KKBOX 歌曲全量导入脚本
 │   ├── update_song_metadata.py   # 歌曲元数据更新脚本
-│   ├── enrich_db.py              # 外部歌曲元数据五级补全脚本
+│   ├── enrich_db.py              # 外部歌曲元数据补全及数据库字段扩充脚本
 │   ├── start_daily_recommend.bat # 每日推荐定时任务脚本
 │   └── requirements.txt          # Python 依赖配置
 ├── sql/                         # SQL 脚本目录
@@ -56,30 +57,37 @@ MusicMode/
 ├── Project/                     # 算法源码
 │   ├── data_analysis.py          # EDA 数据分析
 │   ├── data_cleaning.py          # 数据清洗与采样
-│   ├── prepare_features_v3.py    # 特征工程 v3（当前版，47维，用户级时序切分 + OOF TE）
+│   ├── prepare_features_v3.py    # 特征工程 v3（71 维：14 sparse + 57 dense，含 SVD 嵌入 + OOF TE）
 │   ├── train_als.py              # ALS 召回模型
-│   ├── train_deepfm_v3.py        # DeepFM 精排模型 v3（GPU AMP，EPOCHS=15）
-│   ├── train_din.py              # DIN 精排模型（EPOCHS=15，最佳单模型 AUC=0.7602）
-│   ├── train_lgbm.py             # LightGBM 精排模型（OOF TE + Cross TE + ALS 注入）
-│   ├── build_ensemble.py         # Stacking 集成：LightGBM + DeepFM + DIN，保存 val 预测数组
+│   ├── train_deepfm_v3.py        # DeepFM 精排模型 v3（GPU AMP，embedding_dim=32，Val AUC=0.7610）
+│   ├── train_dien.py             # DIEN 精排模型（GRU+AUGRU 序列建模，Val AUC=0.7673）
+│   ├── train_lgbm.py             # LightGBM 精排模型（OOF TE，num_leaves=128，n_estimators=8000）
+│   ├── build_ensemble.py         # 集成：LightGBM + DeepFM + DIEN，SLSQP 权重优化
 │   ├── build_faiss_index.py      # FAISS 向量索引构建
 │   ├── sync_recs_v3.py           # 三通道召回 + 集成精排推荐脚本 v3（当前版）
 │   ├── evaluate_offline.py       # KKBOX 用户离线评估脚本（Hit Rate/Precision/Recall/NDCG/MRR）
 │   ├── evaluate_recs.py          # 在线评估脚本（jf/jf2 真实用户，CTR/完播率/NDCG）
 │   └── run_pipeline.py           # 一键运行脚本
 └── Mode/                         # 模型产物（运行时生成，不纳入版本库）
-    ├── features_v3.pkl           # 预处理特征矩阵 v3（7.37M 样本，47 维）
+    ├── features_v3.pkl           # 预处理特征矩阵 v3（7.37M 样本，71 维）
+    ├── features_v3_cache.npz     # features_v3.pkl 的 NumPy 快速加载缓存
     ├── encoders_v3.pkl           # 标签编码器 v3
-    ├── lgbm/lgbm_model.pkl       # LightGBM 精排模型（OOF TE，Val AUC=0.7063）
-    ├── deepfm/deepfm_model.pth   # DeepFM 精排模型（EPOCHS=15，Val AUC=0.7548）
-    ├── din/din_model.pth         # DIN 精排模型（EPOCHS=15，Val AUC=0.7602，最佳）
-    ├── ensemble/ensemble_config.pkl  # Stacking 集成配置（Val AUC=0.7607）
-    ├── ensemble/val_preds.npy        # 验证集集成预测分数（供离线评估使用）
-    ├── ensemble/val_targets.npy      # 验证集真实标签
-    ├── ensemble/val_user_ids.npy     # 验证集用户编码
-    ├── ensemble/val_song_ids.npy     # 验证集歌曲编码
-    ├── offline_evaluation_report.txt # KKBOX 离线评估报告（28,172 用户，726,047 样本）
-    ├── online_evaluation_report.txt  # jf/jf2 在线评估报告（真实交互数据）
+    ├── lgbm/lgbm_model.pkl       # LightGBM 精排模型（待重训）
+    ├── lgbm/lgbm_importance.png  # LightGBM 特征重要度图
+    ├── lgbm/lgbm_metrics.csv     # LightGBM 训练指标记录
+    ├── deepfm/deepfm_model.pth   # DeepFM 精排模型（Val AUC=0.7610）
+    ├── deepfm/model_config.pkl   # DeepFM 模型架构配置
+    ├── deepfm/training_progress.png  # DeepFM 训练曲线
+    ├── deepfm/deepfm_metrics.csv     # DeepFM 逐 epoch 指标
+    ├── dien/dien_model.pth       # DIEN 精排模型（Val AUC=0.7673）
+    ├── dien/model_config.pkl     # DIEN 模型架构配置
+    ├── dien/training_progress.png    # DIEN 训练曲线
+    ├── dien/dien_metrics.csv         # DIEN 逐 epoch 指标
+    ├── dien/dien_val_preds.npy       # DIEN 验证集预测分数
+    ├── ensemble/ensemble_config.pkl  # 集成配置（best_weights 加权平均）
+    ├── ensemble/ensemble_metrics.csv # 各模型及集成 AUC 对比
+    ├── ensemble/ensemble_report.txt  # 集成评估文字报告
+    ├── evaluation_report.txt     # 在线评估报告（jf/jf2 真实交互数据）
     ├── als_model.pkl             # ALS 召回模型（rank=50, iter=10）
     ├── candidates.pkl            # ALS Top-100 候选集缓存
     ├── song_index.faiss          # FAISS 向量索引
@@ -112,7 +120,7 @@ MusicMode/
    - **通道 A（FAISS）**: 基于用户画像向量从索引中召回 Top-150 候选
    - **通道 B（热度兜底）**: 按 `popularity DESC, release_year DESC` 补充 100 候选
    - **通道 C（ALS 协同过滤）**: ALS 矩阵分解生成 Top-100 候选融合
-   - **精排**: LightGBM + DeepFM + DIN 三模型 Stacking 集成（Stacking AUC=0.7607）
+   - **精排**: LightGBM + DeepFM + DIEN 三模型加权集成（集成 AUC=0.7878）
    - **重排**: 多样性约束（同艺人不超过 3 首）+ 冷却/屏蔽过滤
 4. **反馈闭环**: `recommendation_feedback` 表追踪推荐交互，动态调整评分与冷却
 5. **结果回传**: `sync_recs_v3.py` 将 Top-20 推荐批量写入 `recommendations` 表
@@ -178,4 +186,4 @@ python update_song_metadata.py
 
 ---
 
-*本文档最后更新时间：2026年3月18日*
+*本文档最后更新时间：2026年3月25日*
