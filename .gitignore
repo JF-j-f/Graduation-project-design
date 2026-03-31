@@ -23,9 +23,6 @@ __pycache__/
 Project/MusicMode/scripts/null
 Project/MusicWeb/scripts/null
 
-# 第三方工具（含独立 git 仓库，不纳入版本库）
-Project/MusicWeb/src/main/webapp/MusicServer/unblock
-
 # Office 临时文件
 ~WRL*.tmp
 ~$*.docx
