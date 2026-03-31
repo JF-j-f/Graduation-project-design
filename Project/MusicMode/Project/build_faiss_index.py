@@ -4,15 +4,10 @@ build_faiss_index.py — FAISS 向量索引构建（v3）
 
 功能：
 1. 从训练好的 DeepFM v3 模型中提取歌曲侧 Embedding
-2. 拼接 song(32) + genre(16) + language(16) + artist(16) + origin_country(8)
-   → 88维复合向量（代表歌曲内容语义）
+2. 拼接 song(32) + genre(32) + language(32) + artist(32) + origin_country(32)
+   → 160维复合向量（代表歌曲内容语义）
 3. L2 归一化后构建 FAISS IndexFlatIP 索引（余弦相似度搜索）
 4. 输出 song_index.faiss + song_id_map.pkl
-
-执行：
-  python build_faiss_index.py
-
-预计时间：约 5 分钟（229万首歌）
 
 作者：MusicMode 推荐系统
 """
@@ -39,17 +34,17 @@ INPUT_CONFIG     = os.path.join(MODE_DIR, "deepfm", "model_config.pkl")
 OUTPUT_FAISS     = os.path.join(MODE_DIR, "song_index.faiss")
 OUTPUT_MAP       = os.path.join(MODE_DIR, "song_id_map.pkl")
 
-# 复合向量维度：song(16)+genre(16)+language(16)+artist(16)+origin_country(16) = 80
-# ⚠️ v3 所有 SparseFeat 统一 embedding_dim=16
-EMBEDDING_DIM = 80
+# 复合向量维度：song(32)+genre(32)+language(32)+artist(32)+origin_country(32) = 160
+# ⚠️ v3 所有 SparseFeat 统一 embedding_dim=32（与 train_deepfm_v3.py SPARSE_FEAT_SPECS 一致）
+EMBEDDING_DIM = 160
 
 # 组成复合向量的 embedding 名称（需与 DeepFM v3 的 SparseFeat 名称一致）
 SONG_EMB_PARTS = [
-    ("song_id",        16),
-    ("genre",          16),
-    ("language",       16),
-    ("artist",         16),
-    ("origin_country", 16),
+    ("song_id",        32),
+    ("genre",          32),
+    ("language",       32),
+    ("artist",         32),
+    ("origin_country", 32),
 ]
 
 
@@ -342,7 +337,7 @@ def save_index(index, faiss_to_mysql, mysql_to_faiss, mysql_to_enc, features):
 
 def main():
     print("\n" + "🎵" * 31)
-    print("   MusicMode FAISS 索引构建 v3（88维）")
+    print("   MusicMode FAISS 索引构建（5×32维嵌入，共160维）")
     print("🎵" * 31)
 
     model, features = load_model_and_features()

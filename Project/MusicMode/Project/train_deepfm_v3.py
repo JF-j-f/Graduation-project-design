@@ -6,7 +6,7 @@ train_deepfm_v3.py — DeepFM 精排模型训练 v3
   - 输入: features_v3.pkl（来自 prepare_features_v3.py）
   - 特征: 14 个稀疏特征（SparseFeat）+ 36 个稠密特征（DenseFeat）
   - 目标: 预测"30天内重复收听"概率（二分类）
-  - 模型: DeepFM（DNN=(256,128,64)）
+  - 模型: DeepFM（DNN=(256,256,128)）
   - 优化: GPU AMP（FP16 混合精度）+ ReduceLROnPlateau + 早停
   - 输出: deepfm_model.pth + model_config.pkl + training_progress.png
 
@@ -44,24 +44,24 @@ OUTPUT_PLOT      = os.path.join(DEEPFM_DIR, "training_progress.png")
 OUTPUT_HISTORY   = os.path.join(DEEPFM_DIR, "deepfm_metrics.csv")  # 论文用：逐 epoch 指标
 
 # 训练超参数
-BATCH_SIZE       = 8192        # 每批样本数，较大批次梯度更稳定
-EPOCHS           = 40          # 最大训练轮数，配合早停使用
-LEARNING_RATE    = 0.001       # 初始学习率，较高初始值有助于跳出局部最优
-DNN_HIDDEN_UNITS = (512, 256, 128)  # DNN 各隐藏层维度，缩小网络防止过拟合
-DROPOUT          = 0.4         # Dropout 丢弃比例，提升正则化强度
-NUM_WORKERS      = 5           # DataLoader 并行工作进程数
-RANDOM_SEED      = 42          # 随机种子，保证实验可复现
+BATCH_SIZE       = 8192        # 样本数
+EPOCHS           = 60           # 最大训练轮数
+LEARNING_RATE    = 0.002        #初始学习率（Adam 默认值，通常适合 DeepFM）
+DNN_HIDDEN_UNITS = (512, 256, 128, 64)
+DROPOUT          = 0.35        # 丢弃率
+NUM_WORKERS      = 5            # DataLoader 线程数
+RANDOM_SEED      = 42
 
 # ReduceLROnPlateau 学习率衰减参数
-LR_PATIENCE      = 5           # 验证 loss 连续 N 轮无改善后触发 LR 衰减
-LR_FACTOR        = 0.5         # 每次触发后 LR 乘以该因子
-LR_MIN           = 5e-6        # LR 下限，低于此值不再衰减
+LR_PATIENCE      = 3          # 在验证指标不提升多少个 epoch 后触发学习率衰减
+LR_FACTOR        = 0.35         # 学习率衰减因子（new_lr = old_lr * factor）
+LR_MIN           = 1e-6         # 学习率下限，避免过度衰减导致训练停滞
 
 # 早停参数
-EARLY_STOP_PATIENCE = 12       # 验证 AUC 连续 N 轮无提升则终止训练
+EARLY_STOP_PATIENCE = 10      
 
 # 验证集比例
-VALID_RATIO = 0.1              # 10%，与 LightGBM/DIN 一致
+VALID_RATIO = 0.1              # 10%，与 BST 一致
 
 
 # ============================================================
@@ -90,23 +90,44 @@ SPARSE_FEAT_SPECS = [
 
 # 稠密特征名（与 features_v3.pkl 中的 key 对应）
 DENSE_FEAT_SPECS = [
+    # 用户基础统计
     "user_play_count_log",
     "user_avg_completion",
+    "user_genre_diversity",            
+    "user_30d_active_days",             
+    # 歌曲基础统计
     "song_play_count_log",
     "song_avg_completion",
     "song_popularity_norm",
     "song_age_days_log",
-    "user_genre_match",
+    "song_target_rate",
+    # 交互特征（保留有信号的）
     "user_artist_match",
-    "user_language_match",
-    "user_country_match",
     "user_skip_rate",
     "song_skip_rate",
+    # 时序匹配
     "hour_match",
+    "dow_match",                       
+    # 最近交互
     "days_since_artist_log",
-    *[f"svd_user_song_{i}" for i in [0, 2, 3, 4, 5, 6, 9]],
+    "days_since_last_play_log",         
+    # 歌单亲和力
+    "user_has_in_playlist",            
+    "user_playlist_artist_count_log",
+    # B-3 记忆衰减
+    "user_song_prev_play_days",
+    "user_song_play_count_before",
+    # B-4 滚动窗口
+    "user_7d_play_count_log",
+    "user_30d_play_count_log",
+    "user_7d_avg_completion",
+    "song_7d_play_count_log",
+    "song_30d_play_count_log",
+    "song_trending_ratio",
+    # SVD 嵌入（全维度）
+    *[f"svd_user_song_{i}" for i in range(10)],
     *[f"svd_song_user_{i}" for i in range(10)],
-    *[f"svd_user_artist_{i}" for i in [0, 3, 4]],
+    *[f"svd_user_artist_{i}" for i in range(5)],
     "svd_dot_score",
 ]
 

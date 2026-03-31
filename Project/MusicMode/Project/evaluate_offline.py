@@ -5,16 +5,10 @@ evaluate_offline.py — KKBox 验证集离线推荐效果评估
 
 计算指标：HR@K、Precision@K、Recall@K、NDCG@K、MRR
 评估集：从 features_v3.pkl 中按用户级时序切分出的验证集（VALID_RATIO=0.1）
-模型：3 模型集成（LightGBM + DeepFM + DIN），与 build_ensemble.py 保持一致
-
-输出：控制台 + Mode/offline_evaluation_report.txt
-
-执行：
-  python evaluate_offline.py
+模型：双神经网络精排集成（DeepFM + BST），与 build_ensemble.py 保持一致
 
 作者：MusicMode 推荐系统
 """
-
 import os
 import sys
 import pickle
@@ -33,11 +27,11 @@ PROJECT_DIR   = os.path.dirname(os.path.abspath(__file__))
 MODE_DIR      = os.path.join(os.path.dirname(PROJECT_DIR), "Mode")
 
 FEATURES_PATH = os.path.join(MODE_DIR, "features_v3.pkl")
-LGBM_PATH     = os.path.join(MODE_DIR, "lgbm",   "lgbm_model.pkl")
+INPUT_SEQ     = os.path.join(MODE_DIR, "features_seq.pkl")       # BST 序列特征
 DEEPFM_CFG    = os.path.join(MODE_DIR, "deepfm", "model_config.pkl")
 DEEPFM_PATH   = os.path.join(MODE_DIR, "deepfm", "deepfm_model.pth")
-DIN_CFG       = os.path.join(MODE_DIR, "din",    "model_config.pkl")
-DIN_PATH      = os.path.join(MODE_DIR, "din",    "din_model.pth")
+BST_CFG       = os.path.join(MODE_DIR, "bst",  "model_config.pkl")
+BST_PATH      = os.path.join(MODE_DIR, "bst",  "bst_model.pth")
 ENSEMBLE_PATH = os.path.join(MODE_DIR, "ensemble", "ensemble_config.pkl")
 REPORT_PATH   = os.path.join(MODE_DIR, "offline_evaluation_report.txt")
 
@@ -57,18 +51,32 @@ SPARSE_FEATURES = [
 ]
 
 DENSE_FEATURES = [
+    # 用户基础统计
     "user_play_count_log", "user_avg_completion",
+    "user_genre_diversity", "user_30d_active_days",
+    # 歌曲基础统计
     "song_play_count_log", "song_avg_completion",
-    "song_unique_users_log", "song_age_days_log",
-    "user_genre_match", "user_artist_match",
-    "user_language_match", "user_country_match",
-    "user_target_rate", "song_target_rate",
-    "user_skip_rate", "song_skip_rate",
-    "hour_match", "days_since_artist_log",
-    "user_artist_repeat_rate",
-    *[f"svd_user_song_{i}" for i in [0, 2, 3, 4, 5, 6, 9]],
+    "song_popularity_norm", "song_age_days_log",
+    "song_target_rate",
+    # 交互特征
+    "user_artist_match", "user_skip_rate", "song_skip_rate",
+    # 时序匹配
+    "hour_match", "dow_match",
+    # 最近交互
+    "days_since_artist_log", "days_since_last_play_log",
+    # 歌单亲和力
+    "user_has_in_playlist", "user_playlist_artist_count_log",
+    # 记忆衰减：用户对同一首歌的历史播放行为
+    "user_song_prev_play_days", "user_song_play_count_before",
+    # 近期滚动窗口统计
+    "user_7d_play_count_log", "user_30d_play_count_log",
+    "user_7d_avg_completion",
+    "song_7d_play_count_log", "song_30d_play_count_log",
+    "song_trending_ratio",
+    # SVD 协同过滤嵌入
+    *[f"svd_user_song_{i}" for i in range(10)],
     *[f"svd_song_user_{i}" for i in range(10)],
-    *[f"svd_user_artist_{i}" for i in [0, 3, 4]],
+    *[f"svd_user_artist_{i}" for i in range(5)],
     "svd_dot_score",
 ]
 
@@ -76,7 +84,7 @@ ALL_FEATURES = SPARSE_FEATURES + DENSE_FEATURES
 
 
 # ============================================================
-# Step 1: 加载数据 & 时序切分 & 泄漏修复（与 build_ensemble.py 完全一致）
+# Step 1: 加载数据 & 时序切分 & 泄漏修复
 # ============================================================
 
 def load_val_data():
@@ -130,85 +138,26 @@ def load_val_data():
     n_samples = len(val_idx)
     print(f"   验证集：{n_users:,} 用户，{n_samples:,} 样本")
 
-    # ── Target Leakage 修复
+    # song_target_rate 泄漏修复：用训练集的 OOF 平滑均值替换验证集的原始目标编码
     _global_prior = float(y[train_idx].mean())
     _SMOOTH_M = 100
-    _train_meta = pd.DataFrame({
-        "uid": user_id_enc[train_idx].astype(np.int32),
-        "art": artist_enc[train_idx].astype(np.int32),
+    _s_s = pd.DataFrame({
         "sid": song_id_enc[train_idx].astype(np.int32),
         "y":   y[train_idx].astype(np.float32),
-    })
-    _ua_s = _train_meta.groupby(["uid","art"])["y"].agg(["count","mean"]).reset_index()
-    _ua_s["uar"] = (_ua_s["count"]*_ua_s["mean"] + _SMOOTH_M*_global_prior) / (_ua_s["count"] + _SMOOTH_M)
-    _u_s  = _train_meta.groupby("uid")["y"].agg(["count","mean"]).reset_index()
-    _u_s["utr"] = (_u_s["count"]*_u_s["mean"] + _SMOOTH_M*_global_prior) / (_u_s["count"] + _SMOOTH_M)
-    _s_s  = _train_meta.groupby("sid")["y"].agg(["count","mean"]).reset_index()
-    _s_s["str_v"] = (_s_s["count"]*_s_s["mean"] + _SMOOTH_M*_global_prior) / (_s_s["count"] + _SMOOTH_M)
+    }).groupby("sid")["y"].agg(["count", "mean"]).reset_index()
+    _s_s["str_v"] = (
+        (_s_s["count"] * _s_s["mean"] + _SMOOTH_M * _global_prior)
+        / (_s_s["count"] + _SMOOTH_M)
+    )
 
-    def _fix_leaky(idx):
-        _tmp = pd.DataFrame({
-            "uid": user_id_enc[idx].astype(np.int32),
-            "art": artist_enc[idx].astype(np.int32),
-            "sid": song_id_enc[idx].astype(np.int32),
-        })
-        _tmp = _tmp.merge(_ua_s[["uid","art","uar"]], on=["uid","art"], how="left")
-        _tmp = _tmp.merge(_u_s[["uid","utr"]], on="uid", how="left")
-        _tmp = _tmp.merge(_s_s[["sid","str_v"]], on="sid", how="left")
-        _tmp["uar"]   = _tmp["uar"].fillna(_tmp["utr"]).fillna(_global_prior)
-        _tmp["utr"]   = _tmp["utr"].fillna(_global_prior)
-        _tmp["str_v"] = _tmp["str_v"].fillna(_global_prior)
-        return (_tmp["uar"].values.astype(np.float32),
-                _tmp["utr"].values.astype(np.float32),
-                _tmp["str_v"].values.astype(np.float32))
-
-    IDX_UAR = ALL_FEATURES.index("user_artist_repeat_rate")
-    IDX_UTR = ALL_FEATURES.index("user_target_rate")
     IDX_STR = ALL_FEATURES.index("song_target_rate")
-
     X_val = X[val_idx].copy()
-    uar_vl, utr_vl, str_vl = _fix_leaky(val_idx)
-    X_val[:, IDX_UAR] = uar_vl
-    X_val[:, IDX_UTR] = utr_vl
-    X_val[:, IDX_STR] = str_vl
+    _sid_val = pd.DataFrame({"sid": song_id_enc[val_idx].astype(np.int32)})
+    _sid_val = _sid_val.merge(_s_s[["sid", "str_v"]], on="sid", how="left")
+    X_val[:, IDX_STR] = _sid_val["str_v"].fillna(_global_prior).values.astype(np.float32)
 
-    # ── Cross TE 修复
-    _genre_enc   = feat.get("genre_encoded",          np.zeros(len(y), dtype=np.int32))
-    _lang_enc    = feat.get("language_encoded",        np.zeros(len(y), dtype=np.int32))
-    _country_enc = feat.get("origin_country_encoded",  np.zeros(len(y), dtype=np.int32))
-    _b2_meta = pd.DataFrame({
-        "uid": user_id_enc[train_idx].astype(np.int32),
-        "gnr": _genre_enc[train_idx].astype(np.int32),
-        "lng": _lang_enc[train_idx].astype(np.int32),
-        "ctr": _country_enc[train_idx].astype(np.int32),
-        "y":   y[train_idx].astype(np.float32),
-    })
-    _ug_s = _b2_meta.groupby(["uid","gnr"])["y"].agg(["count","mean"]).reset_index()
-    _ug_s["ug_te"] = (_ug_s["count"]*_ug_s["mean"] + _SMOOTH_M*_global_prior) / (_ug_s["count"] + _SMOOTH_M)
-    _ul_s = _b2_meta.groupby(["uid","lng"])["y"].agg(["count","mean"]).reset_index()
-    _ul_s["ul_te"] = (_ul_s["count"]*_ul_s["mean"] + _SMOOTH_M*_global_prior) / (_ul_s["count"] + _SMOOTH_M)
-    _uc_s = _b2_meta.groupby(["uid","ctr"])["y"].agg(["count","mean"]).reset_index()
-    _uc_s["uc_te"] = (_uc_s["count"]*_uc_s["mean"] + _SMOOTH_M*_global_prior) / (_uc_s["count"] + _SMOOTH_M)
-
-    _t = pd.DataFrame({
-        "uid": user_id_enc[val_idx].astype(np.int32),
-        "gnr": _genre_enc[val_idx].astype(np.int32),
-        "lng": _lang_enc[val_idx].astype(np.int32),
-        "ctr": _country_enc[val_idx].astype(np.int32),
-    })
-    _t = _t.merge(_ug_s[["uid","gnr","ug_te"]], on=["uid","gnr"], how="left")
-    _t = _t.merge(_ul_s[["uid","lng","ul_te"]], on=["uid","lng"], how="left")
-    _t = _t.merge(_uc_s[["uid","ctr","uc_te"]], on=["uid","ctr"], how="left")
-
-    IDX_GM = ALL_FEATURES.index("user_genre_match")
-    IDX_LM = ALL_FEATURES.index("user_language_match")
-    IDX_CM = ALL_FEATURES.index("user_country_match")
-    X_val[:, IDX_GM] = _t["ug_te"].fillna(_global_prior).values.astype(np.float32)
-    X_val[:, IDX_LM] = _t["ul_te"].fillna(_global_prior).values.astype(np.float32)
-    X_val[:, IDX_CM] = _t["uc_te"].fillna(_global_prior).values.astype(np.float32)
-
-    y_val       = y[val_idx]
-    uid_val     = user_id_enc[val_idx]
+    y_val   = y[val_idx]
+    uid_val = user_id_enc[val_idx]
 
     return X_val, y_val, uid_val, feat, val_idx, train_idx
 
@@ -216,18 +165,6 @@ def load_val_data():
 # ============================================================
 # Step 2: 模型推断
 # ============================================================
-
-def predict_lgbm(X_val):
-    if not os.path.exists(LGBM_PATH):
-        print(f"   ⚠️  LightGBM 模型不存在: {LGBM_PATH}")
-        return None
-    with open(LGBM_PATH, "rb") as f:
-        pkg = pickle.load(f)
-    model = pkg["model"]
-    preds = model.predict(X_val, num_iteration=model.best_iteration_)
-    print(f"   ✅ LightGBM 推断完成")
-    return preds.astype(np.float32)
-
 
 def predict_torch(model_path, cfg_path, feat, val_idx, name="DeepFM"):
     if not os.path.exists(model_path) or not os.path.exists(cfg_path):
@@ -262,20 +199,17 @@ def predict_torch(model_path, cfg_path, feat, val_idx, name="DeepFM"):
         song_id_enc = feat["song_id_encoded"]
 
         data_dict = {}
-        for sf in sparse_specs:
-            col = sf["name"]
-            raw = feat.get(col, np.zeros(len(user_id_enc), dtype=np.int32))
-            data_dict[col] = raw[val_idx].reshape(-1, 1).astype(np.int32)
-        for df_ in dense_specs:
-            col = df_["name"]
+        for feat_name, enc_key, _, _ in sparse_specs:
+            raw = feat.get(enc_key, np.zeros(len(user_id_enc), dtype=np.int32))
+            data_dict[feat_name] = raw[val_idx].astype(np.int32)
+        for col in dense_specs:
             raw = feat.get(col, np.zeros(len(user_id_enc), dtype=np.float32))
-            data_dict[col] = raw[val_idx].reshape(-1, 1).astype(np.float32)
+            data_dict[col] = raw[val_idx].astype(np.float32)
 
-        # 泄漏特征置全局先验
+        # song_target_rate 是基于全量数据的目标编码，推断时置全局先验以防泄漏
         _global_prior = float(feat["target"][val_idx].mean())
-        for leak_col in ["user_artist_repeat_rate", "user_target_rate", "song_target_rate"]:
-            if leak_col in data_dict:
-                data_dict[leak_col][:] = _global_prior
+        if "song_target_rate" in data_dict:
+            data_dict["song_target_rate"][:] = _global_prior
 
         arrays = [data_dict[f].reshape(-1, 1) for f in feat_names if f in data_dict]
         X_tensor = torch.from_numpy(np.concatenate(arrays, axis=1)).float()
@@ -293,12 +227,20 @@ def predict_torch(model_path, cfg_path, feat, val_idx, name="DeepFM"):
         return None
 
 
+def predict_bst(feat, val_idx, train_idx):
+    """BST 验证集推断，委托给 build_ensemble.predict_bst_model()，避免重复逻辑。"""
+    sys.path.insert(0, PROJECT_DIR)
+    from build_ensemble import predict_bst_model
+    cfg = {"model_path": BST_PATH, "config_path": BST_CFG}
+    return predict_bst_model("BST", cfg, feat, val_idx, train_idx)
+
+
 # ============================================================
 # Step 3: 集成得分（加权平均 + Stacking）
 # ============================================================
 
 def get_ensemble_score(preds_dict, y_val):
-    """加权集成评分：使用 SLSQP 优化的 best_weights 加权平均三模型预测值。"""
+    """从 ensemble_config.pkl 读取 best_weights，对各模型预测值加权平均。"""
     names  = list(preds_dict.keys())
     matrix = np.column_stack([preds_dict[n] for n in names])
 
@@ -432,21 +374,17 @@ def main():
     X_val, y_val, uid_val, feat, val_idx, train_idx = load_val_data()
 
     # Step 2: 各模型推断
-    print("\n[Step 2] 各模型验证集推断")
+    print("\n[Step 2] 各模型验证集推断（DeepFM / BST）")
     print("=" * 62)
     preds_dict = {}
-
-    p_lgbm = predict_lgbm(X_val)
-    if p_lgbm is not None:
-        preds_dict["LightGBM"] = p_lgbm
 
     p_deepfm = predict_torch(DEEPFM_PATH, DEEPFM_CFG, feat, val_idx, name="DeepFM")
     if p_deepfm is not None:
         preds_dict["DeepFM"] = p_deepfm
 
-    p_din = predict_torch(DIN_PATH, DIN_CFG, feat, val_idx, name="DIN")
-    if p_din is not None:
-        preds_dict["DIN"] = p_din
+    p_bst = predict_bst(feat, val_idx, train_idx)
+    if p_bst is not None:
+        preds_dict["BST"] = p_bst
 
     if len(preds_dict) == 0:
         print("\n❌ 无可用模型！请先训练至少一个模型。")

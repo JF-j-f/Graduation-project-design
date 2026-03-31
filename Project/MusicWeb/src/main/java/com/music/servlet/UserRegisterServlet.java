@@ -25,8 +25,8 @@ public class UserRegisterServlet extends HttpServlet {
         String city = request.getParameter("city");
 
         // 兴趣标签（冷启动用）
-        String selectedGenres = request.getParameter("selectedGenres"); // 逗号分隔的 genre_ids
-        String selectedArtists = request.getParameter("selectedArtists"); // 逗号分隔的歌手名
+        String selectedGenres = request.getParameter("selectedGenres"); // 分号分隔的 genre_ids
+        String selectedArtists = request.getParameter("selectedArtists"); // 分号分隔的歌手名
 
         UserDAO userDAO = new UserDAO();
         response.setContentType("text/html;charset=UTF-8");

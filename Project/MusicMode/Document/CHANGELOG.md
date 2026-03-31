@@ -2,7 +2,108 @@
 
 本文档记录 MusicMode 项目的所有更新历史。
 
-## v2.5.0 (2026-03-24 ~ 2026-03-25) - DIEN 精排模型上线，数据库语种清洗，LightGBM 全面调优
+## v2.7.2 (2026-03-31) - play_count Bug 修复 + 代码注释清理
+
+### 🐛 Bug 修复
+
+- **Tier3 判断永远返回 0 的关键 Bug**（`prepare_features_v3.py`）：`save_outputs()` 函数保存 `user_basic` 时遗漏了原始 `play_count` 整数字段，只保存了 `user_play_count_log`（对数值），导致 `sync_recs_v3.py` 第899行 `.get("play_count", 0)` 始终返回 0，所有训练集用户被错误降级到 Tier2/1，ALS 通道完全失效。已在 `user_basic` 列列表中补加 `play_count` 字段。
+
+### 🧹 代码清理
+
+- **`train_lgbm.py`**：删除 `v11 调优` 多行历史记录注释块，移除所有 `v11：xxx` / `v11 新增：xxx` 版本号前缀，保留功能说明
+- **`train_deepfm_v3.py`**：移除所有 `v12 新增` / `v12：xxx` 版本号前缀
+- **`sync_recs_v3.py`**：移除 `v8`、`v11`、`v12` 版本号前缀注释（通道C路由注释、特征说明注释、BST对齐注释等）
+- **`build_faiss_index.py`**：修正 `main()` 打印信息中错误的维度说明（`v3（88维）` → `5×32维嵌入，共160维`，与代码中 `EMBEDDING_DIM=160` 一致）
+
+## v2.7.1 (2026-03-30) - Tier 2 用户特征补全 + BST 实时行为序列
+
+### 🚀 新增功能
+
+- **Tier 2 实时 `user_genre_diversity` 计算**（`sync_recs_v3.py` `build_pair_features`）：Tier 2 用户不在 pkl 中，原先固定取默认值 0.5；现在当 `realtime_dists["genre"]` 存在时，直接对已归一化的流派分布计算香农熵并覆盖，无额外 SQL
+- **Tier 2 实时 `user_peak_hour` 统计**（`sync_recs_v3.py` `build_pair_features`）：原先对 Tier 2 用户取默认值 0（午夜）；现在当 `realtime_dists` 存在且 `user_history` 非空时，遍历已查出的播放记录统计各小时频次并取高峰时段，覆盖稀疏编码列，无额外 SQL
+- **BST 实时行为序列构建**（`sync_recs_v3.py` `rank_with_bst`）：新增可选参数 `db=None`；当 pkl 快照中 `seq_song_ids` 长度不足 5 时，从 `play_history` 表实时查询最近 `seq_len` 条播放记录重建序列，并过滤训练集外的未知歌曲编码，彻底解决 Tier 2 用户 BST 退化为全 0 填充的问题
+
+### ⚡ 性能优化
+
+- `rank_with_bst` 调用方（`generate_recommendations` 行精排阶段）传入 `db` 参数，实现序列实时构建与上层连接池复用
+
+### 🚧 待解决问题
+
+- `user:tier2_dists:{uid}` 实时分布尚未加入 Redis 缓存，每次推荐均重新执行两次 SQL 计算流派/艺术家/语种分布
+- `PlayHistoryServlet` 尚未集成 Redis Key 主动删除（`user:faiss:{uid}`），目前依赖 30min TTL 被动失效
+
+### 📝 拟解决方案
+
+- 在 Tier 2 召回路径中加入 `user:tier2_dists:{uid}` Hash 缓存（TTL=10min）
+- `PlayHistoryServlet` 在记录播放后调用 `jedis.del("user:faiss:" + userId)` 实现主动失效
+
+---
+
+## v2.7.0 (2026-03-30) - 推荐系统全链路重设计：用户三层分层路由 + Redis 缓存加速
+
+### 🚀 新增功能
+
+- **用户三层分层路由**（`sync_recs_v3.py`）：通道C由原"老用户/新用户"二元切换升级为三层策略：
+  - Tier 3（ALS 协同过滤）：在训练集中且训练播放量 ≥ 10 首的高质量老用户
+  - Tier 2（多信号多维度内容召回）：有足量行为数据（歌单 ≥5首 或 质量播放 ≥10次）的中间用户，取代之前的无效注册偏好兜底
+  - Tier 1（注册偏好冷启动）：纯新用户兜底
+- **Tier 2 多维度内容召回**（`sync_recs_v3.py`）：融合歌单（权重0.6）与质量播放（完播率≥30%，权重0.4）两路信号，按艺术家35%/流派40%/语种25%比例分配 RECALL_ALS=200 个召回配额
+- **`realtime_dists` 实时分布传递**（`sync_recs_v3.py`）：Tier 2 召回时产出艺术家/流派/语种实时归一化分布，通过 `build_pair_features(realtime_dists=...)` 参数传递给粗排和精排层，使 `user_artist_match` 特征对 Tier 2 用户更准确
+- **Redis 用户级缓存层**（`sync_recs_v3.py`）：新增 `_get_user_pref` 和 `_get_user_sati` 两个辅助函数，将每次推荐中对 `users.preferred_genres/artists`（原3次DB查询）和 `user_preference_feedback.satisfaction` 的重复读取改为 Redis Hash/String 缓存；FAISS 画像向量（`user:faiss:{uid}`）写入 Redis 并以 30 分钟 TTL 缓存，重复请求命中时完全跳过全量历史查询
+
+### 🐛 Bug 修复
+
+- **P2 修复：Tier 3 二次校验**（`sync_recs_v3.py`）：仅检查 `_uid_map` 存在性判断 Tier 3 不够严格——训练时播放量为 0 的用户因 ALS 矩阵分解噪声数据被错误路由为 Tier 3，现在增加 `play_count >= 10` 二次校验，不足时自动降级
+
+### ⚡ 性能优化
+
+- **Redis Key 设计**（`sync_recs_v3.py`）：
+  - `user:pref:{uid}` — Hash，TTL=24h，缓存注册偏好
+  - `user:sati:{uid}` — String，TTL=2h，缓存最新满意度
+  - `user:faiss:{uid}` — String（Base64 编码 numpy 向量），TTL=30min，缓存 FAISS 画像向量
+- **消除重复 DB 查询**：`build_user_profile`、通道B、通道C（Tier1）、`build_pair_features` 四处对 `preferred_genres/artists` 的独立查询统一走 Redis 缓存；`satisfaction` 查询由 `build_user_profile` 和通道B独立查询改为 `_get_user_sati` 共享缓存
+
+### 🚧 待解决问题
+
+- `user:faiss:{uid}` 缓存失效依赖 `PlayHistoryServlet` 主动删除 Redis Key，该 Java 端集成尚未实现，目前依赖 TTL 被动失效（30min 内新播放不会影响 FAISS 向量）
+- Tier 2 实时分布（`user:tier2_dists:{uid}`）尚未加入 Redis 缓存，每次推荐均重新计算两次 SQL
+
+### 📝 拟解决方案
+
+- `PlayHistoryServlet` 在记录播放后调用 `jedis.del("user:faiss:" + userId)` 实现主动失效
+- 在 Tier 2 召回路径中加入 `user:tier2_dists:{uid}` Hash 缓存（TTL=10min），可节省两次全量 JOIN 查询
+
+---
+
+## v2.6.0 (2026-03-27) - 推荐流程升级：MMR 重排、满意度感知召回、召回扩容
+
+### 🚀 新增功能
+
+- **新增 `mmr_rerank()` 函数**（`sync_recs_v3.py`）：以 Maximal Marginal Relevance 算法替代原 `diversity_rerank()` 同艺术家硬约束。基于 FAISS 80 维 Embedding 余弦相似度，在精排 150 首候选中贪心选出兼顾相关性（λ=0.7）与多样性的 Top-50 结果
+- **通道C新用户冷启动降级**（`sync_recs_v3.py`）：`user_enc is None` 时不再静默跳过，改为从 `users.preferred_artists` 和 `users.preferred_genres` 拉取热门歌曲作为通道C候选，确保新用户首次推荐有效输出
+
+### 🐛 Bug 修复
+
+- **修复通道B/C 对 satisfaction 完全不感知的设计缺陷**（`sync_recs_v3.py`）：通道B依据 `user_preference_feedback.satisfaction` 动态调整 genre_filter 范围与艺术家加权（dissatisfied 扩展全部流派加权+800，very_satisfied 不做流派过滤加权+150）；通道C在 dissatisfied 时对 ALS 分数乘以 0.7 惩罚系数
+
+### ⚡ 性能优化
+
+- **召回层扩容**（`sync_recs_v3.py`）：三路召回各扩展至 200 首（FAISS/Hot/ALS 均为 200），漏斗调整为 ~600 → 粗排 300 → 精排 150 → MMR重排 50，最终推荐数 20 → 50
+- **feedback_score 时间衰减**（`sync_recs_v3.py`）：`update_feedback` 执行时对超过 14 天的历史反馈分数乘以 0.9 衰减系数，绝对值低于 0.01 直接归零，防止久远负向行为永久压低歌曲排名
+- **重排冷却升级**（`sync_recs_v3.py`）：基于新增字段 `recommendation_feedback.negative_count` 的三档渐进策略（1次→3天软冷却，2次→7天，3次+→14天硬冷却），负向交互定义统一为未播放/完播率<0.2/完播率0.2~0.8，完播率≥80%或已收藏歌曲免除冷却
+- **移除无法上线的 OOF Ridge Stacking**（`build_ensemble.py`）：Ridge 元学习器无法转化为线上 `w_deepfm`/`w_bst` 标量权重，删除全部 K-Fold OOF 集成代码，保留 SLSQP vs 等权平均两路对比
+
+### 🚧 待解决问题
+
+- `train_lgbm.py` / `train_deepfm_v3.py` / `train_bst.py` 超参已调整，当前磁盘模型仍为旧超参，需手动重训后模型升级才生效（特征工程和 FAISS/ALS 召回模型无需重训）
+
+### 📝 拟解决方案
+
+- 按顺序重训：`python train_lgbm.py` → `python train_deepfm_v3.py` → `python train_bst.py` → `python build_ensemble.py`，完成后运行 `evaluate_offline.py` 对比新旧 AUC / NDCG 指标
+
+---
+
+## v2.5.0 (2026-03-25) - DIEN 精排模型上线，数据库语种清洗，LightGBM 全面调优
 
 ### 🗑️ 移除
 
@@ -13,13 +114,14 @@
 ### 🚀 新增功能
 
 - **DIEN 精排模型上线** (`train_dien.py`)：采用 Deep Interest Evolution Network（Zhou et al. AAAI 2019）替代伪 DIN，实现真正的用户行为序列建模：
+
   - 兴趣提取层（IEL）：GRU 网络 + 辅助监督损失，显式建模用户兴趣演化
   - 兴趣演化层（AUGRU）：以候选歌曲 embedding 为查询向量的注意力门控 GRU，动态提取与当前候选相关的兴趣表示
   - Val AUC = **0.7673**（22 epochs），优于旧 DIN 实现
   - 依赖 `Mode/features_seq.pkl`（用户行为序列，由 `prepare_features_v3.py Step 6` 生成）
   - 输出至 `Mode/dien/`（`dien_model.pth` + `model_config.pkl`）
-
 - **特征工程 v3 大幅扩展**（`prepare_features_v3.py`）：
+
   - 稀疏特征：7 → **14 个**（新增 `year_bucket`, `city`, `gender`, `age_bucket`, `tenure_bucket`, `duration_bucket`, `user_peak_hour`）
   - 稠密特征：扩展至 **57 个**（含 OOF TE 统计量：`user_skip_rate`, `song_skip_rate`；SVD 嵌入降维向量；`days_since_artist_log` 等时序交互特征）
   - 总特征维度：**71 维**（14 sparse + 57 dense），同时兼容 LightGBM / DeepFM / DIEN 三模型
@@ -29,17 +131,18 @@
 ### 🐛 Bug 修复
 
 - **修复 LightGBM `user_history_position` 时序泄漏**（`train_lgbm.py` 第 467-471 行）：
+
   - 根本原因：该特征 = 记录在用户历史中的时序位置（0=最早，1=最近）。由于验证集使用用户最后 10% 交互，训练集 position ∈ [0, 0.9]，验证集 position ∈ [0.9, 1.0]，构成完美的 train/val 区分器，导致 LightGBM 在第 4 轮即学会此规律，之后验证 AUC 从 0.730 持续下滑至 0.704，`best_iter=4` 假早停。
   - 修复方式：`train_lgbm.py` 中永久注释禁用该特征注入，添加根因说明注释。
   - 注：神经网络模型（DeepFM / DIEN）对此特征鲁棒，无需禁用。
-
 - **恢复被意外注释的三个关键特征**（`train_lgbm.py` DENSE_FEATURES）：
+
   - `user_skip_rate`：用户跳过率，高重要度特征（重要度排名第 4，4.9 万分）
   - `song_skip_rate`：歌曲被跳过率（重要度排名第 5，4.1 万分）
   - `days_since_artist_log`：用户上次收听该艺术家的时间间隔（时序交互强特征）
   - 三个特征均在 v2.4.0 的 0.7933 最优记录中存在，被错误注释后导致 AUC 下降至 0.72。
-
 - **回滚无效的类别权重策略**：
+
   - 验证了 LightGBM `scale_pos_weight=2` 在第 23 轮即触发早停，val AUC 从 0.7062 下降至 0.6994（下降 0.007）。
   - 根本原因：AUC 是排序指标，与类别平衡无关，`scale_pos_weight` 扭曲梯度方向导致欠训练。三个训练脚本均已回滚至原始损失函数设置。
 
@@ -49,24 +152,23 @@
 
 - **LightGBM 超参全面调优**（`train_lgbm.py`）：
 
-  | 参数 | 旧值 | 新值 | 说明 |
-  |------|------|------|------|
-  | `num_leaves` | 64 | 128 | 提升模型表达能力（≈2^7 叶节点）|
-  | `min_child_samples` | 5000 | 2000 | 放宽叶节点限制，允许更细粒度分裂 |
-  | `n_estimators` | 5000 | 8000 | 配合 early_stopping 延长训练 |
-  | `early_stopping_rounds` | 100 | 300 | 充分探索，避免伪早停 |
-  | `reg_alpha` | 0.1 | 1.0 | 加强 L1 正则，促进稀疏 |
-  | `reg_lambda` | 1.0 | 5.0 | 加强 L2 正则，减少方差 |
-
+  | 参数                      | 旧值 | 新值 | 说明                             |
+  | ------------------------- | ---- | ---- | -------------------------------- |
+  | `num_leaves`            | 64   | 128  | 提升模型表达能力（≈2^7 叶节点） |
+  | `min_child_samples`     | 5000 | 2000 | 放宽叶节点限制，允许更细粒度分裂 |
+  | `n_estimators`          | 5000 | 8000 | 配合 early_stopping 延长训练     |
+  | `early_stopping_rounds` | 100  | 300  | 充分探索，避免伪早停             |
+  | `reg_alpha`             | 0.1  | 1.0  | 加强 L1 正则，促进稀疏           |
+  | `reg_lambda`            | 1.0  | 5.0  | 加强 L2 正则，减少方差           |
 - **DeepFM 配置升级**（`train_deepfm_v3.py`）：
 
-  | 参数 | 旧值 | 新值 | 说明 |
-  |------|------|------|------|
-  | `embedding_dim` | 16 | 32 | 全部 14 个稀疏特征 embedding 维度加倍 |
-  | `DNN_HIDDEN_UNITS` | (256,128,64) | (512,256,128) | 网络容量提升，与 DIEN 对齐 |
-  | `EARLY_STOP_PATIENCE` | 10 | 12 | 更充分的收敛探索 |
-
+  | 参数                    | 旧值         | 新值          | 说明                                  |
+  | ----------------------- | ------------ | ------------- | ------------------------------------- |
+  | `embedding_dim`       | 16           | 32            | 全部 14 个稀疏特征 embedding 维度加倍 |
+  | `DNN_HIDDEN_UNITS`    | (256,128,64) | (512,256,128) | 网络容量提升，与 DIEN 对齐            |
+  | `EARLY_STOP_PATIENCE` | 10           | 12            | 更充分的收敛探索                      |
 - **数据库 language/origin_country 全面清洗**（ISRC 交叉验证）：
+
   - 通过 ISRC 国家码统计分布发现 KKBOX songs.csv language 字段 10 个编码中 8 个映射错误（如 code 52 旧映射"法语"→实为"英语"，code 31 旧映射"国语"→实为"韩语"）
   - 全量修正 KKBOX 歌曲 language 标签（共 1,419,171 行）
   - code 31（韩语）精确修复：读取原始 songs.csv 精确匹配 39,201 首，无误差
@@ -80,13 +182,13 @@
 
 > ⚠️ LightGBM 当前模型含 `user_history_position` 时序泄漏（val AUC=0.7237，待重训）
 
-| 模型 | 验证 AUC | 状态 | 说明 |
-|------|---------|------|------|
-| LightGBM | 0.7237 | ⚠️ 待重训 | best_iter=4，user_history_position bug 导致 |
-| DeepFM v3 | **0.7610** | ✅ 正常 | 40 epochs，embedding_dim=32 |
-| DIEN | **0.7673** | ✅ 正常 | 22 epochs，GRU + AUGRU 序列建模 |
-| Weighted Avg（集成）| **0.7878** | ✅ 参考 | best_weights 加权平均 |
-| Stacking (LR) | ~~0.7892~~ | ⚠️ 含泄漏 | LR 在验证集 fit 后同集预测，不可信 |
+| 模型                 | 验证 AUC         | 状态        | 说明                                        |
+| -------------------- | ---------------- | ----------- | ------------------------------------------- |
+| LightGBM             | 0.7237           | ⚠️ 待重训 | best_iter=4，user_history_position bug 导致 |
+| DeepFM v3            | **0.7610** | ✅ 正常     | 40 epochs，embedding_dim=32                 |
+| DIEN                 | **0.7673** | ✅ 正常     | 22 epochs，GRU + AUGRU 序列建模             |
+| Weighted Avg（集成） | **0.7878** | ✅ 参考     | best_weights 加权平均                       |
+| Stacking (LR)        | ~~0.7892~~      | ⚠️ 含泄漏 | LR 在验证集 fit 后同集预测，不可信          |
 
 ---
 
@@ -103,24 +205,6 @@
 - LightGBM 重训：`python train_lgbm.py`（修复后代码已就绪，预计约 40 分钟）
 - evaluate_offline.py 修复：第 306-322 行改为 best_weights 加权平均（与线上逻辑一致）
 - 若重训后集成 AUC < 0.74，优先考虑 AutoInt 替换 DIEN（30 分钟改动，无需修改特征工程）
-
----
-
-### 📁 新增/修改文件
-
-| 文件 | 改动 |
-|------|------|
-| `Project/train_dien.py` | 新增：DIEN 精排模型（GRU + AUGRU，替代伪 DIN）|
-| `Project/train_din.py` | 删除：DIN 伪实现已废弃 |
-| `Mode/dien/` | 新增：DIEN 模型目录（dien_model.pth, model_config.pkl, training_progress.png, dien_metrics.csv）|
-| `Mode/din/` | 删除：DIN 模型目录已清理 |
-| `Project/train_lgbm.py` | 更新：超参调优 + user_history_position 永久禁用 + 三特征恢复 |
-| `Project/train_deepfm_v3.py` | 更新：embedding_dim 16→32，DNN_HIDDEN_UNITS 扩容，VALID_RATIO 统一为 0.1 |
-| `Project/prepare_features_v3.py` | 更新：稀疏特征 7→14，稠密特征扩展至 57，总维度 71 |
-| `Mode/features_v3.pkl` | 更新：7,377,700 样本，71 维特征（14 sparse + 57 dense）|
-| `Document/README.md` | 更新：模型阵容、特征维度、文件结构 |
-
----
 
 ## v2.4.0 (2026-03-18) - 模型精简：移除 CatBoost/XGBoost，OOF Target Encoding，深度模型增强
 
@@ -167,24 +251,6 @@
 - 删除 `scripts/test_api_composer.py`、`scripts/test_enrich_100.py` 一次性测试脚本
 - 删除 `catboost_train.log`、`xgboost_train.log`、`lgbm_train.log` 训练日志
 - **git 历史重写**：从版本历史中彻底清除 `features_v3_cache.npz`（2GB）、`song_index.faiss`（703MB）及历史 `Mode/*.pkl` 大文件，仓库体积从 3.8GB 压缩至 2.1GB（LFS 管理）
-
-### 📁 新增/修改文件
-
-| 文件                            | 改动                                                 |
-| ------------------------------- | ---------------------------------------------------- |
-| `Project/train_catboost.py`   | [DELETED] CatBoost 训练脚本已移除                    |
-| `Project/train_xgboost.py`    | [DELETED] XGBoost 训练脚本已移除                     |
-| `Mode/catboost/`              | [DELETED] CatBoost 模型目录已移除                    |
-| `Mode/xgboost/`               | [DELETED] XGBoost 模型目录已移除                     |
-| `Project/train_lgbm.py`       | [UPDATE] 改用 OOF Target Encoding                    |
-| `Project/train_deepfm_v3.py`  | [UPDATE] EPOCHS 10→15，L2 正则，min-count           |
-| `Project/train_din.py`        | [UPDATE] EPOCHS 10→15，L2 正则，min-count           |
-| `Project/build_ensemble.py`   | [UPDATE] Stacking 集成：LightGBM + DeepFM + DIN      |
-| `Project/evaluate_offline.py` | [NEW] KKBOX 离线评估脚本（NDCG@10=0.721，MRR=0.811） |
-| `Project/evaluate_recs.py`    | [UPDATE] 在线评估标签逻辑更新（CTR=10.39%）          |
-| `Document/README.md`          | [UPDATE] 模型阵容更新，移除 CatBoost/XGBoost         |
-
----
 
 ## v2.3.0 (2026-03-17) - 推荐系统全面升级：目标泄漏修复、特征工程 v3、集成精排
 

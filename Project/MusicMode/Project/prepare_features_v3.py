@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-prepare_features_v3.py — 特征工程 v3.2（62特征全集，含 SVD 嵌入）
+prepare_features_v3.py — 特征工程 （62特征全集，含 SVD 嵌入）
 
 数据来源：MySQL musicweb 数据库（全量）
 输出文件：
@@ -58,6 +58,7 @@ OUTPUT_FEATURES  = os.path.join(MODE_DIR, "features_v3.pkl")
 OUTPUT_ENCODERS  = os.path.join(MODE_DIR, "encoders_v3.pkl")
 OUTPUT_USER_STATS= os.path.join(MODE_DIR, "user_stats.pkl")
 OUTPUT_SONG_STATS= os.path.join(MODE_DIR, "song_stats.pkl")
+OUTPUT_SVD_VECS  = os.path.join(MODE_DIR, "svd_vecs.pkl")   # SVD向量，供在线推断查找
 
 # 今天的日期（用于计算 song_age_days 和 user_tenure）
 TODAY = date.today()
@@ -276,7 +277,8 @@ def compute_user_stats(ph_df: pd.DataFrame, songs_df: pd.DataFrame) -> pd.DataFr
 
     # 合并
     stats_dict = {
-        "user_basic":        user_basic[["user_id", "user_play_count_log",
+        "user_basic":        user_basic[["user_id", "play_count",
+                                         "user_play_count_log",
                                          "user_avg_completion", "user_30d_active_days",
                                          "user_genre_diversity", "user_target_rate",
                                          "user_peak_hour", "user_skip_rate"]],
@@ -892,6 +894,19 @@ def save_outputs(df, encoders, user_stats_dict, song_stats):
         pickle.dump(encoders, f, protocol=4)
     print(f"   ✅ {OUTPUT_ENCODERS}")
 
+    # ── _uid_map：MySQL user_id（整数）→ ALS 编码索引（整数）
+    # sync_recs_v3.py 通过此映射判断用户是否在 ALS 训练集中（Tier 3 判断）
+    # 若缺失此 key，所有用户均被判断为新用户，ALS 通道完全失效
+    if "user_id" in encoders:
+        _user_le = encoders["user_id"]
+        user_stats_dict["_uid_map"] = {
+            int(uid_str): int(idx)
+            for idx, uid_str in enumerate(_user_le.classes_)
+        }
+        print(f"   ✅ _uid_map 已生成：{len(user_stats_dict['_uid_map']):,} 个用户")
+    else:
+        print("   ⚠️  encoders 中无 user_id，_uid_map 未生成")
+
     # ── user_stats.pkl
     print(f"\n  保存 user_stats.pkl ...")
     with open(OUTPUT_USER_STATS, "wb") as f:
@@ -903,6 +918,29 @@ def save_outputs(df, encoders, user_stats_dict, song_stats):
     with open(OUTPUT_SONG_STATS, "wb") as f:
         pickle.dump(song_stats, f, protocol=4)
     print(f"   ✅ {OUTPUT_SONG_STATS}")
+
+    # ── svd_vecs.pkl（SVD向量，按 *_encoded 索引，供在线推断时 O(1) 查找）
+    # 说明：SVD 是按 category codes 计算的（与 LabelEncoder 编码不同），
+    #       但 df 中同时拥有两列，groupby(user_id_encoded).first() 即可完成对齐。
+    #       同一用户的所有行 SVD 值完全相同（由 _user_codes 决定），first() 足够精确。
+    print(f"\n  保存 svd_vecs.pkl ...")
+    _user_svd_cols = [f"svd_user_song_{i}" for i in range(10)] + \
+                     [f"svd_user_artist_{i}" for i in range(5)]
+    _song_svd_cols = [f"svd_song_user_{i}" for i in range(10)]
+    # 检查所有 SVD 列是否存在（build_feature_matrix 已计算）
+    _user_svd_cols = [c for c in _user_svd_cols if c in df.columns]
+    _song_svd_cols = [c for c in _song_svd_cols if c in df.columns]
+    _user_svd_df = df.groupby("user_id_encoded")[_user_svd_cols].first()
+    _song_svd_df = df.groupby("song_id_encoded")[_song_svd_cols].first()
+    svd_vecs = {
+        "user": _user_svd_df.to_dict("index"),   # {enc_id: {"svd_user_song_0": v, ...}}
+        "song": _song_svd_df.to_dict("index"),   # {enc_id: {"svd_song_user_0": v, ...}}
+    }
+    with open(OUTPUT_SVD_VECS, "wb") as f:
+        pickle.dump(svd_vecs, f, protocol=4)
+    size_mb = os.path.getsize(OUTPUT_SVD_VECS) / 1024 / 1024
+    print(f"   ✅ {OUTPUT_SVD_VECS}  ({size_mb:.1f} MB, "
+          f"{len(svd_vecs['user']):,} 用户 / {len(svd_vecs['song']):,} 歌曲)")
 
     # 打印维度统计
     print(f"\n📊 特征维度统计:")
