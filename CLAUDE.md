@@ -81,6 +81,14 @@
     - 若变量的说明需用公式表示，该说明公式后不加公式序号
     - 公式中物理量符号用斜体，计量单位与说明文字用正体
     - 生成LaTeX代码时：函数名（如MMR、Rel、Sim、max）用\mathrm{}包裹，变量用默认斜体，下标用_{}表示
+
+20. 【第五章公式后实现应用句规范】（仅适用于第五章）：
+
+    - 式中注释块结束后，必须紧跟一句"实现应用句"，说明该公式在系统代码中如何被调用或使用
+    - 实现应用句格式：以"在[模块/脚本名]实现中，……"或"系统在[具体场景]中调用该指标……"开头
+    - 禁止将实现应用句写成原理解释（不得说"该公式揭示了……""其本质是……"）
+    - 正确示例："在prepare_features_v3.py的特征构建阶段，系统对每首候选歌曲计算trend_ratio，并将其作为稠密特征直接输入模型，用于区分近期热度上升与衰退的歌曲。"
+    - 错误示例："该指标大于1时说明歌曲近期热度加速上升，小于1时代表热度趋于衰退。"（此为原理解释，不是实现说明）
 19. 【第五章关键参数速查（写第五章内容时必须以此为准，严禁凭印象填写）】：
 
     **推荐管道漏斗参数（sync_recs_v3.py）**：
@@ -101,25 +109,10 @@
     - 无发行年份参与排序！
     - 回退方案（hot_cache失败时）：按songs.popularity降序
 
-    **LightGBM粗排参数（train_lgbm.py）**：
+    **模型超参数查阅规则（严格执行）**：
 
-    - 特征数：59维（7稀疏+52稠密），无"32维子集"
-    - num_leaves=160，max_depth=6，n_estimators=15000，learning_rate=0.007，min_child_samples=2000
-
-    **DeepFM精排参数（train_deepfm_v3.py）**：
-
-    - 稀疏特征数：14个，embedding_dim=32，DNN=(512,256,128,64)，Dropout=0.5
-    - batch_size=8192，max_epochs=20，LR=0.001，LR调度=ReduceLROnPlateau（耐心3轮，系数0.5）
-    - 早停耐心=8轮，AMP混合精度训练
-
-    **BST精排参数（train_bst.py）**——与DeepFM完全不同，严禁混淆：
-
-    - 稀疏特征数：14个，embedding_dim=32（不是16！）
-    - 序列长度SEQ_LEN=50，Transformer层数=3，N_HEADS=4，D_MODEL=128，FFN_DIM=256
-    - DNN=(256,128,64)，激活函数=ReLU+BN（不是Dice！），Dropout=0.45
-    - batch_size=4096（不是8192！），max_epochs=40（不是20！）
-    - LR=5e-5（不是0.001！），LR调度=CosineAnnealingLR（不是ReduceLROnPlateau！），eta_min=1e-6
-    - 早停耐心=10轮（不是8！），L2正则=8e-4
+    - 凡需引用LightGBM、DeepFM、BST任一模型的超参数，必须直接查阅对应训练脚本（train_lgbm.py、train_deepfm_v3.py、train_bst.py）中的实际变量定义，不得凭印象或任何历史记录填写
+    - 历史记录随代码迭代极易过时，DeepFM参数曾因此造成论文6处错误，教训深刻
 
     **集成层（build_ensemble.py）**：
 
