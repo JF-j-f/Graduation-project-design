@@ -6,7 +6,7 @@ train_lgbm.py — LightGBM 粗排模型训练
   - 输入: features_v3.pkl（来自 prepare_features_v3.py）
   - 目标: 预测"30天内重复收听"概率（二分类）
   - 模型: LightGBM（num_leaves=96, max_depth=6, n_estimators=12000）
-  - 特征: 7 个稀疏特征 + 36 个稠密特征（含 OOF TE、SVD 嵌入）
+  - 特征: 7 个稀疏特征 + 52 个稠密特征（含 OOF TE、SVD 嵌入），共 59 维
   - 输出: lgbm_model.pkl + lgbm_importance.png
 
 执行：

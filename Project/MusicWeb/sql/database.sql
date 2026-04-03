@@ -257,6 +257,22 @@ CREATE TABLE IF NOT EXISTS `user_content_blocks` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='用户流派/歌手软屏蔽（递增冷却+衰减回归）';
 
+--
+-- v7.0: 歌曲滚动统计（预聚合近7天/30天播放量与热度趋势，与歌曲主表解耦）
+--
+CREATE TABLE IF NOT EXISTS `song_rolling_stats` (
+  `song_id`     INT NOT NULL COMMENT '歌曲ID，与songs表一对一对应',
+  `cnt_7d`      INT NOT NULL DEFAULT 0 COMMENT '近7天播放次数',
+  `cnt_30d`     INT NOT NULL DEFAULT 0 COMMENT '近30天播放次数',
+  `trending`    FLOAT NOT NULL DEFAULT 0 COMMENT '热度趋势（7天播放量/30天日均+1）',
+  `total_plays` BIGINT NOT NULL DEFAULT 0 COMMENT '累计总播放次数',
+  `updated_at`  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                ON UPDATE CURRENT_TIMESTAMP COMMENT '最后更新时间',
+  PRIMARY KEY (`song_id`),
+  FOREIGN KEY (`song_id`) REFERENCES `songs`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='歌曲滚动统计表（预聚合近7/30天播放量及热度趋势，供推荐引擎实时查询）';
+
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;

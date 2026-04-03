@@ -5,8 +5,8 @@ sync_recs_v3.py — 三路召回 + LightGBM粗排 + DeepFM/BST双模型精排集
 架构：
   召回层  (230万 → ~600): FAISS向量召回(200) + 个性化热度召回(200) + ALS协同过滤(200)
                           - 通道A（FAISS）：满意度感知，dissatisfied时强化偏好探索
-                          - 通道B（热度）：满意度感知，动态调整流派过滤和艺术家加权
-                          - 通道C（ALS）：新用户降级为注册偏好召回；dissatisfied时降权
+                          - 通道B（ALS）：新用户三层降级路由（Tier1冷启动/Tier2内容/Tier3协同）；dissatisfied时降权
+                          - 通道C（热度）：满意度感知，动态调整流派过滤和艺术家加权
   粗排层  (~600 → 300):   LightGBM 打分（仅粗排，不参与精排集成）
   精排层  (300 → 150):    DeepFM + BST 双模型加权融合
                           - DeepFM：特征共现交互（FM层+DNN层）

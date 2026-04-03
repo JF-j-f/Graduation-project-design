@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <dc:title>第1章绪论</dc:title>
+  <dc:subject/>
+  <dc:creator>JF</dc:creator>
+  <cp:keywords/>
+  <dc:description/>
+  <cp:lastModifiedBy>Fu Jun</cp:lastModifiedBy>
+  <cp:revision>20</cp:revision>
+  <cp:lastPrinted>2025-11-11T00:46:00Z</cp:lastPrinted>
+  <dcterms:created xsi:type="dcterms:W3CDTF">2026-04-01T08:10:00Z</dcterms:created>
+  <dcterms:modified xsi:type="dcterms:W3CDTF">2026-04-01T15:29:00Z</dcterms:modified>
+  <cp:version>v3</cp:version>
+</cp:coreProperties>
