@@ -1,4 +1,6 @@
 /.claude
+/.agents/workflows
+/.venv
 
 # 模型文件（大型二进制，不进入版本库）
 Project/MusicMode/Mode/*.pkl
@@ -7,7 +9,14 @@ Project/MusicMode/Mode/*.faiss
 Project/MusicMode/Mode/*.h5
 Project/MusicMode/Mode/*.onnx
 Project/MusicMode/Mode/*.npz
-Project/MusicMode/Mode
+Project/MusicMode/Mode/bst*.pkl
+Project/MusicMode/Mode/bst*.pth
+Project/MusicMode/Mode/deepfm*.pkl
+Project/MusicMode/Mode/deepfm*.pth
+Project/MusicMode/Mode/lgbm*.pkl
+Project/MusicMode/Mode/lgbm*.pth
+Project/MusicMode/Mode/evaluation_report.txt
+Project/MusicMode/Mode/offline_evaluation_report.txt
 
 # Python 编译缓存
 __pycache__/
