@@ -23,11 +23,6 @@ __pycache__/
 *.pyc
 *.pyo
 
-# 训练日志与中间产物（可选保留，按需注释掉）
-#Project/MusicMode/Mode/train_*.txt
-#Project/MusicMode/Mode/*.csv
-#Project/MusicMode/Mode/*.png
-
 # 空占位文件
 Project/MusicMode/scripts/null
 Project/MusicWeb/scripts/null
