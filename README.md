@@ -133,14 +133,41 @@ MusicWeb 是一个**双模块全栈音乐平台**，由 Java Web 前端服务与
 mysql -u root -p < Project/MusicWeb/sql/database.sql
 ```
 
-### 第二步：配置文件修改
+### 第二步：创建隐私配置文件（必须）
 
-```
-Project/MusicWeb/src/main/resources/c3p0-config.xml   # 数据库用户名/密码
-Project/MusicWeb/src/main/resources/email.properties  # 163 邮件账号（申诉通知用）
+复制模板文件并重命名：
+
+```bash
+cp secrets.txt.example secrets.txt
 ```
 
-### 第三步：一键启动所有服务（推荐）
+然后编辑 `secrets.txt`，填写以下配置：
+
+| 配置项                                                | 说明                                       |
+| ----------------------------------------------------- | ------------------------------------------ |
+| `DB_USER` / `DB_PASSWORD`                         | MySQL 数据库用户名和密码                   |
+| `MAIL_USERNAME` / `MAIL_PASSWORD` / `MAIL_FROM` | 163 邮箱账号及授权码（申诉邮件通知用）     |
+| `LASTFM_API_KEY` / `LASTFM_SHARED_SECRET`         | Last.fm API 凭证（歌曲元数据补全用，可选） |
+
+### 第三步：配置 Cookie（用于播放网易云/QQ 音乐 VIP 歌曲）
+
+复制模板文件：
+
+```bash
+cp Project/MusicWeb/src/main/webapp/MusicServer/Cookie/api_credentials.json.example \
+   Project/MusicWeb/src/main/webapp/MusicServer/Cookie/api_credentials.json
+```
+
+然后编辑 `api_credentials.json`，填写以下字段：
+
+| 字段               | 获取方式                                                                              |
+| ------------------ | ------------------------------------------------------------------------------------- |
+| `netease_cookie` | 登录网易云音乐网页版，从浏览器开发者工具 → Network → Cookie 中提取 `MUSIC_U` 字段 |
+| `qq_cookie`      | 登录 QQ 音乐网页版，提取完整 Cookie 串（含 `qqmusic_key` 等字段）                   |
+
+> 不配置此文件时，普通免费歌曲仍可正常播放，VIP 解灰功能不可用。
+
+### 第五步：一键启动所有服务（推荐）
 
 ```bash
 Project/MusicWeb/scripts/run_services.bat
@@ -158,12 +185,11 @@ Project/MusicWeb/scripts/run_services.bat
 
 停止所有服务：`Project/MusicWeb/scripts/stop_services.bat`
 
-### 第四步：访问
+### 第六步：访问
 
-| 页面           | 地址                                            |
-| -------------- | ----------------------------------------------- |
-| 首页（含登录） | `http://localhost:8082/musicweb/index.jsp`    |
-| 用户注册       | `http://localhost:8082/musicweb/register.jsp` |
+| 页面 | 地址                                                            |
+| ---- | --------------------------------------------------------------- |
+| 首页 | [http://localhost:8082/musicweb/](http://localhost:8082/musicweb/) |
 
 ---
 

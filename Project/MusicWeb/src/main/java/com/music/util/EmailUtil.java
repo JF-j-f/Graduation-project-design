@@ -22,7 +22,8 @@ public class EmailUtil {
     /*
      * 静态初始化块
      * 在类加载时自动执行，用于从 email.properties 配置文件中读取配置信息。
-     * 确保 email.properties 文件位于 classpath 根目录下（如 src/main/resources）。
+     * 敏感字段（username/password/from）使用 ${KEY} 占位符，由 SecretsLoader 注入
+     * System.properties 后在此处通过 resolve() 方法解析。
      */
     static {
         try (InputStream input = EmailUtil.class.getClassLoader().getResourceAsStream("email.properties")) {
@@ -30,12 +31,12 @@ public class EmailUtil {
             if (input != null) {
                 // 加载配置文件
                 props.load(input);
-                // 读取具体的配置项
+                // 读取配置项，敏感字段通过 resolve() 从 System.properties 解析占位符
                 host = props.getProperty("mail.smtp.host");
                 port = props.getProperty("mail.smtp.port");
-                username = props.getProperty("mail.username");
-                password = props.getProperty("mail.password");
-                from = props.getProperty("mail.from");
+                username = resolve(props.getProperty("mail.username"));
+                password = resolve(props.getProperty("mail.password"));
+                from = resolve(props.getProperty("mail.from"));
             } else {
                 System.err.println("未找到 email.properties 配置文件");
             }
@@ -43,6 +44,23 @@ public class EmailUtil {
             System.err.println("读取邮件配置文件失败");
             e.printStackTrace();
         }
+    }
+
+    /**
+     * 解析 ${KEY} 占位符，从 System.properties 中获取对应的值。
+     * 若值不是占位符格式，则原样返回。
+     *
+     * @param value 配置值，可能包含 ${KEY} 占位符
+     * @return 解析后的实际值，若 System.properties 中无对应键则返回原始值
+     */
+    private static String resolve(String value) {
+        if (value != null && value.startsWith("${") && value.endsWith("}")) {
+            String key = value.substring(2, value.length() - 1);
+            // 从 System.properties 取值（由 SecretsLoader 在启动时注入）
+            String resolved = System.getProperty(key);
+            return (resolved != null) ? resolved : value;
+        }
+        return value;
     }
 
     /**

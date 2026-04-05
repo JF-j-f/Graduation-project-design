@@ -4,6 +4,12 @@
          xsi:schemaLocation="https://jakarta.ee/xml/ns/jakartaee https://jakarta.ee/xml/ns/jakartaee/web-app_6_0.xsd"
          version="6.0">
     
+    <!-- 隐私配置加载器：最先执行，读取 secrets.txt 并注入 System.properties -->
+    <!-- 必须在所有 Servlet 初始化之前运行，以确保 DBUtil / EmailUtil 能获取到配置 -->
+    <listener>
+        <listener-class>com.music.listener.SecretsLoader</listener-class>
+    </listener>
+
     <!-- 欢迎文件配置：访问根路径时自动跳转到 index.jsp -->
     <welcome-file-list>
         <welcome-file>index.jsp</welcome-file>

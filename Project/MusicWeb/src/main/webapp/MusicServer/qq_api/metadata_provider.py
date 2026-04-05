@@ -18,6 +18,44 @@ from qqmusic_api import search, song, Credential
 from qqmusic_api.utils.session import Session, set_session
 
 # ============================================
+#    隐私配置读取
+# ============================================
+
+# 隐私配置文件路径（项目根目录 secrets.txt，不提交到 Git）
+_SECRETS_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", "..", "..", "secrets.txt")
+
+
+def _load_secret(key: str) -> str:
+    """
+    从项目根目录的 secrets.txt 读取指定键的值。
+
+    secrets.txt 格式：每行 KEY=VALUE，以 # 开头为注释行，空行忽略。
+    该文件已加入 .gitignore，不会被提交到版本库。
+
+    Args:
+        key: 配置键名，例如 "LASTFM_API_KEY"
+    Returns:
+        对应的配置值，未找到时返回空字符串
+    """
+    secrets_path = os.path.normpath(_SECRETS_PATH)
+    if not os.path.exists(secrets_path):
+        print(f"⚠️  secrets.txt 未找到: {secrets_path}，{key} 将使用空值")
+        return ""
+    try:
+        with open(secrets_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                if k.strip() == key:
+                    return v.strip()
+    except OSError as e:
+        print(f"⚠️  读取 secrets.txt 失败: {e}")
+    return ""
+
+
+# ============================================
 #    配置常量
 # ============================================
 
@@ -31,7 +69,7 @@ NETEASE_API_URL = "http://127.0.0.1:3000"
 
 # Last.fm API 配置
 LASTFM_API_URL = "https://ws.audioscrobbler.com/2.0/"
-LASTFM_API_KEY = "32e3b3e6d7d1b629346c9e9c7d889c06"
+LASTFM_API_KEY = _load_secret("LASTFM_API_KEY")
 
 # MusicBrainz API 配置
 MUSICBRAINZ_API_URL = "https://musicbrainz.org/ws/2"

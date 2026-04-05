@@ -3,10 +3,8 @@
     <named-config name="musicweb">
         <!-- MySQL 8.4.0 驱动 -->
         <property name="driverClass">com.mysql.cj.jdbc.Driver</property>
-        <!-- 数据库连接信息 -->
+        <!-- 数据库连接信息（user/password 由 SecretsLoader 注入 System.properties，DBUtil 编程式设置） -->
         <property name="jdbcUrl">jdbc:mysql://localhost:3306/musicweb?useUnicode=true&amp;characterEncoding=UTF-8&amp;serverTimezone=Asia/Shanghai&amp;useSSL=false&amp;allowPublicKeyRetrieval=true</property>
-        <property name="user">root</property>
-        <property name="password">JF123456</property>
 
         <!-- 连接池参数 -->
         <property name="initialPoolSize">5</property>
