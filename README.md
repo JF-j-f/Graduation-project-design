@@ -550,19 +550,19 @@ Python 引擎计算后写入，前端实时读取展示。
 
 ## 项目结构 (Project Structure)
 
-```
 Graduation-project-design/
 ├── README.md                              # 本文档
+├── CHANGELOG.md                           # 项目更新日志
 ├── LICENSE                                # MIT 许可证
-├── image/                                 # 系统架构图与模型原理图资源
+├── secrets.txt.example                    # 隐私配置模板
+├── Document/                              # 论文文档目录
 ├── Project/
 │   ├── MusicWeb/                          # Java Web 前端服务
 │   │   ├── pom.xml                        # Maven 项目配置
 │   │   ├── Document/                      # 项目文档
 │   │   │   ├── CHANGELOG.md               # MusicWeb 更新日志
-│   │   │   └── OPERATION_MANUAL.md        # 运维操作手册
-│   │   ├── sql/                           # 数据库脚本
-│   │   │   └── database.sql               # 数据库初始化脚本（11张表）
+│   │   ├── sql/
+│   │   │   └── database.sql               # 数据库初始化脚本
 │   │   ├── scripts/                       # 自动化运维脚本
 │   │   │   ├── run_services.bat           # 一键启动所有服务
 │   │   │   ├── stop_services.bat          # 一键停止所有服务
@@ -573,9 +573,11 @@ Graduation-project-design/
 │   │   │   └── run_sql.py                 # SQL 批量执行工具
 │   │   └── src/main/
 │   │       ├── java/com/music/
+│   │       │   ├── listener/              # 生命周期监听器
+│   │       │   │   └── SecretsLoader.java		 # 启动时将 secrets.txt 注入 System.properties
 │   │       │   ├── javabean/              # 实体类
 │   │       │   │   ├── Appeal.java        # 申诉实体
-│   │       │   │   ├── DBUtil.java        # 数据库连接工具
+│   │       │   │   ├── DBUtil.java        # 数据库连接池工具
 │   │       │   │   ├── Favorite.java      # 收藏实体
 │   │       │   │   ├── PlayHistory.java   # 播放历史实体
 │   │       │   │   ├── Playlist.java      # 歌单实体
@@ -589,55 +591,31 @@ Graduation-project-design/
 │   │       │   │   ├── RedisUtil.java     # Redis 缓存工具
 │   │       │   │   ├── SongDAO.java       # 歌曲数据操作
 │   │       │   │   └── UserDAO.java       # 用户数据操作
-│   │       │   ├── service/               # 业务逻辑层
-│   │       │   │   └── RecommendationService.java  # 推荐服务（冷启动）
+│   │       │   ├── service/
+│   │       │   │   └── RecommendationService.java  # 推荐服务
 │   │       │   ├── servlet/               # 控制层（24 个 Servlet）
-│   │       │   │   ├── AdminServlet.java              # 管理员后台主控
-│   │       │   │   ├── AppealServlet.java             # 账号申诉处理
-│   │       │   │   ├── AudioServlet.java              # 音频流代理
-│   │       │   │   ├── BlockContentServlet.java       # 内容屏蔽管理
-│   │       │   │   ├── ChangePasswordServlet.java     # 密码修改
-│   │       │   │   ├── DeleteAccountServlet.java      # 账号注销
-│   │       │   │   ├── FavoriteServlet.java           # 收藏操作
-│   │       │   │   ├── GetPlayUrlServlet.java         # 多源播放链接
-│   │       │   │   ├── ImageProxyServlet.java         # 封面图片代理
-│   │       │   │   ├── LogoutServlet.java             # 用户登出
-│   │       │   │   ├── PlayHistoryPageServlet.java    # 播放历史分页查询
-│   │       │   │   ├── PlayHistoryServlet.java        # 播放历史记录
-│   │       │   │   ├── PlaylistServlet.java           # 歌单 CRUD
-│   │       │   │   ├── PlaylistSongsPageServlet.java  # 歌单歌曲分页
-│   │       │   │   ├── RefreshRecommendServlet.java   # 推荐分页刷新
-│   │       │   │   ├── SearchServlet.java             # 多源搜索
-│   │       │   │   ├── TestDBServlet.java             # 数据库连接测试
-│   │       │   │   ├── UniversalPlayHistoryServlet.java # 通用播放历史（含自动入库）
-│   │       │   │   ├── UpdatePlayDurationServlet.java # 播放时长上报
-│   │       │   │   ├── UpdateProfileServlet.java      # 用户资料更新
-│   │       │   │   ├── UserLoginServlet.java          # 用户登录
-│   │       │   │   ├── UserPlaylistsServlet.java      # 用户歌单列表
-│   │       │   │   ├── UserPreferenceServlet.java     # 用户口味偏好反馈
-│   │       │   │   └── UserRegisterServlet.java       # 用户注册
-│   │       │   ├── util/                  # 工具类
-│   │       │   │   ├── CoverDownloadUtil.java         # 封面下载工具
-│   │       │   │   └── EmailUtil.java                 # 邮件发送工具
-│   │       │   └── utils/                 # 扩展工具类
-│   │       │       └── MetadataCleaner.java           # 元数据清洗工具
-│   │       ├── resources/                 # 配置文件
-│   │       │   ├── c3p0-config.xml        # 数据库连接池配置
+│   │       │   ├── util/
+│   │       │   │   ├── CoverDownloadUtil.java      # 歌曲封面图片下载工具
+│   │       │   │   └── EmailUtil.java              # 邮件工具
+│   │       │   └── utils/
+│   │       │       └── MetadataCleaner.java        # 元数据清洗工具
+│   │       ├── resources/
+│   │       │   ├── c3p0-config.xml        # 数据库连接池
 │   │       │   ├── email.properties       # 邮件服务配置
 │   │       │   ├── logging.properties     # 日志配置
-│   │       │   └── music-api.properties   # 第三方 API 配置
-│   │       └── webapp/                    # 前端资源根目录
-│   │           ├── WEB-INF/web.xml        # Web 应用部署配置
+│   │       │   └── music-api.properties   # 第三方 API 地址配置
+│   │       └── webapp/
+│   │           ├── WEB-INF/web.xml        # Web 应用部署描述
 │   │           ├── MusicServer/           # 独立音乐 API 服务目录
-│   │           │   ├── Cookie/            # API 凭证缓存
+│   │           │   ├── Cookie/
+│   │           │   │   └── api_credentials.json.example  # Cookie 配置模板
 │   │           │   ├── node_modules/      # Node.js 依赖库
 │   │           │   ├── qq_api/            # Python QQ 音乐 FastAPI 服务
-│   │           │   │   ├── app.py                     # FastAPI 主程序
-│   │           │   │   ├── metadata_provider.py       # 五级元数据聚合引擎
-│   │           │   │   ├── qq_credential.json         # QQ 音乐登录凭证
-│   │           │   │   ├── qq_music_mapping.json      # 流派语种映射表
-│   │           │   │   └── requirements.txt           # Python 依赖
-│   │           │   ├── unblock/           # UnblockNeteaseMusic 服务
+│   │           │   │   ├── app.py                        # FastAPI 入口
+│   │           │   │   ├── metadata_provider.py          # 元数据聚合
+│   │           │   │   ├── qq_music_mapping.json         # 流派/语种映射表
+│   │           │   │   └── requirements.txt              # Python 依赖
+│   │           │   ├── unblock/           # UnblockNeteaseMusic 解灰服务
 │   │           │   └── package.json       # Node.js 依赖配置
 │   │           ├── js/                    # 前端脚本
 │   │           │   ├── app.js             # 主业务入口逻辑
@@ -646,12 +624,12 @@ Graduation-project-design/
 │   │           │   ├── addToPlaylist.js   # 添加到歌单逻辑
 │   │           │   ├── settings.js        # 设置页交互逻辑
 │   │           │   ├── user-logic.js      # 用户状态管理逻辑
-│   │           │   ├── server.js          # Node 服务交互逻辑
+│   │           │   ├── server.js          # Node.js 网易云 API 交互
 │   │           │   ├── qqLoginModal.js    # QQ 登录弹窗逻辑
-│   │           │   ├── verify_qq.js       # QQ 验证逻辑
-│   │           │   └── verify_qq_multi.js # 多用户验证逻辑
-│   │           ├── css/                   # 样式表
-│   │           │   ├── admin/             # 管理后台专属样式
+│   │           │   ├── verify_qq.js       # QQ 账号验证逻辑
+│   │           │   └── verify_qq_multi.js # 多账号 QQ 验证逻辑
+│   │           ├── css/                   # 样式库
+│   │           │   ├── admin/             # 管理后台样式
 │   │           │   ├── style.css          # 主样式表
 │   │           │   ├── player.css         # 播放器样式
 │   │           │   ├── search.css         # 搜索页样式
@@ -670,7 +648,7 @@ Graduation-project-design/
 │   │           ├── includes/              # 通用 JSP 组件
 │   │           │   ├── song-item.jsp      # 歌曲列表项组件
 │   │           │   └── chart-item.jsp     # 排行榜列表项组件
-│   │           ├── img/                   # 歌曲封面图片资源
+│   │           ├── img/                   # 歌曲封面图片（运行时动态写入）
 │   │           ├── index.jsp              # 网站首页（含登录表单）
 │   │           ├── user.jsp               # 用户主页
 │   │           ├── search.jsp             # 搜索结果页
@@ -682,36 +660,27 @@ Graduation-project-design/
 │   │           └── accountStatus.jsp      # 账号状态提示页
 │   │
 │   └── MusicMode/                         # Python 推荐算法引擎
-│       ├── Document/                      # 算法文档
+│       ├── Document/
 │       │   ├── CHANGELOG.md               # MusicMode 更新日志
 │       │   └── Data_Description.md        # KKBOX 数据集说明
-│       ├── scripts/                       # 运维脚本与依赖配置
+│       ├── scripts/
 │       │   ├── spark_etl_songs.py         # KKBOX 229 万歌曲全量导入
-│       │   ├── update_song_metadata.py    # 歌曲元数据更新
-│       │   ├── enrich_db.py               # 外部歌曲元数据补全
 │       │   ├── start_daily_recommend.bat  # 每日推荐定时任务
-│       │   └── requirements.txt           # Python 依赖配置
-│       ├── sql/                           # 数据库迁移脚本
-│       │   └── migration_phase1.sql
+│       │   └── requirements.txt 			#依赖安装
 │       ├── Project/                       # 算法核心源码
 │       │   ├── data_cleaning.py           # 数据清洗与负采样
-│       │   ├── prepare_features_v3.py     # 特征工程 v3（71 维：14 sparse + 57 dense）
-│       │   ├── train_lgbm.py              # LightGBM 粗排（Val AUC 0.7648）
-│       │   ├── train_deepfm_v3.py         # DeepFM 精排（Val AUC 0.7434）
-│       │   ├── train_bst.py               # BST 序列精排（Val AUC 0.7761）
-│       │   ├── build_ensemble.py          # SLSQP 集成优化（AUC 0.7767）
-│       │   ├── build_faiss_index.py       # FAISS 160 维向量索引构建
+│       │   ├── prepare_features_v3.py     # 特征工程 v3
+│       │   ├── train_lgbm.py              # LightGBM 粗排训练
+│       │   ├── train_deepfm_v3.py         # DeepFM 精排训练
+│       │   ├── train_bst.py               # BST 序列精排训练
+│       │   ├── build_ensemble.py          # SLSQP 集成权重优化
+│       │   ├── build_faiss_index.py       # FAISS 向量索引构建
 │       │   ├── train_als.py               # ALS 协同过滤召回
 │       │   ├── sync_recs_v3.py            # 推荐主程序（三通道召回 + 四层漏斗）
-│       │   ├── refresh_song_stats.py      # 歌曲滚动统计刷新（热度召回数据源）
-│       │   ├── evaluate_offline.py        # 离线评估（KKBox 验证集）
-│       │   └── evaluate_recs.py           # 在线评估（真实用户交互）
-│       └── Mode/                          # 模型产物（运行时生成，不纳入版本库）
-└── Data/                                  # 原始数据集（不纳入版本库）
-    └── KKBOX/                             # KKBOX 数据集（229 万首歌曲）
-```
-
----
+│       │   ├── refresh_song_stats.py      # 歌曲滚动统计刷新
+│       │   ├── evaluate_offline.py        # 离线评估
+│       │   ├── evaluate_recs.py           # 在线评估
+│       └── Mode/                          # 模型产物目录
 
 ## 安全设计 (Security)
 

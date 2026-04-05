@@ -2,6 +2,9 @@
 /.agents/workflows
 /.venv
 
+#论文图片
+/image
+
 # 模型文件（大型二进制，不进入版本库）
 Project/MusicMode/Mode/*.pkl
 Project/MusicMode/Mode/*.pth
@@ -33,6 +36,10 @@ secrets.txt
 # 音乐平台 Cookie 凭证（运行时动态维护，禁止上传）
 **/Cookie/api_credentials.json
 **/Cookie/qq_credential_*.json
+
+#脚本
+Project/MusicMode/scripts/update_song_metadata.py
+Project/MusicMode/scripts/generate_auc_chart.py
 
 # Office 临时文件
 ~WRL*.tmp
