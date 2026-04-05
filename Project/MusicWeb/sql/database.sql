@@ -1,4 +1,4 @@
-﻿
+
 /*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
 /*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
 /*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;
@@ -9,6 +9,10 @@
 /*!40014 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0 */;
 /*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;
 /*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;
+
+-- ============================================
+-- 用户申诉表
+-- ============================================
 DROP TABLE IF EXISTS `appeals`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
@@ -28,21 +32,10 @@ CREATE TABLE `appeals` (
   CONSTRAINT `appeals_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB AUTO_INCREMENT=18 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户申诉表';
 /*!40101 SET character_set_client = @saved_cs_client */;
-DROP TABLE IF EXISTS `favorites`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!50503 SET character_set_client = utf8mb4 */;
-CREATE TABLE `favorites` (
-  `id` int NOT NULL AUTO_INCREMENT,
-  `user_id` int NOT NULL,
-  `song_id` int NOT NULL,
-  `create_time` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `unique_favorite` (`user_id`,`song_id`),
-  KEY `song_id` (`song_id`),
-  CONSTRAINT `favorites_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
-  CONSTRAINT `favorites_ibfk_2` FOREIGN KEY (`song_id`) REFERENCES `songs` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=654 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='[已废弃] 歌曲收藏表';
-/*!40101 SET character_set_client = @saved_cs_client */;
+
+-- ============================================
+-- 播放历史表
+-- ============================================
 DROP TABLE IF EXISTS `play_history`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
@@ -59,25 +52,10 @@ CREATE TABLE `play_history` (
   CONSTRAINT `play_history_ibfk_2` FOREIGN KEY (`song_id`) REFERENCES `songs` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB AUTO_INCREMENT=281 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='播放历史表';
 /*!40101 SET character_set_client = @saved_cs_client */;
-DROP TABLE IF EXISTS `playlist_info`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!50503 SET character_set_client = utf8mb4 */;
-CREATE TABLE `playlist_info` (
-  `id` int NOT NULL AUTO_INCREMENT,
-  `playlist_id` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '网易云歌单ID',
-  `title` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '歌单标题',
-  `category` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '所属分类',
-  `tags` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '歌单标签',
-  `play_count` bigint DEFAULT NULL COMMENT '播放量',
-  `fav_count` int DEFAULT NULL COMMENT '收藏量',
-  `share_count` int DEFAULT NULL COMMENT '分享量',
-  `comment_count` int DEFAULT NULL COMMENT '评论数',
-  `url` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '歌单链接',
-  `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `playlist_id` (`playlist_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=1747 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='[已废弃] 外部歌单表';
-/*!40101 SET character_set_client = @saved_cs_client */;
+
+-- ============================================
+-- 歌单歌曲关联表
+-- ============================================
 DROP TABLE IF EXISTS `playlist_songs`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
@@ -94,6 +72,10 @@ CREATE TABLE `playlist_songs` (
   CONSTRAINT `playlist_songs_ibfk_2` FOREIGN KEY (`song_id`) REFERENCES `songs` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB AUTO_INCREMENT=636 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='歌单歌曲表';
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+-- ============================================
+-- 推荐反馈表
+-- ============================================
 DROP TABLE IF EXISTS `recommendation_feedback`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
@@ -119,6 +101,10 @@ CREATE TABLE `recommendation_feedback` (
   CONSTRAINT `recommendation_feedback_ibfk_2` FOREIGN KEY (`song_id`) REFERENCES `songs` (`id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=141 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='推荐反馈表';
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+-- ============================================
+-- 歌曲推荐结果表
+-- ============================================
 DROP TABLE IF EXISTS `recommendations`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
@@ -128,27 +114,16 @@ CREATE TABLE `recommendations` (
   `song_id` int NOT NULL COMMENT '推荐的歌曲ID',
   `score` double DEFAULT '0' COMMENT '推荐得分(相似度累加)',
   `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
-  `source_type` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT 'deepfm' COMMENT 'Recommendation source type',
+  `source_type` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT 'deepfm' COMMENT '推荐来源类型',
   PRIMARY KEY (`id`),
   KEY `idx_user` (`user_id`),
   KEY `idx_user_score` (`user_id`,`score`)
 ) ENGINE=InnoDB AUTO_INCREMENT=111 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='歌曲推荐表';
 /*!40101 SET character_set_client = @saved_cs_client */;
-DROP TABLE IF EXISTS `song_info`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!50503 SET character_set_client = utf8mb4 */;
-CREATE TABLE `song_info` (
-  `id` int NOT NULL AUTO_INCREMENT,
-  `playlist_id` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '关联的歌单ID',
-  `song_name` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '歌曲名',
-  `duration` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '时长',
-  `artist` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '歌手',
-  `album` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '专辑',
-  PRIMARY KEY (`id`),
-  KEY `playlist_id` (`playlist_id`),
-  CONSTRAINT `song_info_ibfk_1` FOREIGN KEY (`playlist_id`) REFERENCES `playlist_info` (`playlist_id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=17438 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='[已废弃] 歌曲草稿表';
-/*!40101 SET character_set_client = @saved_cs_client */;
+
+-- ============================================
+-- 歌曲主表
+-- ============================================
 DROP TABLE IF EXISTS `songs`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
@@ -162,10 +137,10 @@ CREATE TABLE `songs` (
   `release_year` int DEFAULT NULL,
   `file_path` varchar(200) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `cover_image` varchar(200) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `kkbox_id` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'KKBOX original song ID',
-  `genre_ids` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'KKBOX genre IDs separated by |',
-  `language` varchar(10) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Language code',
-  `popularity` int DEFAULT '0' COMMENT 'Popularity score based on KKBOX interactions',
+  `kkbox_id` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'KKBOX原始歌曲ID',
+  `genre_ids` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'KKBOX流派ID，以|分隔',
+  `language` varchar(10) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '语言代码',
+  `popularity` int DEFAULT '0' COMMENT '基于KKBOX交互数据的热度得分',
   `origin_country` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '歌曲原产地（外部元数据补全）',
   PRIMARY KEY (`id`),
   KEY `idx_kkbox_id` (`kkbox_id`),
@@ -173,15 +148,10 @@ CREATE TABLE `songs` (
   KEY `idx_popularity` (`popularity` DESC)
 ) ENGINE=InnoDB AUTO_INCREMENT=2306846 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='歌曲主表';
 /*!40101 SET character_set_client = @saved_cs_client */;
-DROP TABLE IF EXISTS `songs_update_temp`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!50503 SET character_set_client = utf8mb4 */;
-CREATE TABLE `songs_update_temp` (
-  `id` int DEFAULT NULL,
-  `title` longtext COLLATE utf8mb4_unicode_ci,
-  `genre` longtext COLLATE utf8mb4_unicode_ci
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='[已废弃] 歌曲更新表';
-/*!40101 SET character_set_client = @saved_cs_client */;
+
+-- ============================================
+-- 用户歌单表
+-- ============================================
 DROP TABLE IF EXISTS `user_playlists`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
@@ -199,6 +169,10 @@ CREATE TABLE `user_playlists` (
   CONSTRAINT `user_playlists_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户歌单表';
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+-- ============================================
+-- 用户信息表
+-- ============================================
 DROP TABLE IF EXISTS `users`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
@@ -223,9 +197,9 @@ CREATE TABLE `users` (
 ) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户信息表';
 /*!40101 SET character_set_client = @saved_cs_client */;
 
---
--- v4.0: 用户对每日推荐的显式满意度反馈记录（可作训练数据）
---
+-- ============================================
+-- v4.0：用户对每日推荐的显式满意度反馈表（可作训练数据）
+-- ============================================
 CREATE TABLE IF NOT EXISTS `user_preference_feedback` (
   `id`           INT AUTO_INCREMENT PRIMARY KEY,
   `user_id`      INT NOT NULL,
@@ -237,11 +211,11 @@ CREATE TABLE IF NOT EXISTS `user_preference_feedback` (
   UNIQUE KEY `uk_user_date` (`user_id`, `feedback_date`),
   FOREIGN KEY (`user_id`) REFERENCES `users`(`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-  COMMENT='用户对每日推荐的显式满意度反馈记录（可作训练数据）';
+  COMMENT='用户对每日推荐的显式满意度反馈表（可作训练数据）';
 
---
--- v6.0: 用户流派/歌手软屏蔽（递增冷却+衰减回归）
---
+-- ============================================
+-- v6.0：用户流派/歌手软屏蔽（递增冷却+衰减回归）
+-- ============================================
 CREATE TABLE IF NOT EXISTS `user_content_blocks` (
   `id`             INT AUTO_INCREMENT PRIMARY KEY,
   `user_id`        INT NOT NULL,
@@ -250,16 +224,16 @@ CREATE TABLE IF NOT EXISTS `user_content_blocks` (
   `block_count`    INT DEFAULT 1 COMMENT '屏蔽次数（递增计数器）',
   `blocked_at`     TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '最近一次屏蔽时间',
   `blocked_until`  DATE NOT NULL COMMENT '屏蔽到期日',
-  `is_active`      TINYINT(1) DEFAULT 1 COMMENT '1=生效中, 0=已到期',
+  `is_active`      TINYINT(1) DEFAULT 1 COMMENT '1=生效中，0=已到期',
   UNIQUE KEY `uk_user_type_value` (`user_id`, `block_type`, `block_value`),
   KEY `idx_user_active` (`user_id`, `is_active`),
   FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='用户流派/歌手软屏蔽（递增冷却+衰减回归）';
 
---
--- v7.0: 歌曲滚动统计（预聚合近7天/30天播放量与热度趋势，与歌曲主表解耦）
---
+-- ============================================
+-- v7.0：歌曲滚动统计表（预聚合近7/30天播放量及热度趋势）
+-- ============================================
 CREATE TABLE IF NOT EXISTS `song_rolling_stats` (
   `song_id`     INT NOT NULL COMMENT '歌曲ID，与songs表一对一对应',
   `cnt_7d`      INT NOT NULL DEFAULT 0 COMMENT '近7天播放次数',
@@ -274,7 +248,6 @@ CREATE TABLE IF NOT EXISTS `song_rolling_stats` (
   COMMENT='歌曲滚动统计表（预聚合近7/30天播放量及热度趋势，供推荐引擎实时查询）';
 
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
-
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
 /*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */;
 /*!40014 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS */;
@@ -282,4 +255,3 @@ CREATE TABLE IF NOT EXISTS `song_rolling_stats` (
 /*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
-

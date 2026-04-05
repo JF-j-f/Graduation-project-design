@@ -12,7 +12,6 @@
 [![Redis](https://img.shields.io/badge/Redis-5.0+-red?logo=redis)](https://redis.io/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.x-ee4c2c?logo=pytorch)](https://pytorch.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![AUC](https://img.shields.io/badge/Stacking%20AUC-0.7767-brightgreen)]()
 
 </div>
 
