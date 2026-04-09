@@ -345,11 +345,18 @@ public class UniversalPlayHistoryServlet extends HttpServlet {
 
     /**
      * 从 Python 多源元数据聚合服务获取 genre 和 language
-     * 
-     * 四级降级策略：QQ音乐 -> Last.fm -> MusicBrainz -> 本地检测
-     * 
-     * @param title  歌曲名称
-     * @param artist 歌手名称
+     *
+     * 五级降级策略：
+     *   P1: 网易云百科（需要 netease_id，优先级最高）
+     *   P2: QQ 音乐（需要国内 IP）
+     *   P3: Last.fm（全球可用，补全 genre）
+     *   P4: MusicBrainz（全球可用，补全 genre / language）
+     *   P5: langdetect 本地检测（仅语种兜底）
+     * 任一级成功即停止后续查询。
+     *
+     * @param title     歌曲名称
+     * @param artist    歌手名称
+     * @param neteaseId 网易云歌曲 ID（可为 null，为 null 时跳过 P1）
      * @return 包含 genre, language 字段的 JsonObject
      */
     private JsonObject fetchMetadataFromAggregator(String title, String artist, String neteaseId) {

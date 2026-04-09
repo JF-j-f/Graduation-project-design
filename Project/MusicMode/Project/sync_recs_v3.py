@@ -11,7 +11,7 @@ sync_recs_v3.py — 三路召回 + LightGBM粗排 + DeepFM/BST双模型精排集
   精排层  (300 → 150):    DeepFM + BST 双模型加权融合
                           - DeepFM：特征共现交互（FM层+DNN层）
                           - BST：行为序列 Transformer（Chen et al., DLP-KDD 2019）
-                          权重由离线 build_ensemble.py SLSQP 优化得出
+                          由离线 build_ensemble.py 训练的LightGBM元学习器集成
   重排层  (150 → 50):     MMR（最大边际相关）软多样性 + 升级冷却/屏蔽过滤
                           - MMR：λ=0.7，70%相关性 + 30%多样性惩罚
                           - 升级冷却：负向交互1次→3天，2次→7天，3次+→14天冷宫
@@ -56,6 +56,8 @@ BST_MODEL_PATH     = os.path.join(MODE_DIR, "bst", "bst_model.pth")
 BST_CONFIG_PATH    = os.path.join(MODE_DIR, "bst", "model_config.pkl")
 # 集成配置：由 build_ensemble.py 生成，保存在 ensemble 子目录下
 ENSEMBLE_PATH      = os.path.join(MODE_DIR, "ensemble", "ensemble_config.pkl")
+# 元学习器：由 build_ensemble.py 在OOF文件存在时生成
+META_LEARNER_PATH  = os.path.join(MODE_DIR, "ensemble", "meta_learner.pkl")
 ALS_MODEL_PATH     = os.path.join(MODE_DIR, "als_model.pkl")
 ENCODERS_PATH      = os.path.join(MODE_DIR, "encoders_v3.pkl")
 USER_STATS_PATH    = os.path.join(MODE_DIR, "user_stats.pkl")
@@ -284,6 +286,7 @@ class Resources:
         # LightGBM 仅参与粗排（300→50），不参与精排集成
         self.w_deepfm = 0.5
         self.w_bst    = 0.5
+        self.meta_lr  = None   # 逻辑回归元学习器（优先于加权平均使用）
         if os.path.exists(ENSEMBLE_PATH):
             with open(ENSEMBLE_PATH, "rb") as f:
                 ec = pickle.load(f)
@@ -298,6 +301,15 @@ class Resources:
                 f"   ✅ 集成权重（精排）: DeepFM={self.w_deepfm:.3f}, BST={self.w_bst:.3f}"
                 f"（集成 AUC={ec.get('best_overall_auc', 0):.4f}）"
             )
+            # 优先加载元学习器（build_ensemble.py 在OOF文件存在时才会生成）
+            if ec.get("meta_learner_available", False) and os.path.exists(META_LEARNER_PATH):
+                try:
+                    with open(META_LEARNER_PATH, "rb") as f:
+                        self.meta_lr = pickle.load(f)
+                    print(f"   ✅ 元学习器加载（meta AUC={ec.get('meta_auc', 0):.4f}）"
+                          f" — 推断将使用 LR(DeepFM, BST)")
+                except Exception as e:
+                    print(f"   ⚠️ 元学习器加载失败（{e}），降级到加权平均")
 
         # ALS
         self.als_model = None
@@ -1989,18 +2001,29 @@ def generate_recommendations():
                 bst_scored    = rank_with_bst(top_coarse_ids, X_fine, res, uid, db)
                 deepfm_score_map = {sid: s for sid, s in deepfm_scored}
                 bst_score_map    = {sid: s for sid, s in bst_scored}
-                ensemble_scored  = [
-                    (sid,
-                     res.w_deepfm * deepfm_score_map.get(sid, 0.5)
-                     + res.w_bst  * bst_score_map.get(sid, 0.5))
-                    for sid in top_coarse_ids
-                ]
+
+                if res.meta_lr is not None:
+                    # 元学习器推断：LR(DeepFM_score, BST_score) → 集成分
+                    _d = np.array([deepfm_score_map.get(sid, 0.5) for sid in top_coarse_ids], dtype=np.float32)
+                    _b = np.array([bst_score_map.get(sid, 0.5)    for sid in top_coarse_ids], dtype=np.float32)
+                    _X = np.column_stack([_d, _b])
+                    _scores = res.meta_lr.predict_proba(_X)[:, 1]
+                    ensemble_scored = list(zip(top_coarse_ids, _scores.tolist()))
+                else:
+                    # 降级策略：等权加权平均（meta_lr不可用时）
+                    ensemble_scored = [
+                        (sid,
+                         res.w_deepfm * deepfm_score_map.get(sid, 0.5)
+                         + res.w_bst  * bst_score_map.get(sid, 0.5))
+                        for sid in top_coarse_ids
+                    ]
                 ensemble_scored.sort(key=lambda x: -x[1])
                 top_fine = ensemble_scored[:ENSEMBLE_TOP]
             else:
                 top_fine = top_coarse[:ENSEMBLE_TOP]
 
-            print(f"      精排集成（DeepFM×{res.w_deepfm:.2f} + BST×{res.w_bst:.2f}）: top {len(top_fine)} 首")
+            _method = "元学习器LR" if res.meta_lr is not None else f"加权平均DeepFM×{res.w_deepfm:.2f}+BST×{res.w_bst:.2f}"
+            print(f"      精排集成（{_method}）: top {len(top_fine)} 首")
 
             # ── MMR 多样性重排：150 → 50（v7：替代硬约束 diversity_rerank）
             # MMR λ=0.7：70%集成评分相关性 + 30%余弦相似度多样性惩罚

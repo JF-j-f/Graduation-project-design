@@ -61,13 +61,19 @@ OUTPUT_CONFIG   = os.path.join(BST_DIR, "model_config.pkl")
 OUTPUT_PLOT     = os.path.join(BST_DIR, "training_progress.png")
 OUTPUT_HISTORY  = os.path.join(BST_DIR, "bst_metrics.csv")
 
+# K折OOF开关（供元学习器训练使用）
+RUN_OOF        = True
+N_OOF_SPLITS   = 5   # 5折OOF
+OOF_PREDS_PATH = os.path.join(BST_DIR, "bst_oof.npy")
+OOF_IDX_PATH   = os.path.join(BST_DIR, "bst_oof_idx.npy")
+
 # 训练超参
-BATCH_SIZE          = 4096      # 每批样本数（3层Transformer下4096比6144更快）
+BATCH_SIZE          = 4096     # 样本数
 EPOCHS              = 40        # 最大训练轮数
-LEARNING_RATE       = 5e-5      # 初始学习率（历史最优 Run2 同值）
-L2_REG              = 8e-4      # 权重衰减（Run2 的 1e-3 略放宽）
+LEARNING_RATE       = 5e-5      # 初始学习率
+L2_REG              = 8e-4      # 权重衰减
 LR_ETA_MIN          = 1e-6      # CosineAnnealingLR 最小学习率下限
-EARLY_STOP_PATIENCE = 10        # 早停耐心轮数（Run2 仅 7，增至 10 给更多收敛空间）
+EARLY_STOP_PATIENCE = 7         # 早停耐心轮数
 VALID_RATIO         = 0.10      # 验证集比例（按时间切分，后 10%）
 RANDOM_SEED         = 42        # 随机种子
 NUM_WORKERS         = 4         # DataLoader 子进程数
@@ -559,6 +565,160 @@ def build_model(n_info: dict, device: torch.device) -> BSTModel:
 
 
 # ============================================================
+# K折OOF交叉验证（供元学习器训练使用）
+# ============================================================
+
+def run_kfold_oof(sparse_arr, dense_arr, seq_arr, target_arr, train_idx, n_info, device):
+    """
+    使用K折交叉验证在训练区间（train_idx）生成OOF预测，
+    供 build_ensemble.py 的逻辑回归元学习器训练使用。
+
+    BST已使用全局时序切分，与DeepFM OOF的切分基准一致，
+    保证两模型的OOF索引完全对齐。
+
+    Args:
+        sparse_arr: (N, 14) 稀疏特征矩阵
+        dense_arr:  (N, 44) 稠密特征矩阵
+        seq_arr:    (N, 50) 行为序列矩阵
+        target_arr: (N,)   标签
+        train_idx:  训练集在原始数据集中的索引（全局时序前90%）
+        n_info:     词表大小字典（用于构建模型）
+        device:     torch计算设备
+    """
+    print("\n" + "=" * 62)
+    print(f"🔁 [{N_OOF_SPLITS}折 OOF] BST 交叉验证预测（全局时序切分）")
+    print("=" * 62)
+
+    n_train  = len(train_idx)
+    fold_sz  = n_train // N_OOF_SPLITS
+    f_edges  = [k * fold_sz for k in range(N_OOF_SPLITS)] + [n_train]
+
+    oof_preds = np.zeros(n_train, dtype=np.float32)
+
+    for k in range(N_OOF_SPLITS):
+        fold_mask = np.zeros(n_train, dtype=bool)
+        fold_mask[f_edges[k]:f_edges[k + 1]] = True
+
+        fold_val_local   = np.where(fold_mask)[0]    # 在 train_idx 中的位置
+        fold_train_local = np.where(~fold_mask)[0]
+
+        print(f"\n  [折 {k + 1}/{N_OOF_SPLITS}]  "
+              f"训练={len(fold_train_local):,}  验证={len(fold_val_local):,}")
+
+        # 按位置（local index）从预排好的训练集数组中切片
+        fold_train_ds = BSTDataset(
+            seq_arr[fold_train_local],
+            sparse_arr[fold_train_local],
+            dense_arr[fold_train_local],
+            target_arr[fold_train_local],
+        )
+        fold_val_ds = BSTDataset(
+            seq_arr[fold_val_local],
+            sparse_arr[fold_val_local],
+            dense_arr[fold_val_local],
+            target_arr[fold_val_local],
+        )
+
+        fold_train_ldr = DataLoader(
+            fold_train_ds, batch_size=BATCH_SIZE, shuffle=True,
+            num_workers=NUM_WORKERS, pin_memory=(device.type == "cuda"),
+            persistent_workers=False,                           # 每 Epoch 重启 worker，Windows 下防止 IPC 积累卡死
+            prefetch_factor=2 if NUM_WORKERS > 0 else None,
+        )
+        fold_val_ldr = DataLoader(
+            fold_val_ds, batch_size=BATCH_SIZE * 2, shuffle=False,
+            num_workers=NUM_WORKERS, pin_memory=(device.type == "cuda"),
+            persistent_workers=False,                           # 同上
+            prefetch_factor=2 if NUM_WORKERS > 0 else None,
+        )
+
+        # 每折独立初始化模型（避免折间信息泄漏）
+        fold_model = build_model(n_info, device)
+
+        optimizer = torch.optim.Adam(
+            fold_model.parameters(), lr=LEARNING_RATE, weight_decay=L2_REG
+        )
+        criterion = nn.BCELoss()
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=EPOCHS, eta_min=LR_ETA_MIN
+        )
+        scaler = torch.cuda.amp.GradScaler(enabled=(device.type == "cuda"))
+
+        best_auc   = 0.0
+        best_preds = None
+        no_improve = 0
+
+        for epoch in range(1, EPOCHS + 1):
+            # 训练一个epoch
+            fold_model.train()
+            for seq_b, sparse_b, dense_b, tgt_b in fold_train_ldr:
+                seq_b  = seq_b.to(device)
+                tgt_b  = tgt_b.to(device)
+                feat_b = torch.cat(
+                    [sparse_b.float().to(device), dense_b.to(device)], dim=-1
+                )
+                optimizer.zero_grad()
+                with torch.cuda.amp.autocast(enabled=(device.type == "cuda")):
+                    out = fold_model(seq_b, feat_b).squeeze(-1)
+                out  = out.float().clamp(min=1e-7, max=1.0 - 1e-7)
+                loss = criterion(out, tgt_b.float())
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                nn.utils.clip_grad_norm_(fold_model.parameters(), max_norm=0.3)
+                scaler.step(optimizer)
+                scaler.update()
+            scheduler.step()
+
+            # 验证集评估
+            fold_model.eval()
+            preds_list = []
+            with torch.no_grad():
+                for seq_b, sparse_b, dense_b, _ in fold_val_ldr:
+                    seq_b  = seq_b.to(device)
+                    feat_b = torch.cat(
+                        [sparse_b.float().to(device), dense_b.to(device)], dim=-1
+                    )
+                    out = fold_model(seq_b, feat_b).squeeze(-1).float().clamp(min=1e-7, max=1.0 - 1e-7)
+                    preds_list.append(out.cpu().numpy())
+
+            ep_preds = np.concatenate(preds_list)
+            ep_auc   = roc_auc_score(target_arr[fold_val_local], ep_preds)
+            print(f"     Epoch {epoch:2d}  val_AUC={ep_auc:.4f}")
+
+            if ep_auc > best_auc:
+                best_auc   = ep_auc
+                best_preds = ep_preds.copy()
+                no_improve = 0
+            else:
+                no_improve += 1
+                if no_improve >= EARLY_STOP_PATIENCE:
+                    print(f"     ⏹️  早停（best={best_auc:.4f}）")
+                    break
+
+        # 写入OOF预测
+        oof_preds[fold_val_local] = best_preds if best_preds is not None else ep_preds
+
+        # 释放折模型显存 和 DataLoader worker 进程
+        del fold_train_ldr, fold_val_ldr   # 主动回收，避免 worker 残留影响下一折
+        del fold_model
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    # 汇总OOF整体AUC
+    oof_labels = target_arr[np.arange(n_train)]  # train_idx 对应的标签（已是本地序）
+    oof_auc    = roc_auc_score(oof_labels, oof_preds)
+    print(f"\n✅ OOF总体 AUC: {oof_auc:.4f}")
+
+    # 保存OOF结果（train_idx 保存为原始数据集索引，供 build_ensemble.py 对齐）
+    np.save(OOF_PREDS_PATH, oof_preds)
+    np.save(OOF_IDX_PATH,   train_idx)
+    print(f"   OOF预测保存: {OOF_PREDS_PATH}")
+    print(f"   OOF索引保存: {OOF_IDX_PATH}")
+
+    return oof_preds, train_idx
+
+
+# ============================================================
 # Step 3: 训练循环
 # ============================================================
 
@@ -672,6 +832,22 @@ def train_bst_model():
 
     # Step 1: 加载数据
     sparse_arr, dense_arr, seq_arr, target_arr, train_idx, valid_idx, n_info = load_data()
+
+    # Step 1.5: K折OOF（在全量训练前生成，供元学习器使用）
+    # 注意：传入已按 train_idx 切片的子集，OOF内部在子集上按位置折叠
+    if RUN_OOF:
+        # 传入已按 train_idx 切片的子集数组，OOF 内部在子集上以本地位置索引折叠
+        # 使用 np.arange 而非原始 train_idx，避免二次索引错位导致 bst_oof_idx.npy 对齐错误
+        train_idx_local = np.arange(len(train_idx))
+        run_kfold_oof(
+            sparse_arr[train_idx],
+            dense_arr[train_idx],
+            seq_arr[train_idx],
+            target_arr[train_idx],
+            train_idx_local,
+            n_info,
+            device,
+        )
 
     # Step 2: 构建 DataLoader
     print("\n" + "=" * 62)

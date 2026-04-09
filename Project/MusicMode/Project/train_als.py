@@ -33,7 +33,7 @@ CANDIDATES_PATH = os.path.join(MODE_DIR, "candidates.pkl")
 ALS_RANK = 50           # 隐向量维度
 ALS_ITERATIONS = 10     # 迭代次数
 ALS_REGULARIZATION = 0.1
-TOP_K_CANDIDATES = 100  # 每用户候选数
+TOP_K_CANDIDATES = 200  # 每用户候选数
 
 
 def load_features():

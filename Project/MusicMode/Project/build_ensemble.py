@@ -4,7 +4,7 @@ build_ensemble.py — 双精排模型集成（DeepFM + BST）
 
 功能：
   1. 加载 DeepFM、BST 在验证集上推断
-  2. 搜索最优加权系数（SLSQP）
+  2. 元学习器（逻辑回归 Meta-LR）集成精排预测
   3. 输出对比报告 + ensemble_config.pkl
 
 模型说明：
@@ -18,7 +18,7 @@ build_ensemble.py — 双精排模型集成（DeepFM + BST）
   - python train_deepfm_v3.py
   - python train_bst.py
 
-作者：MusicMode 推荐系统
+作者：卢伟军
 """
 
 import os
@@ -31,7 +31,6 @@ warnings.filterwarnings('ignore')
 
 from datetime import datetime
 from sklearn.metrics import roc_auc_score
-from scipy.optimize import minimize
 
 # ============================================================
 # 配置
@@ -419,92 +418,91 @@ def collect_predictions(X_val, y_val, feat, val_idx, train_idx):
 
 
 # ============================================================
-# Step 3: 集成策略
+# Step 3: 元学习器训练（LightGBM，仅在OOF文件存在时执行）
 # ============================================================
 
-def ensemble_strategies(y_val, model_preds, model_aucs):
+def meta_learner_training(y_val, model_preds, feat, val_idx):
     """
-    精排集成策略（DeepFM + BST）。
-    策略 A：SLSQP 加权平均，每个精排模型权重下界 ≥ 0.20，防止退化为单模型。
-    策略 B：等权平均（0.5/0.5），作为稳健基线对比。
+    加载 DeepFM + BST 的OOF预测，训练逻辑回归元学习器（Meta-LR），
+    并在验证集上评估其效果。
+
+    两阶段Stacking框架：
+    - 第一阶段：DeepFM/BST通过K折OOF生成元特征
+    - 第二阶段：LogisticRegression拟合这两个元特征 → 输出最终集成分数
+
+    Returns:
+        (meta_lr, meta_auc): 元学习器对象和验证集AUC，若OOF文件不存在则返回 (None, 0.0)
     """
+    from sklearn.linear_model import LogisticRegression
+
+    deepfm_oof_path = os.path.join(MODE_DIR, "deepfm", "deepfm_oof.npy")
+    deepfm_idx_path = os.path.join(MODE_DIR, "deepfm", "deepfm_oof_idx.npy")
+    bst_oof_path    = os.path.join(MODE_DIR, "bst",    "bst_oof.npy")
+    bst_idx_path    = os.path.join(MODE_DIR, "bst",    "bst_oof_idx.npy")
+
+    for p in [deepfm_oof_path, deepfm_idx_path, bst_oof_path, bst_idx_path]:
+        if not os.path.exists(p):
+            print(f"\n   ⚠️  OOF文件不存在: {p}")
+            print("      跳过元学习器训练")
+            return None, 0.0
+
     print("\n" + "=" * 62)
-    print("[Step 3] 集成策略对比（双神经网络精排：DeepFM + BST）")
+    print("[Step 3] 元学习器训练（DeepFM + BST OOF → LogisticRegression）")
     print("=" * 62)
 
-    fine_rank_names = list(model_preds.keys())   # DeepFM + BST
-    results = {}
+    deepfm_oof = np.load(deepfm_oof_path)
+    deepfm_idx = np.load(deepfm_idx_path)
+    bst_oof    = np.load(bst_oof_path)
+    bst_idx    = np.load(bst_idx_path)
 
-    print("\n  单模型 AUC:")
-    for n in fine_rank_names:
-        print(f"    {n}: {model_aucs[n]:.4f}")
+    # 对齐两个OOF的原始索引（理论上完全相同，取交集作为保险）
+    # OOF索引按时间排序，不是数值有序，需用字典映射避免searchsorted出错
+    d_map = {int(idx): pos for pos, idx in enumerate(deepfm_idx)}
+    b_map = {int(idx): pos for pos, idx in enumerate(bst_idx)}
+    common_set = np.array(
+        sorted(set(d_map.keys()) & set(b_map.keys())), dtype=np.int64
+    )
+    n_common = len(common_set)
 
-    if len(fine_rank_names) < 2:
-        print("   精排可用模型不足 2 个（DeepFM + BST），跳过集成")
-        if fine_rank_names:
-            n = fine_rank_names[0]
-            results["单模型"] = model_aucs[n]
-            return results, np.array([1.0]), fine_rank_names
-        return results, np.array([1.0]), list(model_preds.keys())
+    # 按 common_set 从各自OOF数组中取出对齐的预测值
+    d_pos = np.array([d_map[int(i)] for i in common_set], dtype=np.int64)
+    b_pos = np.array([b_map[int(i)] for i in common_set], dtype=np.int64)
 
-    pred_matrix = np.column_stack([model_preds[n] for n in fine_rank_names])
-    n_models    = len(fine_rank_names)
+    deepfm_oof_aligned = deepfm_oof[d_pos]
+    bst_oof_aligned    = bst_oof[b_pos]
+    y_oof = feat["target"][common_set].astype(np.int32)
 
-    # 策略 A：SLSQP 加权平均，搜索使集成 AUC 最大的权重组合
-    print("\n  [A] SLSQP 加权平均（下界约束 ≥ 0.20）...")
+    print(f"   OOF训练样本: {n_common:,} | 正样本率: {y_oof.mean():.4f}")
 
-    def neg_auc_fn(weights):
-        w = np.array(weights)
-        w = w / w.sum()
-        return -roc_auc_score(y_val, pred_matrix @ w)
+    X_meta_train = np.column_stack([deepfm_oof_aligned, bst_oof_aligned])
+    meta_lr = LogisticRegression(C=1.0, max_iter=1000, random_state=42)
+    meta_lr.fit(X_meta_train, y_oof)
+    print(f"   逻辑回归元学习器训练完成（C=1.0, max_iter=1000）")
 
-    x0          = np.ones(n_models) / n_models
-    bounds_low  = 0.20   # 每个精排模型权重下界，防止退化为单模型
-    bounds      = [(bounds_low, 1.0 - bounds_low * (n_models - 1))] * n_models
-    constraints = [{"type": "eq", "fun": lambda w: np.sum(w) - 1}]
-    opt_res = minimize(neg_auc_fn, x0, method="SLSQP",
-                       bounds=bounds, constraints=constraints,
-                       options={"maxiter": 200, "ftol": 1e-9})
-
-    slsqp_weights  = opt_res.x / opt_res.x.sum()
-    slsqp_ensemble = pred_matrix @ slsqp_weights
-    slsqp_auc      = roc_auc_score(y_val, slsqp_ensemble)
-
-    print(f"   最优权重（下界≥{bounds_low}）:")
-    for n, w in zip(fine_rank_names, slsqp_weights):
-        print(f"     {n}: {w:.4f}")
-    print(f"   SLSQP 集成 AUC: {slsqp_auc:.4f}")
-    results["SLSQP (lb=0.20)"] = slsqp_auc
-
-    # 策略 B：等权平均，作为 SLSQP 的稳健基线对比
-    print("\n  [B] 等权平均（0.5/0.5 基线）...")
-    eq_preds = pred_matrix.mean(axis=1)
-    eq_auc   = roc_auc_score(y_val, eq_preds)
-    print(f"   等权平均 AUC: {eq_auc:.4f}")
-    results["Equal Weight"] = eq_auc
-
-    # 取 AUC 更高的策略保存，两者均可直接转化为线上标量权重
-    if slsqp_auc >= eq_auc:
-        best_weights_to_save = slsqp_weights
-        best_strategy = "SLSQP (lb=0.20)"
+    # 在验证集上评估（使用 collect_predictions 已生成的验证集预测）
+    meta_auc = 0.0
+    if "DeepFM" in model_preds and "BST" in model_preds:
+        X_val_meta = np.column_stack([model_preds["DeepFM"], model_preds["BST"]])
+        meta_val_preds = meta_lr.predict_proba(X_val_meta)[:, 1]
+        meta_auc = roc_auc_score(y_val, meta_val_preds)
+        print(f"   元学习器验证集 AUC: {meta_auc:.4f}")
     else:
-        best_weights_to_save = np.ones(n_models) / n_models
-        best_strategy = "Equal Weight"
+        print("   ⚠️  验证集预测不可用，跳过AUC评估")
 
-    print(f"\n  ✅ 最佳集成策略: {best_strategy} (AUC={results[best_strategy]:.4f})")
-    print(f"     最终权重:")
-    for n, w in zip(fine_rank_names, best_weights_to_save):
-        print(f"       {n}: {w:.4f}")
+    # 保存元学习器到 ensemble 目录
+    meta_path = os.path.join(ENSEMBLE_DIR, "meta_learner.pkl")
+    with open(meta_path, "wb") as f:
+        pickle.dump(meta_lr, f, protocol=4)
+    print(f"   ✅ 元学习器已保存: {meta_path}")
 
-    # 返回最优策略权重（用于在线 sync_recs_v3.py 推断）
-    return results, best_weights_to_save, fine_rank_names
+    return meta_lr, meta_auc
 
 
 # ============================================================
 # Step 4: 生成报告
 # ============================================================
 
-def generate_report(model_aucs, ensemble_results, best_weights, weight_names):
+def generate_report(model_aucs, ensemble_results):
     print("\n" + "=" * 62)
     print("[Step 4] 生成横向对比报告")
     print("=" * 62)
@@ -549,11 +547,6 @@ def generate_report(model_aucs, ensemble_results, best_weights, weight_names):
         lines.append(f"{label:<16} {'':>10} {auc:>10.4f}")
 
     lines.append("")
-    lines.append("最优加权系数:")
-    for n, w in zip(weight_names, best_weights):
-        lines.append(f"  {n}: {w:.4f}")
-
-    lines.append("")
     best_overall = max(list(ensemble_results.values()) + list(model_aucs.values()))
     lines.append(f"最终最佳 AUC: {best_overall:.4f}")
     if best_overall >= 0.80:
@@ -586,14 +579,21 @@ def generate_report(model_aucs, ensemble_results, best_weights, weight_names):
 # 保存集成配置
 # ============================================================
 
-def save_config(model_aucs, ensemble_results, best_weights, weight_names, best_overall):
+def save_config(model_aucs, ensemble_results, best_overall, meta_lr=None, meta_auc=0.0):
+    """
+    保存集成配置到 ensemble_config.pkl。
+    使用逻辑回归元学习器（Meta-LR）作为集成推断方案。
+    sync_recs_v3.py 加载时优先使用元学习器。
+    """
     config = {
-        "model_aucs":       model_aucs,
-        "ensemble_results": ensemble_results,
-        "best_weights":     dict(zip(weight_names, best_weights.tolist())),
-        "best_overall_auc": best_overall,
-        "calibrated_at":    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "version":          "v7_slsqp_vs_equal_weight",
+        "model_aucs":             model_aucs,
+        "ensemble_results":       ensemble_results,
+        "best_overall_auc":       best_overall,
+        "calibrated_at":          datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "version":                "v9_logistic_meta_learner",
+        # 元学习器可用标志（sync_recs_v3.py 据此决定推断路径）
+        "meta_learner_available": meta_lr is not None,
+        "meta_auc":               meta_auc,
     }
     with open(OUTPUT_ENSEMBLE, "wb") as f:
         pickle.dump(config, f, protocol=4)
@@ -621,21 +621,18 @@ def main():
         print("\n❌ 无可用模型！请先训练至少一个模型。")
         sys.exit(1)
 
-    # 3. 集成策略
-    if len(model_preds) >= 2:
-        ensemble_results, best_weights, weight_names = ensemble_strategies(
-            y_val, model_preds, model_aucs
-        )
-    else:
-        ensemble_results = {}
-        best_weights = np.array([1.0])
-        weight_names = list(model_preds.keys())
+    ensemble_results = {}
+
+    # 3. 元学习器训练（LightGBM，需要OOF文件）
+    meta_lr, meta_auc = meta_learner_training(y_val, model_preds, feat, val_idx)
+    if meta_lr is not None:
+        ensemble_results["Meta-LR (OOF)"] = meta_auc
 
     # 4. 生成报告
-    best_overall = generate_report(model_aucs, ensemble_results, best_weights, weight_names)
+    best_overall = generate_report(model_aucs, ensemble_results)
 
     # 5. 保存
-    save_config(model_aucs, ensemble_results, best_weights, weight_names, best_overall)
+    save_config(model_aucs, ensemble_results, best_overall, meta_lr=meta_lr, meta_auc=meta_auc)
 
     print(f"\n{'=' * 62}")
     print(f"✅ 集成对比完成！最终最佳 AUC: {best_overall:.4f}")

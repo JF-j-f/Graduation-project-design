@@ -2,6 +2,35 @@
 
 本文档记录 MusicMode 项目的所有更新历史。
 
+## v2.8.0 (2026-04-06) - 两阶段 Stacking 集成：K折OOF + 逻辑回归元学习器
+
+### 🚀 新增功能
+
+- **DeepFM K折OOF交叉验证**（`train_deepfm_v3.py`）：新增顶部开关 `RUN_OOF=True` 和 `N_OOF_SPLITS=2`（正式训练时改为5），以及 `run_kfold_oof()` 函数。训练前自动执行全局时序K折交叉验证，在训练区间（前90%样本）上生成OOF预测，保存到 `Mode/deepfm/deepfm_oof.npy` + `deepfm_oof_idx.npy`
+- **BST K折OOF交叉验证**（`train_bst.py`）：同上，新增 `run_kfold_oof()` 函数，保存到 `Mode/bst/bst_oof.npy` + `bst_oof_idx.npy`。两个脚本均使用全局时序切分，确保OOF索引完全对齐
+- **逻辑回归元学习器**（`build_ensemble.py`）：新增 `meta_learner_training()` 函数（Step 3.5），在OOF文件存在时自动加载、对齐索引、训练 `LogisticRegression(C=1.0)` 元学习器，在验证集上评估并与SLSQP加权平均对比；保存到 `Mode/ensemble/meta_learner.pkl`，`ensemble_config.pkl` 新增 `meta_learner_available` + `meta_auc` 字段
+- **精排推断双路径**（`sync_recs_v3.py`）：新增 `META_LEARNER_PATH` 常量和 `self.meta_lr` 属性；启动时若 `meta_learner_available=True` 则优先加载逻辑回归元学习器，推断时用 `LR.predict_proba([deepfm_score, bst_score])` 输出集成分；元学习器不可用时自动降级到原有SLSQP加权平均
+
+### 📝 执行步骤（主人手动按顺序执行）
+
+**阶段一：K=2 快速验证（约3-5小时）**
+```bash
+python -X utf8 Project/MusicMode/Project/train_deepfm_v3.py
+python -X utf8 Project/MusicMode/Project/train_bst.py
+python -X utf8 Project/MusicMode/Project/build_ensemble.py
+```
+确认 deepfm_oof.npy、bst_oof.npy、meta_learner.pkl 均生成，meta AUC数值合理后进行阶段二。
+
+**阶段二：K=5 正式训练（约30-50小时）**
+将两个训练脚本顶部的 `N_OOF_SPLITS = 2` 改为 `N_OOF_SPLITS = 5`，重新执行上述步骤。
+
+### 🚧 待解决问题
+
+- 当前 `N_OOF_SPLITS=2` 为快速验证模式，需主人验证逻辑正确后手动改为5再正式训练
+- 元学习器预期AUC提升幅度极小（+0.0000 ~ +0.0005），主要意义在于代码层面具备完整的两阶段Stacking结构
+
+---
+
 ## v2.7.2 (2026-03-31) - play_count Bug 修复 + 代码注释清理
 
 ### 🐛 Bug 修复

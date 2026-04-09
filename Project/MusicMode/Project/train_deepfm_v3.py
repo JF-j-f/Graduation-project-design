@@ -43,6 +43,13 @@ OUTPUT_CONFIG    = os.path.join(DEEPFM_DIR, "model_config.pkl")
 OUTPUT_PLOT      = os.path.join(DEEPFM_DIR, "training_progress.png")
 OUTPUT_HISTORY   = os.path.join(DEEPFM_DIR, "deepfm_metrics.csv")  # 论文用：逐 epoch 指标
 
+# K折OOF开关（供元学习器训练使用）
+# 快速验证用 N_OOF_SPLITS=2，正式K=5训练时手动改为 5
+RUN_OOF       = True
+N_OOF_SPLITS  = 5
+OOF_PREDS_PATH = os.path.join(DEEPFM_DIR, "deepfm_oof.npy")
+OOF_IDX_PATH   = os.path.join(DEEPFM_DIR, "deepfm_oof_idx.npy")
+
 # 训练超参数
 BATCH_SIZE       = 8192        # 样本数
 EPOCHS           = 60           # 最大训练轮数
@@ -159,6 +166,201 @@ def check_gpu():
     else:
         print("⚠️  CUDA 不可用，回退 CPU（训练会较慢）")
         return torch.device('cpu')
+
+
+# ============================================================
+# K折OOF交叉验证（供元学习器训练使用）
+# ============================================================
+
+def run_kfold_oof(feat, feature_columns, feature_names, device):
+    """
+    使用K折交叉验证在训练区间生成OOF（Out-of-Fold）预测，
+    供 build_ensemble.py 的逻辑回归元学习器训练使用。
+
+    采用全局时序切分（与BST对齐，确保两模型OOF索引完全一致）：
+    前90%样本作为训练区间，切成K折循环训练。
+
+    Args:
+        feat: features_v3.pkl 加载后的特征字典
+        feature_columns: DeepCTR特征列（由 prepare_deepfm_data 生成）
+        feature_names: 特征名列表（对应 feature_columns 顺序）
+        device: torch计算设备
+    """
+    import torch
+    import torch.utils.data as Data
+    from torch.amp import autocast, GradScaler
+    from torch.optim import Adam
+    from torch.optim.lr_scheduler import ReduceLROnPlateau
+    from deepctr_torch.models import DeepFM
+    from sklearn.metrics import roc_auc_score, log_loss
+
+    print("\n" + "=" * 62)
+    print(f"🔁 [{N_OOF_SPLITS}折 OOF] DeepFM 交叉验证预测（全局时序切分）")
+    print("=" * 62)
+
+    N = len(feat["target"])
+    play_time = feat.get("play_time_unix", np.zeros(N, dtype=np.int64))
+    if hasattr(play_time, "values"):
+        play_time = play_time.values
+
+    # 全局时序切分：前90%作为OOF训练区间（与BST保持一致）
+    sorted_idx = np.argsort(play_time, kind="stable")
+    split_pt   = int(N * (1 - VALID_RATIO))
+    train_oof_idx = sorted_idx[:split_pt]   # shape: (n_train,) 原始数据集索引
+
+    # 构建全量数据字典（所有N个样本，后续按fold切片）
+    target   = feat["target"].astype(np.float32)
+    full_dict = {}
+    for feat_name, enc_key, _, _ in SPARSE_FEAT_SPECS:
+        if enc_key in feat:
+            full_dict[feat_name] = feat[enc_key].astype(np.int32)
+    for feat_name in DENSE_FEAT_SPECS:
+        if feat_name in feat:
+            arr = feat[feat_name].astype(np.float32)
+            arr = np.nan_to_num(arr, nan=0.0, posinf=10.0, neginf=0.0)
+            full_dict[feat_name] = arr
+
+    # 按 feature_names 顺序拼接成单张矩阵，后续按索引切片更高效
+    X_all = np.concatenate(
+        [full_dict[f].reshape(-1, 1) for f in feature_names if f in full_dict],
+        axis=1
+    ).astype(np.float32)   # (N, n_features)
+
+    # K折边界（在 train_oof_idx 的位置坐标上定义）
+    n_train  = len(train_oof_idx)
+    fold_sz  = n_train // N_OOF_SPLITS
+    f_edges  = [k * fold_sz for k in range(N_OOF_SPLITS)] + [n_train]
+
+    oof_preds = np.zeros(n_train, dtype=np.float32)
+
+    for k in range(N_OOF_SPLITS):
+        fold_mask = np.zeros(n_train, dtype=bool)
+        fold_mask[f_edges[k]:f_edges[k + 1]] = True
+
+        fold_val_local   = np.where(fold_mask)[0]    # 在 train_oof_idx 中的位置
+        fold_train_local = np.where(~fold_mask)[0]
+
+        fold_val_orig   = train_oof_idx[fold_val_local]    # 原始数据集索引
+        fold_train_orig = train_oof_idx[fold_train_local]
+
+        y_fold_train = target[fold_train_orig]
+        y_fold_val   = target[fold_val_orig]
+
+        print(f"\n  [折 {k + 1}/{N_OOF_SPLITS}]  "
+              f"训练={len(fold_train_orig):,}  验证={len(fold_val_orig):,}")
+
+        # 构建 DataLoader
+        X_ft = torch.from_numpy(X_all[fold_train_orig])
+        y_ft = torch.from_numpy(y_fold_train)
+        X_fv = torch.from_numpy(X_all[fold_val_orig]).to(device).float()
+
+        fold_train_ds = Data.TensorDataset(X_ft, y_ft)
+        fold_train_ldr = Data.DataLoader(
+            fold_train_ds, batch_size=BATCH_SIZE, shuffle=True,
+            num_workers=NUM_WORKERS, pin_memory=(device.type == "cuda"),
+            persistent_workers=(NUM_WORKERS > 0),
+            prefetch_factor=2 if NUM_WORKERS > 0 else None,
+        )
+        fold_val_ldr = Data.DataLoader(
+            Data.TensorDataset(X_fv, torch.zeros(len(y_fold_val))),
+            batch_size=BATCH_SIZE * 4, shuffle=False, pin_memory=False,
+        )
+
+        # 每折独立初始化模型（避免折间信息泄漏）
+        fold_model = DeepFM(
+            linear_feature_columns=feature_columns,
+            dnn_feature_columns=feature_columns,
+            dnn_hidden_units=DNN_HIDDEN_UNITS,
+            dnn_dropout=DROPOUT,
+            l2_reg_embedding=1e-4,
+            device=str(device),
+        ).to(device)
+
+        optimizer = Adam(fold_model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
+        scheduler = ReduceLROnPlateau(
+            optimizer, mode="min", factor=LR_FACTOR,
+            patience=LR_PATIENCE, min_lr=LR_MIN, verbose=False,
+        )
+        loss_fn = torch.nn.BCELoss(reduction="mean")
+        use_amp = (device.type == "cuda")
+        scaler  = GradScaler(device=str(device)) if use_amp else None
+
+        best_auc   = 0.0
+        best_preds = None
+        no_improve = 0
+
+        for epoch in range(EPOCHS):
+            # 训练一个epoch
+            fold_model.train()
+            for xb, yb in fold_train_ldr:
+                xb = xb.to(device, non_blocking=True).float()
+                yb = yb.to(device, non_blocking=True).float()
+                optimizer.zero_grad(set_to_none=True)
+                if use_amp:
+                    with autocast(device_type="cuda"):
+                        pred = fold_model(xb).squeeze()
+                    loss = loss_fn(pred.float(), yb)
+                    scaler.scale(loss).backward()
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(fold_model.parameters(), 1.0)
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    pred = fold_model(xb).squeeze()
+                    loss = loss_fn(pred, yb)
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(fold_model.parameters(), 1.0)
+                    optimizer.step()
+
+            # 验证集评估
+            fold_model.eval()
+            preds_list = []
+            with torch.no_grad():
+                for xv, _ in fold_val_ldr:
+                    if use_amp:
+                        with autocast(device_type="cuda"):
+                            vp = fold_model(xv).squeeze()
+                    else:
+                        vp = fold_model(xv).squeeze()
+                    preds_list.append(vp.cpu().float().numpy())
+
+            ep_preds  = np.concatenate(preds_list)
+            ep_auc    = roc_auc_score(y_fold_val, ep_preds)
+            ep_loss   = log_loss(y_fold_val, ep_preds)
+            scheduler.step(ep_loss)
+
+            print(f"     Epoch {epoch + 1:2d}  val_AUC={ep_auc:.4f}")
+
+            if ep_auc > best_auc + 1e-5:
+                best_auc   = ep_auc
+                best_preds = ep_preds.copy()
+                no_improve = 0
+            else:
+                no_improve += 1
+                if no_improve >= EARLY_STOP_PATIENCE:
+                    print(f"     ⏹️  早停（best={best_auc:.4f}）")
+                    break
+
+        # 写入OOF预测
+        oof_preds[fold_val_local] = best_preds if best_preds is not None else ep_preds
+
+        # 释放折模型显存
+        del fold_model
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    # 汇总OOF整体AUC
+    oof_labels = target[train_oof_idx]
+    oof_auc    = roc_auc_score(oof_labels, oof_preds)
+    print(f"\n✅ OOF总体 AUC: {oof_auc:.4f}")
+
+    # 保存OOF结果（供 build_ensemble.py 元学习器使用）
+    np.save(OOF_PREDS_PATH, oof_preds)
+    np.save(OOF_IDX_PATH,   train_oof_idx)
+    print(f"   OOF预测保存: {OOF_PREDS_PATH}")
+    print(f"   OOF索引保存: {OOF_IDX_PATH}")
+
+    return oof_preds, train_oof_idx
 
 
 # ============================================================
@@ -718,6 +920,10 @@ def main():
     (feature_columns, feature_names,
      train_data, val_data,
      train_target, val_target) = prepare_deepfm_data(feat)
+
+    # 2.5 K折OOF（在全量训练前生成，供元学习器使用）
+    if RUN_OOF:
+        run_kfold_oof(feat, feature_columns, feature_names, device)
 
     # 3. 训练
     model, history, best_epoch, best_val_auc = train_deepfm(

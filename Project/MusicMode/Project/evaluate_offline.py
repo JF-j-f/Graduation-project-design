@@ -240,26 +240,22 @@ def predict_bst(feat, val_idx, train_idx):
 # ============================================================
 
 def get_ensemble_score(preds_dict, y_val):
-    """从 ensemble_config.pkl 读取 best_weights，对各模型预测值加权平均。"""
-    names  = list(preds_dict.keys())
-    matrix = np.column_stack([preds_dict[n] for n in names])
+    """加载 meta_learner.pkl（LightGBM元学习器），对各模型预测值集成输出。"""
+    meta_path = os.path.join(os.path.dirname(ENSEMBLE_PATH), "meta_learner.pkl")
 
-    if os.path.exists(ENSEMBLE_PATH):
-        with open(ENSEMBLE_PATH, "rb") as f:
-            ec = pickle.load(f)
-        bw = ec.get("best_weights", {})
-        weights = np.array([bw.get(n, 1.0 / len(names)) for n in names], dtype=np.float64)
-        weights /= weights.sum()
-        print(f"   加权系数: { {n: f'{w:.4f}' for n,w in zip(names,weights)} }")
+    if os.path.exists(meta_path):
+        with open(meta_path, "rb") as f:
+            meta_lr = pickle.load(f)
+        names = list(preds_dict.keys())
+        matrix = np.column_stack([preds_dict[n] for n in names])
+        stacking_preds = meta_lr.predict_proba(matrix)[:, 1].astype(np.float32)
+        print(f"   ✅ 元学习器集成推断完成（LightGBM meta_learner）")
     else:
+        print("   ⚠️  未找到 meta_learner.pkl，使用等权加权平均")
+        names  = list(preds_dict.keys())
+        matrix = np.column_stack([preds_dict[n] for n in names])
         weights = np.ones(len(names)) / len(names)
-        print("   未找到 ensemble_config.pkl，使用等权")
-
-    # 使用 SLSQP best_weights 加权平均（与线上 sync_recs_v3.py 一致）
-    # 注：原 LR.fit(matrix, y_val) + predict_proba(matrix) 存在数据泄漏
-    #     （在验证集上拟合后对同一批数据预测），已删除。
-    stacking_preds = (matrix * weights).sum(axis=1).astype(np.float32)
-    print(f"   ✅ 加权集成推断完成（best_weights 加权平均）")
+        stacking_preds = (matrix * weights).sum(axis=1).astype(np.float32)
     return stacking_preds
 
 

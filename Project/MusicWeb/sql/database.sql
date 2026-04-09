@@ -232,7 +232,7 @@ CREATE TABLE IF NOT EXISTS `user_content_blocks` (
   COMMENT='用户流派/歌手软屏蔽（递增冷却+衰减回归）';
 
 -- ============================================
--- v7.0：歌曲滚动统计表（预聚合近7/30天播放量及热度趋势）
+-- 歌曲滚动统计表（预聚合近7/30天播放量及热度趋势）
 -- ============================================
 CREATE TABLE IF NOT EXISTS `song_rolling_stats` (
   `song_id`     INT NOT NULL COMMENT '歌曲ID，与songs表一对一对应',

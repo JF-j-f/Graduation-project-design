@@ -25,10 +25,10 @@ MusicWeb 是一个**双模块全栈音乐平台**，由 Java Web 前端服务与
 
 - **四层漏斗推荐**：三通道并行召回（~600首）→ LightGBM 粗排（→300）→ DeepFM + BST 集成精排（→150）→ MMR 多样性重排（→50），每日为用户生成专属推荐
 - **三层用户分层路由**：新用户冷启动、有行为用户实时内容召回、老用户协同过滤，不同阶段用不同策略
-- **多模型集成**：LightGBM + DeepFM + BST，SLSQP 动态权重优化，Stacking AUC **0.7767**
+- **多模型集成**：LightGBM + DeepFM + BST，OOF Stacking + Meta-LR 融合，集成 AUC **0.8199**
 - **多源音乐接入**：同时接入网易云音乐和 QQ 音乐，播放外部歌曲时自动入库并补全元数据
 
-> **数据规模**：KKBOX 数据集 229 万首歌曲，7.37M 训练样本，28,172 名用户离线评估，HR@10 = **0.9955**，NDCG@10 = **0.7963**
+> **数据规模**：KKBOX 数据集 229 万首歌曲，7.37M 训练样本，28,172 名用户离线评估，HR@10 = **0.9974**，NDCG@10 = **0.8330**
 
 ---
 
@@ -284,38 +284,28 @@ Project/MusicWeb/scripts/run_services.bat
 
 **BST（Behavior Sequence Transformer）**：用户历史行为序列 → Transformer 编码 → 与候选歌曲特征融合 → MLP 四层输出
 
-**集成策略**：SLSQP 约束优化求解最优加权系数，与等权平均取最优结果
+**集成策略**：DeepFM 与 BST 在 5 折 OOF 框架下分别生成元特征，由 Meta-LR（LogisticRegression 元学习器）拟合融合权重，避免训练集标签泄漏
 
 ### 模型性能 (Performance)
 
 #### 模型 AUC 对比
 
-| 模型                 | Train AUC | Val AUC          |
-| -------------------- | --------- | ---------------- |
-| LightGBM             | 0.8480    | 0.7648           |
-| DeepFM               | 0.7588    | 0.7434           |
-| BST                  | —        | 0.7761           |
-| **SLSQP 集成** | —        | **0.7767** |
+| 模型                    | Train AUC | Val AUC          |
+| ----------------------- | --------- | ---------------- |
+| LightGBM                | 0.8480    | 0.7922           |
+| DeepFM                  | 0.8227    | 0.8201           |
+| BST                     | —        | 0.7679           |
+| **Meta-LR 集成** | —        | **0.8199** |
 
-#### 离线评估（KKBox 验证集，28,172 用户，726,047 样本）
+#### 离线评估（KKBox 验证集，28,172 用户，726,047 样本，全链路 A4 配置）
 
-| 指标                   |  @K=5  |      @K=10      | @K=20 |
-| ---------------------- | :----: | :--------------: | :----: |
-| **HR（命中率）** | 0.9784 | **0.9955** | 0.9998 |
-| **NDCG**         | 0.7873 | **0.7963** | 0.8167 |
-| **MRR**          | 0.8704 | **0.8728** | 0.8731 |
-| Precision              | 0.6826 |      0.5954      | 0.4781 |
-| Recall                 | 0.4279 |      0.6160      | 0.8012 |
-
-#### 在线评估（真实用户交互数据）
-
-| 指标                     | 数值             |
-| ------------------------ | ---------------- |
-| CTR（点击率）            | **9.28%**  |
-| 平均完播率               | 16.18%           |
-| 收藏率                   | 7.43%            |
-| 推荐多样性（Shannon 熵） | **0.6683** |
-| NDCG@10                  | 0.4844           |
+| 指标                        | @K=10              |
+| --------------------------- | :----------------: |
+| **HR（命中率）**      | **0.9974**   |
+| **Precision（精确率）** | **0.6231**   |
+| **NDCG**              | **0.8330**   |
+| **MRR**               | **0.8907**   |
+| **Shannon 熵（多样性）** | **1.5736** |
 
 ### 推荐流水线执行指南 (Pipeline)
 
@@ -325,7 +315,7 @@ Project/MusicWeb/scripts/run_services.bat
 # Step 1：数据清洗与负采样
 python -X utf8 Project/MusicMode/Project/data_cleaning.py
 
-# Step 2：特征工程，生成 71 维 7.37M 样本
+# Step 2：特征工程，生成 66 维（14稀疏+52稠密）7.37M 样本
 python -X utf8 Project/MusicMode/Project/prepare_features_v3.py
 
 # Step 3：LightGBM 粗排训练
@@ -337,7 +327,7 @@ python -X utf8 Project/MusicMode/Project/train_deepfm_v3.py
 # Step 5：BST 序列精排训练
 python -X utf8 Project/MusicMode/Project/train_bst.py
 
-# Step 6：SLSQP 集成权重优化
+# Step 6：Meta-LR OOF Stacking 集成训练
 python -X utf8 Project/MusicMode/Project/build_ensemble.py
 
 # Step 7：FAISS 160 维向量索引构建
@@ -356,7 +346,7 @@ python -X utf8 Project/MusicMode/Project/refresh_song_stats.py
 # 离线评估（KKBox 验证集评估指标）
 python -X utf8 Project/MusicMode/Project/evaluate_offline.py
 
-# 在线评估（真实用户 CTR/完播率/NDCG）
+# 真实用户推荐记录评估（CTR/完播率）
 python -X utf8 Project/MusicMode/Project/evaluate_recs.py
 ```
 
@@ -673,7 +663,7 @@ Graduation-project-design/
 │       │   ├── train_lgbm.py              # LightGBM 粗排训练
 │       │   ├── train_deepfm_v3.py         # DeepFM 精排训练
 │       │   ├── train_bst.py               # BST 序列精排训练
-│       │   ├── build_ensemble.py          # SLSQP 集成权重优化
+│       │   ├── build_ensemble.py          # Meta-LR OOF Stacking 集成训练
 │       │   ├── build_faiss_index.py       # FAISS 向量索引构建
 │       │   ├── train_als.py               # ALS 协同过滤召回
 │       │   ├── sync_recs_v3.py            # 推荐主程序（三通道召回 + 四层漏斗）
@@ -707,6 +697,6 @@ Graduation-project-design/
 
 <div align="center">
 
-*本文档最后更新时间：2026年03月31日*
+*本文档最后更新时间：2026年04月09日*
 
 </div>
