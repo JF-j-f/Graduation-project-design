@@ -1,9 +1,15 @@
+#Ai助手和工作流配置文件
 /.claude
 /.agents/workflows
 /.venv
+/.claudeignore
+/CLAUDE.md
 
 #论文图片
 /image
+
+#论文文件
+/Document
 
 # 模型文件（大型二进制，不进入版本库）
 Project/MusicMode/Mode/*.pkl
@@ -46,3 +52,5 @@ Project/MusicMode/scripts/generate_auc_chart.py
 ~$*.docx
 ~$*.xlsx
 
+#其他
+/hadoop
