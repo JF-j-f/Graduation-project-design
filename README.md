@@ -540,6 +540,7 @@ Python 引擎计算后写入，前端实时读取展示。
 
 ## 项目结构 (Project Structure)
 
+```
 Graduation-project-design/
 ├── README.md                              # 本文档
 ├── CHANGELOG.md                           # 项目更新日志
@@ -671,6 +672,7 @@ Graduation-project-design/
 │       │   ├── evaluate_offline.py        # 离线评估
 │       │   ├── evaluate_recs.py           # 在线评估
 │       └── Mode/                          # 模型产物目录
+```
 
 ## 安全设计 (Security)
 

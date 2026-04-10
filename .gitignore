@@ -5,8 +5,9 @@
 /.claudeignore
 /CLAUDE.md
 
-#论文图片
-/image
+#论文图片（README架构图除外）
+/image/*
+!/image/README
 
 #论文文件
 /Document
