@@ -11,7 +11,7 @@ def run_sql_file():
     )
     cur = db.cursor()
     
-    with open(r'E:\Graduation-project-design\Project\MusicWeb\scripts\update_comments.sql', 'r', encoding='utf-8') as f:
+    with open(r'F:\Graduation-project-design\Project\MusicWeb\scripts\update_comments.sql', 'r', encoding='utf-8') as f:
         lines = f.readlines()
         
     try:

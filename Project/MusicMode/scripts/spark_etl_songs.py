@@ -32,7 +32,7 @@ from pyspark.sql.types import IntegerType, StringType
 # ============================================
 
 # KKBOX 数据集路径
-DATA_DIR = r"E:\毕业论文\Data"
+DATA_DIR = r"F:\Graduation-project-design\Data"
 SONGS_CSV = os.path.join(DATA_DIR, "songs.csv")
 TRAIN_CSV = os.path.join(DATA_DIR, "train.csv")
 
@@ -55,7 +55,7 @@ JDBC_DRIVER_PATH = os.path.join(MAVEN_REPO, "mysql", "mysql-connector-java", "8.
 # 检查 JDBC 驱动是否存在
 if not os.path.exists(JDBC_DRIVER_PATH):
     print(f"⚠️ 警告: 未找到 JDBC 驱动: {JDBC_DRIVER_PATH}")
-    print(f"   请先运行: cd E:\\毕业论文\\Project\\MusicWeb && mvn dependency:resolve")
+    print(f"   请先运行: cd F:\\Graduation-project-design\\Project\\MusicWeb && mvn dependency:resolve")
     print(f"   或检查 Maven 本地仓库路径是否正确")
 
 

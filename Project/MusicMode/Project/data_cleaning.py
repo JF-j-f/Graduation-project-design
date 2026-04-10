@@ -25,7 +25,7 @@ warnings.filterwarnings('ignore')
 # ============================================
 
 # 数据路径
-DATA_DIR = r"E:\Graduation-project-design\Data"
+DATA_DIR = r"F:\Graduation-project-design\Data"
 TRAIN_CSV = os.path.join(DATA_DIR, "train.csv")
 SONGS_CSV = os.path.join(DATA_DIR, "songs.csv")
 MEMBERS_CSV = os.path.join(DATA_DIR, "members.csv")
