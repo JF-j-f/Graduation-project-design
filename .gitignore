@@ -1,6 +1,6 @@
 #Ai助手和工作流配置文件
 /.claude
-/.agents/workflows
+/.agents
 /.venv
 /.claudeignore
 /CLAUDE.md
