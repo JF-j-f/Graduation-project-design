@@ -1,4 +1,0 @@
-﻿model,type,val_auc
-DeepFM,single,0.8200514698301509
-BST,single,0.7678647061781684
-Meta-LR (OOF),ensemble,0.8199395585247973
