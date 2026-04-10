@@ -546,7 +546,6 @@ Graduation-project-design/
 ├── CHANGELOG.md                           # 项目更新日志
 ├── LICENSE                                # MIT 许可证
 ├── secrets.txt.example                    # 隐私配置模板
-├── Document/                              # 论文文档目录
 ├── Project/
 │   ├── MusicWeb/                          # Java Web 前端服务
 │   │   ├── pom.xml                        # Maven 项目配置
@@ -670,8 +669,7 @@ Graduation-project-design/
 │       │   ├── sync_recs_v3.py            # 推荐主程序（三通道召回 + 四层漏斗）
 │       │   ├── refresh_song_stats.py      # 歌曲滚动统计刷新
 │       │   ├── evaluate_offline.py        # 离线评估
-│       │   ├── evaluate_recs.py           # 在线评估
-│       └── Mode/                          # 模型产物目录
+│       │   └── evaluate_recs.py           # 在线评估
 ```
 
 ## 安全设计 (Security)

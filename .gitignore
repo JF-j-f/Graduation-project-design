@@ -11,6 +11,7 @@
 
 #论文文件
 /Document
+/README_V0.md
 
 # 模型文件（大型二进制，不进入版本库）
 Project/MusicMode/Mode/
