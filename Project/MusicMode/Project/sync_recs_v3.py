@@ -87,11 +87,11 @@ MMR_LAMBDA = 0.7  # 0.7×相关性 + 0.3×多样性惩罚（工业界常用起�
 
 # 用户画像权重（FAISS 召回用）
 WEIGHTS = {
-    'play_yesterday': 1.0,
-    'play_7days':     0.6,
-    'play_older':     0.3,
-    'favorite':       0.8,
-    'playlist':       0.7,
+    'play_yesterday': 1.0, # 昨天播放权重
+    'play_7days':     0.6, # 最近7天播放权重
+    'play_older':     0.3, # 更早播放权重
+    'favorite':       0.8, # 收藏权重
+    'playlist':       0.7, # 歌单权重
 }
 
 # Redis 配置（歌曲缓存层）

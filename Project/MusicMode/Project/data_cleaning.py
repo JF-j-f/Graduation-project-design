@@ -24,8 +24,9 @@ warnings.filterwarnings('ignore')
 # 配置
 # ============================================
 
-# 数据路径
-DATA_DIR = r"F:\Graduation-project-design\Data"
+# 数据路径（相对于本脚本位置：Project/MusicMode/Project/ 上溯3级到项目根目录）
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+DATA_DIR = os.path.join(_ROOT, "Data")
 TRAIN_CSV = os.path.join(DATA_DIR, "train.csv")
 SONGS_CSV = os.path.join(DATA_DIR, "songs.csv")
 MEMBERS_CSV = os.path.join(DATA_DIR, "members.csv")

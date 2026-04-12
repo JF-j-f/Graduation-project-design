@@ -4,6 +4,7 @@
 /.venv
 /.claudeignore
 /CLAUDE.md
+/.obsidian
 
 #论文图片（README架构图除外）
 /image/*
@@ -44,3 +45,4 @@ Project/MusicMode/scripts/generate_auc_chart.py
 #其他
 /hadoop
 MusicRecommendationSystem.zip
+修复记录.md

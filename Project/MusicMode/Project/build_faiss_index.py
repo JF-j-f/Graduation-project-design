@@ -35,7 +35,7 @@ OUTPUT_FAISS     = os.path.join(MODE_DIR, "song_index.faiss")
 OUTPUT_MAP       = os.path.join(MODE_DIR, "song_id_map.pkl")
 
 # 复合向量维度：song(32)+genre(32)+language(32)+artist(32)+origin_country(32) = 160
-# ⚠️ v3 所有 SparseFeat 统一 embedding_dim=32（与 train_deepfm_v3.py SPARSE_FEAT_SPECS 一致）
+# ⚠️ 所有 SparseFeat 统一 embedding_dim=32（与 train_deepfm_v3.py SPARSE_FEAT_SPECS 一致）
 EMBEDDING_DIM = 160
 
 # 组成复合向量的 embedding 名称（需与 DeepFM v3 的 SparseFeat 名称一致）

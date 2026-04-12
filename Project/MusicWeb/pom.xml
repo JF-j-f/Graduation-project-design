@@ -108,6 +108,8 @@
                 <version>3.4.0</version>
                 <configuration>
                     <failOnMissingWebXml>false</failOnMissingWebXml>
+                    <!-- 排除独立进程目录，避免打入WAR导致Tomcat解压耗时过长 -->
+                    <warSourceExcludes>MusicServer/node_modules/**,MusicServer/unblock/**</warSourceExcludes>
                 </configuration>
             </plugin>
             
@@ -127,8 +129,10 @@
                             <cargo.servlet.port>8082</cargo.servlet.port>
                             <cargo.logging>high</cargo.logging>
                             <cargo.jvmargs>-Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8</cargo.jvmargs>
-                            <!-- 增加部署超时时间为 5 分钟，解决首次启动超时问题 -->
+                            <!-- 部署超时5分钟 -->
                             <cargo.deployer.ping.timeout>300000</cargo.deployer.ping.timeout>
+                            <!-- 容器启动超时3分钟（默认120秒不够用） -->
+                            <cargo.start.timeout>180000</cargo.start.timeout>
                         </properties>
                         <configfiles>
                             <configfile>

@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import os
 import pymysql
 
 def run_sql_file():
@@ -11,7 +12,8 @@ def run_sql_file():
     )
     cur = db.cursor()
     
-    with open(r'F:\Graduation-project-design\Project\MusicWeb\scripts\update_comments.sql', 'r', encoding='utf-8') as f:
+    sql_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'update_comments.sql')
+    with open(sql_path, 'r', encoding='utf-8') as f:
         lines = f.readlines()
         
     try:

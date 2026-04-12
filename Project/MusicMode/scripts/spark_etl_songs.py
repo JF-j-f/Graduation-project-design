@@ -31,8 +31,9 @@ from pyspark.sql.types import IntegerType, StringType
 # 配置区域 - 请根据实际情况修改
 # ============================================
 
-# KKBOX 数据集路径
-DATA_DIR = r"F:\Graduation-project-design\Data"
+# KKBOX 数据集路径（相对于本脚本位置：Project/MusicMode/scripts/ 上溯3级到项目根目录）
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+DATA_DIR = os.path.join(_ROOT, "Data")
 SONGS_CSV = os.path.join(DATA_DIR, "songs.csv")
 TRAIN_CSV = os.path.join(DATA_DIR, "train.csv")
 
@@ -55,7 +56,7 @@ JDBC_DRIVER_PATH = os.path.join(MAVEN_REPO, "mysql", "mysql-connector-java", "8.
 # 检查 JDBC 驱动是否存在
 if not os.path.exists(JDBC_DRIVER_PATH):
     print(f"⚠️ 警告: 未找到 JDBC 驱动: {JDBC_DRIVER_PATH}")
-    print(f"   请先运行: cd F:\\Graduation-project-design\\Project\\MusicWeb && mvn dependency:resolve")
+    print(f"   请先运行: cd <项目根目录>\\Project\\MusicWeb && mvn dependency:resolve")
     print(f"   或检查 Maven 本地仓库路径是否正确")
 
 
