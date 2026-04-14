@@ -7,7 +7,7 @@ evaluate_offline.py — KKBox 验证集离线推荐效果评估
 评估集：从 features_v3.pkl 中按用户级时序切分出的验证集（VALID_RATIO=0.1）
 模型：双神经网络精排集成（DeepFM + BST），与 build_ensemble.py 保持一致
 
-作者：MusicMode 推荐系统
+开发者：JunFun
 """
 import os
 import sys

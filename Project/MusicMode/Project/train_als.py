@@ -7,7 +7,7 @@ ALS 召回模型训练
 3. 为每个用户生成候选歌曲集
 4. 保存模型和候选集
 
-作者：MusicMode 推荐系统
+开发者：JunFun
 """
 
 import os
@@ -82,12 +82,13 @@ def build_interaction_matrix(features):
     print("   统计交互（向量化 groupby）...")
     interaction_series = (
         pd.DataFrame({"user": user_ids, "song": song_ids, "target": targets})
-        .groupby(["user", "song"])["target"].sum()
+        .groupby(["user", "song"])["target"].sum() #统计每对(用户,歌曲)的播放次数
     )
     rows = interaction_series.index.get_level_values("user").tolist()
     cols = interaction_series.index.get_level_values("song").tolist()
     data = interaction_series.values.tolist()
     
+    #将交互数据转换为稀疏矩阵
     interaction_matrix = csr_matrix((data, (rows, cols)), 
                                     shape=(n_users, n_songs),
                                     dtype=np.float32)

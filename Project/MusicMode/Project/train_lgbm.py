@@ -13,7 +13,7 @@ train_lgbm.py — LightGBM 粗排模型训练
   python train_lgbm.py
 
 预计时间：约 30-60 分钟（7.37M 样本，CPU 训练）
-作者：MusicMode 推荐系统
+开发者：JunFun
 """
 
 import os

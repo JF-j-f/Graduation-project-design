@@ -18,7 +18,7 @@ eval_experiment.py — 消融实验 + 模型对比实验
   - 热度基线使用 feat["song_play_count_log"]，来源于play_history真实播放量
   - ALS行列索引与 user_id_encoded / song_id_encoded 完全对齐，直接索引，无需额外编码器
 
-作者：MusicMode 推荐系统
+开发者：JunFun
 """
 
 import os

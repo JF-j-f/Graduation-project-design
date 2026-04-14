@@ -9,7 +9,7 @@ build_faiss_index.py — FAISS 向量索引构建（v3）
 3. L2 归一化后构建 FAISS IndexFlatIP 索引（余弦相似度搜索）
 4. 输出 song_index.faiss + song_id_map.pkl
 
-作者：MusicMode 推荐系统
+开发者：JunFun
 """
 
 import os

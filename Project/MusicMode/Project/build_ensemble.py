@@ -18,7 +18,7 @@ build_ensemble.py — 双精排模型集成（DeepFM + BST）
   - python train_deepfm_v3.py
   - python train_bst.py
 
-作者：卢伟军
+开发者：JunFun
 """
 
 import os

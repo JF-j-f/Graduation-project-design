@@ -21,6 +21,8 @@ train_bst.py — BST（行为序列 Transformer）精排模型训练
     concat(seq_repr, target_emb, user_emb, dense_proj) → Flatten
   MLP 输出层：
     Linear(→256) → BN → ReLU → Drop → Linear(→128) → BN → ReLU → Drop → Linear(→64) → BN → ReLU → Drop → Linear(→1) → Sigmoid
+
+开发者：JunFun
 """
 
 import os

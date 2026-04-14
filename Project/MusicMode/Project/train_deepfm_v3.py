@@ -11,7 +11,7 @@ train_deepfm_v3.py — DeepFM 精排模型训练 v3
   - 输出: deepfm_model.pth + model_config.pkl + training_progress.png
 
 预计时间：约 30 分钟（7.37M 样本，GPU RTX 4060）
-作者：MusicMode 推荐系统
+开发者：JunFun
 """
 
 import os

@@ -3,6 +3,8 @@
 """
 generate_auc_chart.py
 生成"不同模型AUC得分"柱状图，保存至 Project/MusicMode/image/ 目录。
+
+开发者：JunFun
 """
 
 import os

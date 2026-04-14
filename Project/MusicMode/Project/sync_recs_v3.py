@@ -5,8 +5,8 @@ sync_recs_v3.py — 三路召回 + LightGBM粗排 + DeepFM/BST双模型精排集
 架构：
   召回层  (230万 → ~600): FAISS向量召回(200) + 个性化热度召回(200) + ALS协同过滤(200)
                           - 通道A（FAISS）：满意度感知，dissatisfied时强化偏好探索
-                          - 通道B（ALS）：新用户三层降级路由（Tier1冷启动/Tier2内容/Tier3协同）；dissatisfied时降权
-                          - 通道C（热度）：满意度感知，动态调整流派过滤和艺术家加权
+                          - 通道B（热度）：满意度感知，动态调整流派过滤和艺术家加权
+                          - 通道C（ALS）：新用户三层降级路由（Tier1冷启动/Tier2内容/Tier3协同）；dissatisfied时降权
   粗排层  (~600 → 300):   LightGBM 打分（仅粗排，不参与精排集成）
   精排层  (300 → 150):    DeepFM + BST 双模型加权融合
                           - DeepFM：特征共现交互（FM层+DNN层）
@@ -16,6 +16,8 @@ sync_recs_v3.py — 三路召回 + LightGBM粗排 + DeepFM/BST双模型精排集
                           - MMR：λ=0.7，70%相关性 + 30%多样性惩罚
                           - 升级冷却：负向交互1次→3天，2次→7天，3次+→14天冷宫
 计划任务：每天凌晨 4 点运行
+
+开发者：JunFun
 """
 
 import os
@@ -64,14 +66,14 @@ USER_STATS_PATH    = os.path.join(MODE_DIR, "user_stats.pkl")
 SONG_STATS_PATH    = os.path.join(MODE_DIR, "song_stats.pkl")
 SVD_VECS_PATH      = os.path.join(MODE_DIR, "svd_vecs.pkl")   # SVD向量，供在线查找
 
-# 推荐参数（v7 扩展漏斗：~600 → 300 → 150 → 50）
-TOP_N          = 50    # v7：最终推荐数 20 → 50
-RECALL_FAISS   = 200   # v7：FAISS 召回候选数 150 → 200
-RECALL_HOT     = 200   # v7：热度召回候选数 100 → 200
-RECALL_ALS     = 200   # v7：ALS 召回候选数 50 → 200
-RANK_TOP       = 300   # v7：LightGBM 粗排保留数 50 → 300
-ENSEMBLE_TOP   = 150   # v7：DeepFM+BST 精排保留数 25 → 150
-MAX_PER_ARTIST = 10    # v7：MMR安全上限（从5升至10，MMR已接管多样性主逻辑）
+# 推荐参数（扩展漏斗：~600 → 300 → 150 → 50）
+TOP_N          = 50    # 最终推荐数 
+RECALL_FAISS   = 200   # FAISS 召回候选数
+RECALL_HOT     = 200   # 热度召回候选数 
+RECALL_ALS     = 200   # ALS 召回候选数 
+RANK_TOP       = 300   # LightGBM 粗排保留数 
+ENSEMBLE_TOP   = 150   # DeepFM+BST 精排保留数 
+MAX_PER_ARTIST = 10    # MMR安全上限
 
 # 满意度 → 艺术家加权分（通道B热度召回）
 ARTIST_BONUS_MAP = {
@@ -804,7 +806,7 @@ def recall_candidates(db, user_id, res: Resources,
                 if len([k for k in candidates]) >= RECALL_FAISS:
                     break
 
-    # ── 通道B: 个性化热度召回（v7：加入满意度感知）
+    # ── 通道B: 个性化热度召回
     # hot_cache 覆盖 360,178 首歌（songs.popularity > 0 仅 23,632 首，15× 扩展）
     # 满意度影响：① genre_filter 策略（dissatisfied/neutral 用全部流派，more inclusive）
     #             ② 偏好艺术家加权分（dissatisfied 时 +800，very_satisfied 时 +150）
@@ -947,7 +949,7 @@ def recall_candidates(db, user_id, res: Resources,
     als_dissatisfied = (hot_sati == "dissatisfied")
 
     if user_tier == 3 and res.als_model is not None:
-        # ── Tier 3：ALS 协同过滤召回（dissatisfied 时降权）
+        # ── Tier 3：ALS 协同过滤召回（不满意（dissatisfied）时降权）
         try:
             als = res.als_model
             als_score_factor = 0.07 if als_dissatisfied else 0.1

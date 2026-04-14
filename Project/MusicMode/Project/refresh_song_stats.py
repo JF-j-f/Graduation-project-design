@@ -18,6 +18,8 @@ refresh_song_stats.py — 歌曲滚动统计物化刷新脚本
   - Redis 读取：< 0.1s（亚毫秒），sync_recs_v3.py 强制要求 Redis 最新才允许推荐
   - sync_recs_v3.py 通过 song_rolling:version 与 MySQL MAX(updated_at) 对比
     验证 Redis 新鲜度，不一致则终止并提示重新运行本脚本
+
+开发者：JunFun
 """
 
 import os
@@ -166,13 +168,14 @@ def compute_stats():
     df["is_7d"]  = (df["play_time"] >= today - timedelta(days=7)).astype("int32")
     df["is_30d"] = (df["play_time"] >= today - timedelta(days=30)).astype("int32")
 
+    #向量化聚合
     agg = df.groupby("song_id", sort=False).agg(
-        cnt_7d      = ("is_7d",    "sum"),
-        cnt_30d     = ("is_30d",   "sum"),
-        total_plays = ("song_id",  "count"),
+        cnt_7d      = ("is_7d",    "sum"),  # 近7天播放次数
+        cnt_30d     = ("is_30d",   "sum"),  # 近30天播放次数
+        total_plays = ("song_id",  "count"), # 总播放次数
     ).reset_index()
 
-    # trending_ratio = 近7天日均 / 近30天日均（与 prepare_features_v3 一致）
+    # trending_ratio = 近7天日均 / 近30天日均（衡量是否"正在变火"）
     agg["trending"] = (
         (agg["cnt_7d"].astype("float64") / 7.0)
         / (agg["cnt_30d"].astype("float64") / 30.0 + 1e-8)

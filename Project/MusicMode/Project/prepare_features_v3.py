@@ -21,7 +21,7 @@ prepare_features_v3.py — 特征工程 （62特征全集，含 SVD 嵌入）
   交互（4）: user_genre_match, user_artist_match,
               user_language_match, user_country_match
 
-作者：MusicMode 推荐系统
+开发者：JunFun
 """
 
 import os
