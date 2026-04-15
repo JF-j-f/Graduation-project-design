@@ -16,6 +16,7 @@ import os
 import sys
 import pickle
 import time
+from pathlib import Path
 import numpy as np
 import warnings
 warnings.filterwarnings('ignore')
@@ -24,15 +25,18 @@ warnings.filterwarnings('ignore')
 # 配置
 # ============================================================
 
-PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
-MODE_DIR    = os.path.join(os.path.dirname(PROJECT_DIR), "Mode")
+MODE_DIR = Path(__file__).resolve().parents[2] / "Mode"
+FE_DIR     = MODE_DIR / "feature_engineering"
+RECALL_DIR = MODE_DIR / "recall"
+DEEPFM_DIR = MODE_DIR / "fine_rank" / "deepfm"
+RECALL_DIR.mkdir(parents=True, exist_ok=True)
 
-INPUT_FEATURES   = os.path.join(MODE_DIR, "features_v3.pkl")
-INPUT_MODEL      = os.path.join(MODE_DIR, "deepfm", "deepfm_model.pth")
-INPUT_CONFIG     = os.path.join(MODE_DIR, "deepfm", "model_config.pkl")
+INPUT_FEATURES   = FE_DIR / "features_v3.pkl"
+INPUT_MODEL      = DEEPFM_DIR / "deepfm_model.pth"
+INPUT_CONFIG     = DEEPFM_DIR / "model_config.pkl"
 
-OUTPUT_FAISS     = os.path.join(MODE_DIR, "song_index.faiss")
-OUTPUT_MAP       = os.path.join(MODE_DIR, "song_id_map.pkl")
+OUTPUT_FAISS     = RECALL_DIR / "song_index.faiss"
+OUTPUT_MAP       = RECALL_DIR / "song_id_map.pkl"
 
 # 复合向量维度：song(32)+genre(32)+language(32)+artist(32)+origin_country(32) = 160
 # ⚠️ 所有 SparseFeat 统一 embedding_dim=32（与 train_deepfm_v3.py SPARSE_FEAT_SPECS 一致）
@@ -144,7 +148,7 @@ def extract_embeddings(model, features):
             emb_matrices[name] = np.zeros((vocab_size, dim), dtype=np.float32)
 
     # 加载 encoders（用于冷门歌曲内容编码）
-    encoders_path = os.path.join(MODE_DIR, "encoders_v3.pkl")
+    encoders_path = FE_DIR / "encoders_v3.pkl"
     with open(encoders_path, "rb") as f:
         encoders = pickle.load(f)
 

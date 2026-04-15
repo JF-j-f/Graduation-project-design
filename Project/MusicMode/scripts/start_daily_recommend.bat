@@ -5,12 +5,12 @@ echo     MusicWeb Daily Recommendation Task
 echo     Start Time: %date% %time%
 echo ===================================================
 
-cd /d "%~dp0..\Project"
+cd /d "%~dp0..\Project\serving"
 set PYTHONIOENCODING=utf-8
 set PYTHONUTF8=1
 
 echo [*] Running sync_recs_v3.py...
-C:\Users\君拂\AppData\Local\Programs\Python\Python312\python.exe sync_recs_v3.py
+python sync_recs_v3.py
 
 echo.
 echo ===================================================

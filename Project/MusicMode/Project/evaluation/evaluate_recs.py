@@ -12,6 +12,7 @@ import sys
 import os
 import math
 import datetime
+from pathlib import Path
 import pymysql
 from collections import defaultdict
 
@@ -25,7 +26,9 @@ DB_CONFIG = dict(
     cursorclass=pymysql.cursors.DictCursor
 )
 
-REPORT_PATH = os.path.join(os.path.dirname(__file__), '..', 'Mode', 'evaluation_report.txt')
+# 脚本位于 Project/MusicMode/Project/evaluation/，Mode/evaluation/ 在 MusicMode 下
+REPORT_PATH = Path(__file__).resolve().parents[2] / "Mode" / "evaluation" / "evaluation_report.txt"
+REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def get_db():

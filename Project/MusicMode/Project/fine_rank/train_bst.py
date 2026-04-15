@@ -30,6 +30,7 @@ import sys
 import pickle
 import time
 import math
+from pathlib import Path
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -50,23 +51,22 @@ from sklearn.metrics import roc_auc_score
 # 配置
 # ============================================================
 
-PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
-MODE_DIR    = os.path.join(os.path.dirname(PROJECT_DIR), "Mode")
+MODE_DIR = Path(__file__).resolve().parents[2] / "Mode"
+FE_DIR   = MODE_DIR / "feature_engineering"
+BST_DIR  = MODE_DIR / "fine_rank" / "bst"
+BST_DIR.mkdir(parents=True, exist_ok=True)
 
-INPUT_FEATURES  = os.path.join(MODE_DIR, "features_v3.pkl")
-INPUT_SEQ       = os.path.join(MODE_DIR, "features_seq.pkl")
-BST_DIR         = os.path.join(MODE_DIR, "bst")
-os.makedirs(BST_DIR, exist_ok=True)
-
-OUTPUT_MODEL    = os.path.join(BST_DIR, "bst_model.pth")
-OUTPUT_CONFIG   = os.path.join(BST_DIR, "model_config.pkl")
-OUTPUT_PLOT     = os.path.join(BST_DIR, "training_progress.png")
-OUTPUT_HISTORY  = os.path.join(BST_DIR, "bst_metrics.csv")
+INPUT_FEATURES  = FE_DIR / "features_v3.pkl"
+INPUT_SEQ       = FE_DIR / "features_seq.pkl"
+OUTPUT_MODEL    = BST_DIR / "bst_model.pth"
+OUTPUT_CONFIG   = BST_DIR / "model_config.pkl"
+OUTPUT_PLOT     = BST_DIR / "training_progress.png"
+OUTPUT_HISTORY  = BST_DIR / "bst_metrics.csv"
 
 # K折OOF开关（供元学习器训练使用）
 RUN_OOF        = True
 N_OOF_SPLITS   = 5   # 5折OOF
-OOF_PREDS_PATH = os.path.join(BST_DIR, "bst_oof.npy")
+OOF_PREDS_PATH = BST_DIR / "bst_oof.npy"
 OOF_IDX_PATH   = os.path.join(BST_DIR, "bst_oof_idx.npy")
 
 # 训练超参

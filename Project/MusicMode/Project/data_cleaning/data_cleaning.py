@@ -13,6 +13,7 @@
 
 import os
 import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
@@ -24,18 +25,17 @@ warnings.filterwarnings('ignore')
 # 配置
 # ============================================
 
-# 数据路径（相对于本脚本位置：Project/MusicMode/Project/ 上溯3级到项目根目录）
-_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-DATA_DIR = os.path.join(_ROOT, "Data")
-TRAIN_CSV = os.path.join(DATA_DIR, "train.csv")
-SONGS_CSV = os.path.join(DATA_DIR, "songs.csv")
-MEMBERS_CSV = os.path.join(DATA_DIR, "members.csv")
+# 脚本位于 Project/MusicMode/Project/data_cleaning/，向上 4 级到仓库根
+_ROOT = Path(__file__).resolve().parents[4]
+DATA_DIR = _ROOT / "Data"
+TRAIN_CSV = DATA_DIR / "train.csv"
+SONGS_CSV = DATA_DIR / "songs.csv"
+MEMBERS_CSV = DATA_DIR / "members.csv"
 
-# 输出路径
-PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
-MODE_DIR = os.path.join(os.path.dirname(PROJECT_DIR), "Mode")
-CLEANED_TRAIN_PATH = os.path.join(MODE_DIR, "cleaned_train.pkl")
-CLEANED_SONGS_PATH = os.path.join(MODE_DIR, "cleaned_songs.pkl")
+# 输出路径（清洗产物统一归入 feature_engineering/，作为特征工程输入）
+MODE_DIR = Path(__file__).resolve().parents[2] / "Mode"
+CLEANED_TRAIN_PATH = MODE_DIR / "feature_engineering" / "cleaned_train.pkl"
+CLEANED_SONGS_PATH = MODE_DIR / "feature_engineering" / "cleaned_songs.pkl"
 
 # 清洗配置
 RANDOM_SEED = 42

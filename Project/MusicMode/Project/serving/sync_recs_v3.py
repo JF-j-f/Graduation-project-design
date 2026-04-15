@@ -28,6 +28,7 @@ import math
 import subprocess
 import time
 import atexit
+from pathlib import Path
 import numpy as np
 import pymysql
 import faiss
@@ -45,26 +46,28 @@ MYSQL_USER     = "root"
 MYSQL_PASSWORD = "JF123456"
 MYSQL_DB       = "musicweb"
 
-PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
-MODE_DIR    = os.path.join(os.path.dirname(PROJECT_DIR), "Mode")
+MODE_DIR   = Path(__file__).resolve().parents[2] / "Mode"
+FE_DIR     = MODE_DIR / "feature_engineering"
+RECALL_DIR = MODE_DIR / "recall"
+FR_DIR     = MODE_DIR / "fine_rank"
 
 # 模型文件
-FAISS_INDEX_PATH   = os.path.join(MODE_DIR, "song_index.faiss")
-SONG_ID_MAP_PATH   = os.path.join(MODE_DIR, "song_id_map.pkl")
-LGBM_MODEL_PATH    = os.path.join(MODE_DIR, "lgbm",   "lgbm_model.pkl")
-DEEPFM_MODEL_PATH  = os.path.join(MODE_DIR, "deepfm", "deepfm_model.pth")
-DEEPFM_CONFIG_PATH = os.path.join(MODE_DIR, "deepfm", "model_config.pkl")
-BST_MODEL_PATH     = os.path.join(MODE_DIR, "bst", "bst_model.pth")
-BST_CONFIG_PATH    = os.path.join(MODE_DIR, "bst", "model_config.pkl")
+FAISS_INDEX_PATH   = RECALL_DIR / "song_index.faiss"
+SONG_ID_MAP_PATH   = RECALL_DIR / "song_id_map.pkl"
+LGBM_MODEL_PATH    = MODE_DIR / "coarse_rank" / "lgbm" / "lgbm_model.pkl"
+DEEPFM_MODEL_PATH  = FR_DIR / "deepfm" / "deepfm_model.pth"
+DEEPFM_CONFIG_PATH = FR_DIR / "deepfm" / "model_config.pkl"
+BST_MODEL_PATH     = FR_DIR / "bst" / "bst_model.pth"
+BST_CONFIG_PATH    = FR_DIR / "bst" / "model_config.pkl"
 # 集成配置：由 build_ensemble.py 生成，保存在 ensemble 子目录下
-ENSEMBLE_PATH      = os.path.join(MODE_DIR, "ensemble", "ensemble_config.pkl")
+ENSEMBLE_PATH      = FR_DIR / "ensemble" / "ensemble_config.pkl"
 # 元学习器：由 build_ensemble.py 在OOF文件存在时生成
-META_LEARNER_PATH  = os.path.join(MODE_DIR, "ensemble", "meta_learner.pkl")
-ALS_MODEL_PATH     = os.path.join(MODE_DIR, "als_model.pkl")
-ENCODERS_PATH      = os.path.join(MODE_DIR, "encoders_v3.pkl")
-USER_STATS_PATH    = os.path.join(MODE_DIR, "user_stats.pkl")
-SONG_STATS_PATH    = os.path.join(MODE_DIR, "song_stats.pkl")
-SVD_VECS_PATH      = os.path.join(MODE_DIR, "svd_vecs.pkl")   # SVD向量，供在线查找
+META_LEARNER_PATH  = FR_DIR / "ensemble" / "meta_learner.pkl"
+ALS_MODEL_PATH     = RECALL_DIR / "als_model.pkl"
+ENCODERS_PATH      = FE_DIR / "encoders_v3.pkl"
+USER_STATS_PATH    = FE_DIR / "user_stats.pkl"
+SONG_STATS_PATH    = FE_DIR / "song_stats.pkl"
+SVD_VECS_PATH      = FE_DIR / "svd_vecs.pkl"   # SVD向量，供在线查找
 
 # 推荐参数（扩展漏斗：~600 → 300 → 150 → 50）
 TOP_N          = 50    # 最终推荐数 

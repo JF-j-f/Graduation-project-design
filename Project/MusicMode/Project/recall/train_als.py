@@ -13,6 +13,7 @@ ALS 召回模型训练
 import os
 import sys
 import pickle
+from pathlib import Path
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -23,11 +24,11 @@ warnings.filterwarnings('ignore')
 # 配置
 # ============================================
 
-PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
-MODE_DIR = os.path.join(os.path.dirname(PROJECT_DIR), "Mode")
-FEATURE_PATH = os.path.join(MODE_DIR, "features_v3.pkl")
-ALS_MODEL_PATH = os.path.join(MODE_DIR, "als_model.pkl")
-CANDIDATES_PATH = os.path.join(MODE_DIR, "candidates.pkl")
+MODE_DIR = Path(__file__).resolve().parents[2] / "Mode"
+FEATURE_PATH    = MODE_DIR / "feature_engineering" / "features_v3.pkl"
+ALS_MODEL_PATH  = MODE_DIR / "recall" / "als_model.pkl"
+CANDIDATES_PATH = MODE_DIR / "recall" / "candidates.pkl"
+ALS_MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 # ALS 超参数
 ALS_RANK = 50           # 隐向量维度

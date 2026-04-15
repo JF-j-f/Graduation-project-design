@@ -20,6 +20,7 @@ import os
 import sys
 import pickle
 import warnings
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -35,15 +36,15 @@ warnings.filterwarnings('ignore')
 # 配置
 # ============================================================
 
-PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
-MODE_DIR    = os.path.join(os.path.dirname(PROJECT_DIR), "Mode")
+# 脚本位于 Project/MusicMode/Project/coarse_rank/，向上 2 级定位到 MusicMode
+MODE_DIR = Path(__file__).resolve().parents[2] / "Mode"
 
-INPUT_FEATURES  = os.path.join(MODE_DIR, "features_v3.pkl")
-LGBM_DIR        = os.path.join(MODE_DIR, "lgbm")
-os.makedirs(LGBM_DIR, exist_ok=True)
-OUTPUT_MODEL    = os.path.join(LGBM_DIR, "lgbm_model.pkl")
-OUTPUT_PLOT     = os.path.join(LGBM_DIR, "lgbm_importance.png")
-OUTPUT_METRICS  = os.path.join(LGBM_DIR, "lgbm_metrics.csv")       # 论文用：特征重要度 + 评估指标
+INPUT_FEATURES  = MODE_DIR / "feature_engineering" / "features_v3.pkl"
+LGBM_DIR        = MODE_DIR / "coarse_rank" / "lgbm"
+LGBM_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_MODEL    = LGBM_DIR / "lgbm_model.pkl"
+OUTPUT_PLOT     = LGBM_DIR / "lgbm_importance.png"
+OUTPUT_METRICS  = LGBM_DIR / "lgbm_metrics.csv"       # 论文用：特征重要度 + 评估指标
 
 # 训练配置
 VALID_RATIO  = 0.1    # 验证集比例：10%，与 DeepFM/DIN 一致
@@ -144,9 +145,9 @@ def main():
         print("❌ 特征文件不存在！请先运行 prepare_features_v3.py")
         sys.exit(1)
 
-    _npz_cache = INPUT_FEATURES.replace(".pkl", "_cache.npz")
-    _use_cache = (os.path.exists(_npz_cache) and
-                  os.path.getmtime(_npz_cache) >= os.path.getmtime(INPUT_FEATURES))
+    _npz_cache = INPUT_FEATURES.with_name(INPUT_FEATURES.stem + "_cache.npz")
+    _use_cache = (_npz_cache.exists() and
+                  _npz_cache.stat().st_mtime >= INPUT_FEATURES.stat().st_mtime)
     if _use_cache:
         print(f"   ⚡ 从 npz 缓存加载（速度 5-10x）...")
         _raw = np.load(_npz_cache, allow_pickle=True)

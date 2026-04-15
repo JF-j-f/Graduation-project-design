@@ -15,6 +15,7 @@ import pickle
 import math
 import warnings
 import datetime
+from pathlib import Path
 import numpy as np
 import pandas as pd
 from collections import defaultdict
@@ -23,17 +24,19 @@ warnings.filterwarnings("ignore")
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 # ── 路径配置 ────────────────────────────────────────────────────────────────
-PROJECT_DIR   = os.path.dirname(os.path.abspath(__file__))
-MODE_DIR      = os.path.join(os.path.dirname(PROJECT_DIR), "Mode")
+MODE_DIR = Path(__file__).resolve().parents[2] / "Mode"
+FE_DIR   = MODE_DIR / "feature_engineering"
+FR_DIR   = MODE_DIR / "fine_rank"
 
-FEATURES_PATH = os.path.join(MODE_DIR, "features_v3.pkl")
-INPUT_SEQ     = os.path.join(MODE_DIR, "features_seq.pkl")       # BST 序列特征
-DEEPFM_CFG    = os.path.join(MODE_DIR, "deepfm", "model_config.pkl")
-DEEPFM_PATH   = os.path.join(MODE_DIR, "deepfm", "deepfm_model.pth")
-BST_CFG       = os.path.join(MODE_DIR, "bst",  "model_config.pkl")
-BST_PATH      = os.path.join(MODE_DIR, "bst",  "bst_model.pth")
-ENSEMBLE_PATH = os.path.join(MODE_DIR, "ensemble", "ensemble_config.pkl")
-REPORT_PATH   = os.path.join(MODE_DIR, "offline_evaluation_report.txt")
+FEATURES_PATH = FE_DIR / "features_v3.pkl"
+INPUT_SEQ     = FE_DIR / "features_seq.pkl"       # BST 序列特征
+DEEPFM_CFG    = FR_DIR / "deepfm" / "model_config.pkl"
+DEEPFM_PATH   = FR_DIR / "deepfm" / "deepfm_model.pth"
+BST_CFG       = FR_DIR / "bst"    / "model_config.pkl"
+BST_PATH      = FR_DIR / "bst"    / "bst_model.pth"
+ENSEMBLE_PATH = FR_DIR / "ensemble" / "ensemble_config.pkl"
+REPORT_PATH   = MODE_DIR / "evaluation" / "offline_evaluation_report.txt"
+REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 # ── 超参数（与训练脚本保持一致） ────────────────────────────────────────────
 VALID_RATIO      = 0.1
@@ -97,9 +100,9 @@ def load_val_data():
         sys.exit(1)
 
     # 优先使用 npz 缓存
-    _npz_cache = FEATURES_PATH.replace(".pkl", "_cache.npz")
-    _use_cache = (os.path.exists(_npz_cache) and
-                  os.path.getmtime(_npz_cache) >= os.path.getmtime(FEATURES_PATH))
+    _npz_cache = FEATURES_PATH.with_name(FEATURES_PATH.stem + "_cache.npz")
+    _use_cache = (_npz_cache.exists() and
+                  _npz_cache.stat().st_mtime >= FEATURES_PATH.stat().st_mtime)
     if _use_cache:
         print("   ⚡ 从 npz 缓存加载...")
         _raw = np.load(_npz_cache, allow_pickle=True)
@@ -241,9 +244,9 @@ def predict_bst(feat, val_idx, train_idx):
 
 def get_ensemble_score(preds_dict, y_val):
     """加载 meta_learner.pkl（LightGBM元学习器），对各模型预测值集成输出。"""
-    meta_path = os.path.join(os.path.dirname(ENSEMBLE_PATH), "meta_learner.pkl")
+    meta_path = ENSEMBLE_PATH.parent / "meta_learner.pkl"
 
-    if os.path.exists(meta_path):
+    if meta_path.exists():
         with open(meta_path, "rb") as f:
             meta_lr = pickle.load(f)
         names = list(preds_dict.keys())

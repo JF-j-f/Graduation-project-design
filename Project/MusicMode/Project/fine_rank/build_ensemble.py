@@ -24,6 +24,7 @@ build_ensemble.py — 双精排模型集成（DeepFM + BST）
 import os
 import sys
 import pickle
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import warnings
@@ -36,16 +37,17 @@ from sklearn.metrics import roc_auc_score
 # 配置
 # ============================================================
 
-PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
-MODE_DIR    = os.path.join(os.path.dirname(PROJECT_DIR), "Mode")
+MODE_DIR     = Path(__file__).resolve().parents[2] / "Mode"
+FE_DIR       = MODE_DIR / "feature_engineering"
+FR_DIR       = MODE_DIR / "fine_rank"
+ENSEMBLE_DIR = FR_DIR / "ensemble"
+ENSEMBLE_DIR.mkdir(parents=True, exist_ok=True)
 
-INPUT_FEATURES = os.path.join(MODE_DIR, "features_v3.pkl")
-INPUT_SEQ      = os.path.join(MODE_DIR, "features_seq.pkl")   # BST 序列特征
-ENSEMBLE_DIR   = os.path.join(MODE_DIR, "ensemble")
-os.makedirs(ENSEMBLE_DIR, exist_ok=True)
-OUTPUT_ENSEMBLE = os.path.join(ENSEMBLE_DIR, "ensemble_config.pkl")
-OUTPUT_REPORT   = os.path.join(ENSEMBLE_DIR, "ensemble_report.txt")
-OUTPUT_METRICS  = os.path.join(ENSEMBLE_DIR, "ensemble_metrics.csv")
+INPUT_FEATURES  = FE_DIR / "features_v3.pkl"
+INPUT_SEQ       = FE_DIR / "features_seq.pkl"   # BST 序列特征
+OUTPUT_ENSEMBLE = ENSEMBLE_DIR / "ensemble_config.pkl"
+OUTPUT_REPORT   = ENSEMBLE_DIR / "ensemble_report.txt"
+OUTPUT_METRICS  = ENSEMBLE_DIR / "ensemble_metrics.csv"
 
 VALID_RATIO  = 0.1   # 与训练脚本保持一致
 RANDOM_SEED  = 42
@@ -59,13 +61,13 @@ BATCH_SIZE   = 8192
 MODEL_CONFIGS = {
     "DeepFM": {
         "type": "deepfm",
-        "model_path": os.path.join(MODE_DIR, "deepfm", "deepfm_model.pth"),
-        "config_path": os.path.join(MODE_DIR, "deepfm", "model_config.pkl"),
+        "model_path":  FR_DIR / "deepfm" / "deepfm_model.pth",
+        "config_path": FR_DIR / "deepfm" / "model_config.pkl",
     },
     "BST": {
         "type": "bst",
-        "model_path":  os.path.join(MODE_DIR, "bst", "bst_model.pth"),
-        "config_path": os.path.join(MODE_DIR, "bst", "model_config.pkl"),
+        "model_path":  FR_DIR / "bst" / "bst_model.pth",
+        "config_path": FR_DIR / "bst" / "model_config.pkl",
     },
 }
 

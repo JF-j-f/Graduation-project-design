@@ -8,6 +8,7 @@ generate_auc_chart.py
 """
 
 import os
+from pathlib import Path
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
@@ -64,11 +65,10 @@ ax.tick_params(axis='both', colors='#444444')
 
 plt.tight_layout(pad=1.2)
 
-# ── 保存 ──────────────────────────────────────────────────────
-script_dir = os.path.dirname(os.path.abspath(__file__))
-save_dir   = os.path.join(os.path.dirname(script_dir), 'image')
-os.makedirs(save_dir, exist_ok=True)
-save_path  = os.path.join(save_dir, '不同模型AUC得分.png')
+# ── 保存到仓库根 image/ 目录 ──────────────────────────────────
+save_dir = Path(__file__).resolve().parents[4] / "image"
+save_dir.mkdir(parents=True, exist_ok=True)
+save_path = save_dir / "不同模型AUC得分.png"
 
 plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor='white')
 plt.close()

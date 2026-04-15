@@ -26,6 +26,7 @@ import sys
 import pickle
 import datetime
 import warnings
+from pathlib import Path
 import numpy as np
 
 warnings.filterwarnings("ignore")
@@ -37,19 +38,21 @@ import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 
 # ── 路径配置 ──────────────────────────────────────────────────────────────────
-PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
-MODE_DIR    = os.path.join(os.path.dirname(PROJECT_DIR), "Mode")
-DOC_DIR     = os.path.join(os.path.dirname(PROJECT_DIR), "Document")
-# 图片输出到根目录 image\
-ROOT_DIR    = os.path.dirname(os.path.dirname(os.path.dirname(PROJECT_DIR)))
-IMG_DIR     = os.path.join(ROOT_DIR, "image")
-os.makedirs(DOC_DIR, exist_ok=True)
-os.makedirs(IMG_DIR, exist_ok=True)
+# 脚本位于 Project/MusicMode/Project/evaluation/
+_MUSICMODE = Path(__file__).resolve().parents[2]   # .../Project/MusicMode/
+MODE_DIR   = _MUSICMODE / "Mode"
+DOC_DIR    = _MUSICMODE / "Document"
+ROOT_DIR   = Path(__file__).resolve().parents[4]   # 仓库根目录
+IMG_DIR    = ROOT_DIR / "image"
+DOC_DIR.mkdir(parents=True, exist_ok=True)
+IMG_DIR.mkdir(parents=True, exist_ok=True)
 
-REPORT_PATH = os.path.join(DOC_DIR, "eval_experiment_report.txt")
+REPORT_PATH = DOC_DIR / "eval_experiment_report.txt"
 
 # ── import 现有函数（不修改原脚本）────────────────────────────────────────────
-sys.path.insert(0, PROJECT_DIR)
+# build_ensemble 在 fine_rank/，compute_ranking_metrics 在同目录 evaluation/
+sys.path.insert(0, str(_MUSICMODE / "Project" / "fine_rank"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from build_ensemble import load_val_data, collect_predictions   # 数据加载+模型推断
 from evaluate_offline import compute_ranking_metrics            # 指标计算
 
@@ -99,7 +102,7 @@ def eval_popularity(feat, val_idx, y_val, uid_val):
 def eval_als(feat, val_idx, y_val, uid_val):
     """ALS协同过滤：implicit ALS，user/item_factors 行列索引与 encoded ID 完全对齐"""
     print("\n[对比] ALS协同过滤...")
-    als_path = os.path.join(MODE_DIR, "als_model.pkl")
+    als_path = MODE_DIR / "recall" / "als_model.pkl"
     with open(als_path, "rb") as f:
         als = pickle.load(f)
 
@@ -403,12 +406,12 @@ def main():
         sys.exit(1)
 
     # ── Step 3: 加载 Meta-LGBM 和 LightGBM
-    meta_path = os.path.join(MODE_DIR, "ensemble", "meta_learner.pkl")
+    meta_path = MODE_DIR / "fine_rank" / "ensemble" / "meta_learner.pkl"
     with open(meta_path, "rb") as f:
         meta_learner = pickle.load(f)
     print("   ✅ Meta-LR 元学习器已加载")
 
-    lgbm_path = os.path.join(MODE_DIR, "lgbm", "lgbm_model.pkl")
+    lgbm_path = MODE_DIR / "coarse_rank" / "lgbm" / "lgbm_model.pkl"
     with open(lgbm_path, "rb") as f:
         lgbm_model = pickle.load(f)
     auc_lgbm = float(lgbm_model.get("val_auc", 0.7921))
@@ -436,9 +439,9 @@ def main():
     auc_deepfm = model_aucs.get("DeepFM", 0.8201)
     auc_bst    = model_aucs.get("BST",    0.7679)
 
-    ensemble_cfg_path = os.path.join(MODE_DIR, "ensemble", "ensemble_config.pkl")
+    ensemble_cfg_path = MODE_DIR / "fine_rank" / "ensemble" / "ensemble_config.pkl"
     auc_meta = 0.8199
-    if os.path.exists(ensemble_cfg_path):
+    if ensemble_cfg_path.exists():
         with open(ensemble_cfg_path, "rb") as f:
             ec = pickle.load(f)
         auc_meta = ec.get("meta_auc", 0.8199)

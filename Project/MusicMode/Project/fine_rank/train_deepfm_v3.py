@@ -18,6 +18,7 @@ import os
 import sys
 import pickle
 import time
+from pathlib import Path
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -32,16 +33,14 @@ warnings.filterwarnings('ignore')
 # 配置
 # ============================================================
 
-PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
-MODE_DIR    = os.path.join(os.path.dirname(PROJECT_DIR), "Mode")
-
-INPUT_FEATURES   = os.path.join(MODE_DIR, "features_v3.pkl")
-DEEPFM_DIR       = os.path.join(MODE_DIR, "deepfm")
-os.makedirs(DEEPFM_DIR, exist_ok=True)
-OUTPUT_MODEL     = os.path.join(DEEPFM_DIR, "deepfm_model.pth")
-OUTPUT_CONFIG    = os.path.join(DEEPFM_DIR, "model_config.pkl")
-OUTPUT_PLOT      = os.path.join(DEEPFM_DIR, "training_progress.png")
-OUTPUT_HISTORY   = os.path.join(DEEPFM_DIR, "deepfm_metrics.csv")  # 论文用：逐 epoch 指标
+MODE_DIR = Path(__file__).resolve().parents[2] / "Mode"
+INPUT_FEATURES   = MODE_DIR / "feature_engineering" / "features_v3.pkl"
+DEEPFM_DIR       = MODE_DIR / "fine_rank" / "deepfm"
+DEEPFM_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_MODEL     = DEEPFM_DIR / "deepfm_model.pth"
+OUTPUT_CONFIG    = DEEPFM_DIR / "model_config.pkl"
+OUTPUT_PLOT      = DEEPFM_DIR / "training_progress.png"
+OUTPUT_HISTORY   = DEEPFM_DIR / "deepfm_metrics.csv"  # 论文用：逐 epoch 指标
 
 # K折OOF开关（供元学习器训练使用）
 # 快速验证用 N_OOF_SPLITS=2，正式K=5训练时手动改为 5

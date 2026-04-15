@@ -28,6 +28,7 @@ import os
 import sys
 import pickle
 import warnings
+from pathlib import Path
 import numpy as np
 import pandas as pd
 from datetime import date, datetime
@@ -49,16 +50,16 @@ MYSQL_DB       = "musicweb"
 MYSQL_USER     = "root"
 MYSQL_PASSWORD = "JF123456"
 
-# 输出目录
-PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
-MODE_DIR    = os.path.join(os.path.dirname(PROJECT_DIR), "Mode")
-os.makedirs(MODE_DIR, exist_ok=True)
+# 输出目录：所有特征工程产物统一落在 Mode/feature_engineering/
+MODE_DIR    = Path(__file__).resolve().parents[2] / "Mode"
+FE_DIR      = MODE_DIR / "feature_engineering"
+FE_DIR.mkdir(parents=True, exist_ok=True)
 
-OUTPUT_FEATURES  = os.path.join(MODE_DIR, "features_v3.pkl")
-OUTPUT_ENCODERS  = os.path.join(MODE_DIR, "encoders_v3.pkl")
-OUTPUT_USER_STATS= os.path.join(MODE_DIR, "user_stats.pkl")
-OUTPUT_SONG_STATS= os.path.join(MODE_DIR, "song_stats.pkl")
-OUTPUT_SVD_VECS  = os.path.join(MODE_DIR, "svd_vecs.pkl")   # SVD向量，供在线推断查找
+OUTPUT_FEATURES  = FE_DIR / "features_v3.pkl"
+OUTPUT_ENCODERS  = FE_DIR / "encoders_v3.pkl"
+OUTPUT_USER_STATS= FE_DIR / "user_stats.pkl"
+OUTPUT_SONG_STATS= FE_DIR / "song_stats.pkl"
+OUTPUT_SVD_VECS  = FE_DIR / "svd_vecs.pkl"   # SVD向量，供在线推断查找
 
 # 今天的日期（用于计算 song_age_days 和 user_tenure）
 TODAY = date.today()
