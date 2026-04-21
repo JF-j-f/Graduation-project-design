@@ -4,14 +4,14 @@ train_deepfm_v3.py — DeepFM 精排模型训练 v3
 
 特点：
   - 输入: features_v3.pkl（来自 prepare_features_v3.py）
-  - 特征: 14 个稀疏特征（SparseFeat）+ 36 个稠密特征（DenseFeat）
+  - 特征: 14 个稀疏特征（SparseFeat）+ 52 个稠密特征（DenseFeat）
   - 目标: 预测"30天内重复收听"概率（二分类）
   - 模型: DeepFM（DNN=(256,256,128)）
   - 优化: GPU AMP（FP16 混合精度）+ ReduceLROnPlateau + 早停
   - 输出: deepfm_model.pth + model_config.pkl + training_progress.png
 
-预计时间：约 30 分钟（7.37M 样本，GPU RTX 4060）
-开发者：JunFun
+训练环境：RTX 5090 32GB × 1 / CPU Xeon 8470Q 25核心 / 内存 90GB
+开发者：JunFu
 """
 
 import os
@@ -43,7 +43,6 @@ OUTPUT_PLOT      = DEEPFM_DIR / "training_progress.png"
 OUTPUT_HISTORY   = DEEPFM_DIR / "deepfm_metrics.csv"  # 论文用：逐 epoch 指标
 
 # K折OOF开关（供元学习器训练使用）
-# 快速验证用 N_OOF_SPLITS=2，正式K=5训练时手动改为 5
 RUN_OOF       = True
 N_OOF_SPLITS  = 5
 OOF_PREDS_PATH = os.path.join(DEEPFM_DIR, "deepfm_oof.npy")
@@ -52,14 +51,14 @@ OOF_IDX_PATH   = os.path.join(DEEPFM_DIR, "deepfm_oof_idx.npy")
 # 训练超参数
 BATCH_SIZE       = 8192        # 样本数
 EPOCHS           = 60           # 最大训练轮数
-LEARNING_RATE    = 0.002        #初始学习率（Adam 默认值，通常适合 DeepFM）
+LEARNING_RATE    = 0.002        #初始学习率（Adam 默认值）
 DNN_HIDDEN_UNITS = (512, 256, 128, 64)
 DROPOUT          = 0.35        # 丢弃率
 NUM_WORKERS      = 5            # DataLoader 线程数
 RANDOM_SEED      = 42
 
 # ReduceLROnPlateau 学习率衰减参数
-LR_PATIENCE      = 3          # 在验证指标不提升多少个 epoch 后触发学习率衰减
+LR_PATIENCE      = 3            # 在验证指标不提升多少个 epoch 后触发学习率衰减
 LR_FACTOR        = 0.35         # 学习率衰减因子（new_lr = old_lr * factor）
 LR_MIN           = 1e-6         # 学习率下限，避免过度衰减导致训练停滞
 
@@ -278,7 +277,7 @@ def run_kfold_oof(feat, feature_columns, feature_names, device):
         optimizer = Adam(fold_model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
         scheduler = ReduceLROnPlateau(
             optimizer, mode="min", factor=LR_FACTOR,
-            patience=LR_PATIENCE, min_lr=LR_MIN, verbose=False,
+            patience=LR_PATIENCE, min_lr=LR_MIN,
         )
         loss_fn = torch.nn.BCELoss(reduction="mean")
         use_amp = (device.type == "cuda")
@@ -425,7 +424,9 @@ def prepare_deepfm_data(feat):
     skipped_sparse = []
     for feat_name, enc_key, n_key, embed_dim in SPARSE_FEAT_SPECS:
         if enc_key in feat and n_key in feat:
-            vocab_size = int(feat[n_key]) + 1
+            # feat[n_key] 已含 ENCODE_OFFSET=2（0=Padding, 1=UNK, 2+=真实值）
+            # 直接用作 vocabulary_size，无需再 +1
+            vocab_size = int(feat[n_key])
             feature_columns.append(
                 SparseFeat(feat_name, vocabulary_size=vocab_size,
                            embedding_dim=embed_dim)
@@ -494,14 +495,15 @@ def prepare_deepfm_data(feat):
                             minlength=int(user_id_enc.max()) + 1)
     _s_counts = np.bincount(song_id_enc[train_idx].astype(np.int32),
                             minlength=int(song_id_enc.max()) + 1)
-    user_id_enc[np.isin(user_id_enc, np.where(_u_counts < _MIN_COUNT)[0])] = 0
-    song_id_enc[np.isin(song_id_enc, np.where(_s_counts < _MIN_COUNT)[0])] = 0
+    # 低频 ID 映射到 1（UNK token），而非 0（0=Padding，语义不同，不可混用）
+    user_id_enc[np.isin(user_id_enc, np.where(_u_counts < _MIN_COUNT)[0])] = 1
+    song_id_enc[np.isin(song_id_enc, np.where(_s_counts < _MIN_COUNT)[0])] = 1
     # 同步更新 data_dict 中的 ID 特征
     data_dict["user_id"] = user_id_enc
     data_dict["song_id"] = song_id_enc
     _n_rare_u = int((_u_counts < _MIN_COUNT).sum())
     _n_rare_s = int((_s_counts < _MIN_COUNT).sum())
-    print(f"   ✅ 稀疏用户 {_n_rare_u} 个 → UNK，稀疏歌曲 {_n_rare_s} 首 → UNK")
+    print(f"   ✅ 稀疏用户 {_n_rare_u} 个 → UNK(1)，稀疏歌曲 {_n_rare_s} 首 → UNK(1)")
 
     train_data   = {k: v[train_idx] for k, v in data_dict.items()}
     val_data     = {k: v[val_idx]   for k, v in data_dict.items()}
@@ -649,7 +651,7 @@ def train_deepfm(feature_columns, feature_names,
     optimizer = Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
     scheduler = ReduceLROnPlateau(
         optimizer, mode='min', factor=LR_FACTOR,
-        patience=LR_PATIENCE, min_lr=LR_MIN, verbose=True
+        patience=LR_PATIENCE, min_lr=LR_MIN
     )
     loss_fn = torch.nn.BCELoss(reduction='mean')
     use_amp = (device.type == 'cuda')
@@ -904,9 +906,11 @@ def save_model(model, feature_columns, feature_names, history, best_epoch, best_
 # ============================================================
 
 def main():
+    # 脚本级计时：在任何工作开始前就记录，覆盖数据加载、OOF、主训练全程
+    _start = datetime.now()
     print("\n" + "🎵" * 31)
     print("   MusicMode DeepFM v3 — 精排模型训练")
-    print(f"   开始时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"   开始时间: {_start.strftime('%Y-%m-%d %H:%M:%S')}")
     print("🎵" * 31)
 
     set_seed(RANDOM_SEED)
@@ -935,10 +939,13 @@ def main():
     save_model(model, feature_columns, feature_names,
                history, best_epoch, best_val_auc)
 
+    # 总耗时：与 _start 对齐，涵盖数据加载、OOF、主训练全程
+    _elapsed = str(datetime.now() - _start).split(".")[0]
     print(f"\n" + "=" * 62)
     print(f"✅ DeepFM v3 训练完成！")
     print(f"   最佳 val_AUC: {best_val_auc:.4f}（Epoch {best_epoch}）")
     print(f"   完成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"   总耗时:   {_elapsed}")
     print("=" * 62)
     print(f"\n🚀 下一步:")
     print(f"   python build_faiss_index.py   # 构建 FAISS 向量索引")

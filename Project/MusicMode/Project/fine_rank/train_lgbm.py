@@ -1,19 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-train_lgbm.py — LightGBM 粗排模型训练
+train_lgbm.py — LightGBM 精排集成层模型训练
 
 特点：
   - 输入: features_v3.pkl（来自 prepare_features_v3.py）
   - 目标: 预测"30天内重复收听"概率（二分类）
-  - 模型: LightGBM（num_leaves=96, max_depth=6, n_estimators=12000）
+  - 模型: LightGBM（num_leaves=160, max_depth=8, n_estimators=15000）
   - 特征: 7 个稀疏特征 + 52 个稠密特征（含 OOF TE、SVD 嵌入），共 59 维
   - 输出: lgbm_model.pkl + lgbm_importance.png
 
 执行：
   python train_lgbm.py
 
-预计时间：约 30-60 分钟（7.37M 样本，CPU 训练）
-开发者：JunFun
+训练环境：RTX 5090 32GB × 1 / CPU Xeon 8470Q 25核心 / 内存 90GB
+预计时间：约 60+ 分钟（7.37M 样本，CPU 训练）
+开发者：JunFu
 """
 
 import os
@@ -36,15 +37,19 @@ warnings.filterwarnings('ignore')
 # 配置
 # ============================================================
 
-# 脚本位于 Project/MusicMode/Project/coarse_rank/，向上 2 级定位到 MusicMode
+# 脚本位于 Project/MusicMode/Project/fine_rank/，向上 2 级定位到 MusicMode
 MODE_DIR = Path(__file__).resolve().parents[2] / "Mode"
 
 INPUT_FEATURES  = MODE_DIR / "feature_engineering" / "features_v3.pkl"
-LGBM_DIR        = MODE_DIR / "coarse_rank" / "lgbm"
+LGBM_DIR        = MODE_DIR / "fine_rank" / "lgbm"   # LightGBM 精排层模型输出目录
 LGBM_DIR.mkdir(parents=True, exist_ok=True)
-OUTPUT_MODEL    = LGBM_DIR / "lgbm_model.pkl"
-OUTPUT_PLOT     = LGBM_DIR / "lgbm_importance.png"
-OUTPUT_METRICS  = LGBM_DIR / "lgbm_metrics.csv"       # 论文用：特征重要度 + 评估指标
+OUTPUT_MODEL      = LGBM_DIR / "lgbm_model.pkl"
+OUTPUT_PLOT       = LGBM_DIR / "lgbm_importance.png"
+OUTPUT_METRICS    = LGBM_DIR / "lgbm_metrics.csv"     # 论文用：特征重要度 + 评估指标
+# OOF 文件：供 build_ensemble.py 的 Meta-LR 使用（5折，与 DeepFM/BST 保持一致）
+LGBM_OOF_PATH     = LGBM_DIR / "lgbm_oof.npy"
+LGBM_OOF_IDX_PATH = LGBM_DIR / "lgbm_oof_idx.npy"
+N_OOF_FOLDS       = 5
 
 # 训练配置
 VALID_RATIO  = 0.1    # 验证集比例：10%，与 DeepFM/DIN 一致
@@ -56,17 +61,17 @@ LGBM_PARAMS = {
     "objective":             "binary",
     "metric":                "auc",
     "boosting_type":         "gbdt",
-    "num_leaves":            160,     # 新特征容量需求，调大叶节点数
-    "max_depth":             6,
-    "min_child_samples":     2000,
-    "learning_rate":         0.007,   # 精细收敛，曲线仍在上升
-    "feature_fraction":      0.65,
-    "bagging_fraction":      0.7,
-    "bagging_freq":          5,
-    "reg_alpha":             1.0,
-    "reg_lambda":            4.0,
-    "n_estimators":          15000,   # 更多轮次
-    "early_stopping_rounds": 400,     # 更耐心的早停
+    "num_leaves":            160,     # 叶节点数
+    "max_depth":             8,       # 最大深度
+    "min_child_samples":     1500,    # 叶节点最小样本数
+    "learning_rate":         0.003,   # 学习率
+    "feature_fraction":      0.75,    # 提升特征采样比例
+    "bagging_fraction":      0.75,    # 提升采样比例
+    "bagging_freq":          5,       # 每5轮进行一次采样
+    "reg_alpha":             1.5,     # L1 正则化
+    "reg_lambda":            5.0,     # L2 正则化
+    "n_estimators":          20000,   # 轮数
+    "early_stopping_rounds": 800,     # 早停
     "verbose":               -1,
     "n_jobs":                N_JOBS,
     "random_state":          RANDOM_SEED,
@@ -104,7 +109,7 @@ DENSE_FEATURES = [
     "hour_match",
     "dow_match",                         # 星期偏好匹配
     # 最近交互
-    "days_since_artist_log",
+    "days_since_artist_log",             
     "days_since_last_play_log",          # 距上次听该歌的天数
     # 歌单亲和力
     "user_has_in_playlist",              # 该歌是否在用户歌单中
@@ -134,9 +139,10 @@ ALL_FEATURES = SPARSE_FEATURES + DENSE_FEATURES
 # ============================================================
 
 def main():
+    start_time = datetime.now()
     print("\n" + "🌲" * 31)
     print("   LightGBM 粗排模型训练")
-    print(f"   开始时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"   启动时间: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print("🌲" * 31)
 
     # ── 1. 加载特征数据
@@ -272,6 +278,11 @@ def main():
     _n_u_s = int(_u_all.max()) + 1
     _n_s_s = int(_s_all.max()) + 1
     _n_a_s = int(_a_all.max()) + 1
+    
+    # 统计训练集中是否出现（解决SVD冷启动填 0/合并陷阱）
+    _tr_u_counts = np.bincount(_u_all[train_idx].astype(np.int32), minlength=_n_u_s)
+    _tr_s_counts = np.bincount(_s_all[train_idx].astype(np.int32), minlength=_n_s_s)
+    
     _us_mat = _coo_svd(
         (np.ones(len(train_idx), dtype=np.float32),
          (_u_all[train_idx].astype(np.int32), _s_all[train_idx].astype(np.int32))),
@@ -289,16 +300,50 @@ def main():
     _uv_ua  = _svd_ua.fit_transform(_ua_mat)   # (n_users, 5)
 
     def _apply_svd(X_set, idx_set):
-        _ui = np.clip(_u_all[idx_set].astype(np.int32), 0, _uv_us.shape[0]-1)
-        _si = np.clip(_s_all[idx_set].astype(np.int32), 0, _sv_us.shape[0]-1)
-        for _i in [0, 2, 3, 4, 5, 6, 9]:   # 只更新 DENSE_FEATURES 中保留的 svd_user_song 维度
-            X_set[:, ALL_FEATURES.index(f"svd_user_song_{_i}")] = _uv_us[_ui, _i].astype(np.float32)
+        _u_orig = _u_all[idx_set].astype(np.int32)
+        _s_orig = _s_all[idx_set].astype(np.int32)
+        _a_orig = _a_all[idx_set].astype(np.int32)
+        
+        _ui = np.clip(_u_orig, 0, _uv_us.shape[0]-1)
+        _si = np.clip(_s_orig, 0, _sv_us.shape[0]-1)
+        # 注：_a_orig 为歌手ID，_uv_ua 行索引为用户ID（_ui），此处不需要 clip 歌手ID
+        
+        # 在训练集通过随机 Dropout (5%) 模拟冷启动，强制模型学会 NaN 路由
+        _is_train = (len(idx_set) == len(train_idx))
+        if _is_train:
+            np.random.seed(42)
+            _mask_u = np.random.rand(len(_ui)) < 0.05
+            _mask_s = np.random.rand(len(_si)) < 0.05
+            cold_u = (_u_orig >= _n_u_s) | (_tr_u_counts[_ui] == 0) | _mask_u
+            cold_s = (_s_orig >= _n_s_s) | (_tr_s_counts[_si] == 0) | _mask_s
+        else:
+            cold_u = (_u_orig >= _n_u_s) | (_tr_u_counts[_ui] == 0)
+            cold_s = (_s_orig >= _n_s_s) | (_tr_s_counts[_si] == 0)
+
+        # 全10维 svd_user_song 统一处理：与推理侧 sync_recs_v3.py NaN 覆盖范围保持一致
+        # 原代码只覆盖 [0,2,3,4,5,6,9] 共7维，剩余[1,7,8]仍留0值，
+        # 与推理侧全维NaN形成 Training-Serving Skew，此处修正为 range(10)
+        for _i in range(10):
+            vec = _uv_us[_ui, _i].astype(np.float32)
+            vec[cold_u] = np.nan           # 问题2：冷启动正确路由为 NaN
+            X_set[:, ALL_FEATURES.index(f"svd_user_song_{_i}")] = vec
+
         for _i in range(10):                 # svd_song_user 全部保留
-            X_set[:, ALL_FEATURES.index(f"svd_song_user_{_i}")] = _sv_us[_si, _i].astype(np.float32)
-        _ai = np.clip(_a_all[idx_set].astype(np.int32), 0, _uv_ua.shape[0]-1)
-        for _i in [0, 3, 4]:                 # 只更新 DENSE_FEATURES 中保留的 svd_user_artist 维度
-            X_set[:, ALL_FEATURES.index(f"svd_user_artist_{_i}")] = _uv_ua[_ui, _i].astype(np.float32)
-        X_set[:, ALL_FEATURES.index("svd_dot_score")] = (_uv_us[_ui] * _sv_us[_si]).sum(axis=1).astype(np.float32)
+            vec = _sv_us[_si, _i].astype(np.float32)
+            vec[cold_s] = np.nan           # 问题2：冷启动正确路由为 NaN
+            X_set[:, ALL_FEATURES.index(f"svd_song_user_{_i}")] = vec
+
+        # 全5维 svd_user_artist：同上，原代码只覆盖 [0,3,4]，修正为 range(5)
+        # _uv_ua shape=(n_users,5)，必须用用户索引 _ui 而非歌手索引 _ai 来取行
+        for _i in range(5):
+            vec = _uv_ua[_ui, _i].astype(np.float32)
+            vec[cold_u] = np.nan           # 用户冷启动时置 NaN
+            X_set[:, ALL_FEATURES.index(f"svd_user_artist_{_i}")] = vec
+            
+        dot = (_uv_us[_ui] * _sv_us[_si]).sum(axis=1).astype(np.float32)
+        dot[cold_u | cold_s] = np.nan      # 任一冷启动，点积无意义
+        X_set[:, ALL_FEATURES.index("svd_dot_score")] = dot
+        
         return X_set
 
     X_train = _apply_svd(X_train, train_idx)
@@ -360,7 +405,7 @@ def main():
     evals_result = {}
     callbacks = [
         lgb.early_stopping(LGBM_PARAMS["early_stopping_rounds"], verbose=True),
-        lgb.log_evaluation(period=50),
+        lgb.log_evaluation(period=30), #每30轮打印一次训练日志
         lgb.record_evaluation(evals_result),
     ]
 
@@ -370,8 +415,49 @@ def main():
         num_boost_round=LGBM_PARAMS["n_estimators"],
         valid_sets=[train_data, val_data],
         valid_names=["train", "val"],
-        callbacks=callbacks,
+        callbacks=callbacks, #回调函数
     )
+
+    # ── 4b. K折OOF生成（供 build_ensemble.py 的 Meta-LR 使用）
+    # 锁定 best_iteration，各折无需早停，节省训练时间；5折与 DeepFM/BST 保持一致
+    print(f"\n🔄 K折OOF生成（{N_OOF_FOLDS}折，轮数锁定={model.best_iteration}）...")
+    lgbm_oof_preds = np.full(len(train_idx), np.nan, dtype=np.float32)
+    _fold_size = len(train_idx) // N_OOF_FOLDS
+
+    for _fold in range(N_OOF_FOLDS):
+        _val_start    = _fold * _fold_size
+        _val_end      = ((_fold + 1) * _fold_size
+                         if _fold < N_OOF_FOLDS - 1
+                         else len(train_idx))
+        _oof_val_mask = np.zeros(len(train_idx), dtype=bool)
+        _oof_val_mask[_val_start:_val_end] = True
+
+        _oof_ds = lgb.Dataset(
+            X_train[~_oof_val_mask],
+            label=y_train[~_oof_val_mask],
+            feature_name=_eff_features,
+        )
+        _oof_model = lgb.train(
+            params=base_params,
+            train_set=_oof_ds,
+            num_boost_round=model.best_iteration,
+            callbacks=[lgb.log_evaluation(period=50)],   # 每50轮打印一次，便于确认训练进度
+        )
+        lgbm_oof_preds[_oof_val_mask] = _oof_model.predict(
+            X_train[_oof_val_mask],
+            num_iteration=model.best_iteration,
+        ).astype(np.float32)
+        _oof_fold_auc = roc_auc_score(
+            y_train[_oof_val_mask], lgbm_oof_preds[_oof_val_mask]
+        )
+        print(f"   Fold {_fold + 1}/{N_OOF_FOLDS}："
+              f" 验证={_oof_val_mask.sum():,}，OOF AUC={_oof_fold_auc:.4f}")
+
+    np.save(LGBM_OOF_PATH,     lgbm_oof_preds)
+    np.save(LGBM_OOF_IDX_PATH, train_idx)
+    _oof_total_auc = roc_auc_score(y_train, lgbm_oof_preds)
+    print(f"   ✅ LightGBM OOF已保存，总体OOF AUC={_oof_total_auc:.4f}")
+    print(f"      路径: {LGBM_OOF_PATH}")
 
     # ── 5. 评估
     print(f"\n📊 模型评估...")
@@ -451,10 +537,14 @@ def main():
     importance_df.to_csv(OUTPUT_METRICS, index=False, encoding="utf-8-sig")
     print(f"   ✅ 特征重要度 CSV: {OUTPUT_METRICS}")
 
+    end_time = datetime.now() #结束时间
+    total_duration = end_time - start_time #总耗时
+
     print(f"\n" + "=" * 62)
     print(f"✅ LightGBM 训练完成！")
     print(f"   验证集 AUC: {val_auc:.4f}")
-    print(f"   完成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"   结束时间: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"   总耗时:   {str(total_duration).split('.')[0]}")
     print("=" * 62)
     print(f"\n🚀 下一步: python train_deepfm_v3.py")
 

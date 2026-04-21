@@ -1,19 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-train_bst.py — BST（行为序列 Transformer）精排模型训练
-
-论文来源：
-  Chen et al., "Behavior Sequence Transformer for E-commerce Recommendation in Alibaba",
-  DLP-KDD 2019. https://arxiv.org/abs/1905.06874
-
+train_bst.py — BST（行为序列 Transformer）粗排模型训练
 架构：
   输入层：
     ├─ 用户行为序列: seq_song_ids (B×50)  ←── features_seq.pkl
-    ├─ feat_flat (B×58)：
+    ├─ feat_flat (B×66)：
     │     col 0:    user_id_encoded         ←── user Embedding(n_users, 32)
     │     col 1:    song_id_encoded         ←── target song Embedding(n_songs, 32)
     │     col 2-13: 其他稀疏特征（12个）     ←── 独立 Embedding 表
-    │     col 14+:  稠密特征（44个 in pkl）  ←── Linear 投影
+    │     col 14+:  稠密特征（52个 in pkl）  ←── Linear 投影
   序列 Transformer 层（3层 Encoder）：
     [历史序列 + 目标 token] → 位置编码 → Transformer(3层) → 分离
     历史部分：注意力加权池化 → seq_repr(d_model)
@@ -22,7 +17,8 @@ train_bst.py — BST（行为序列 Transformer）精排模型训练
   MLP 输出层：
     Linear(→256) → BN → ReLU → Drop → Linear(→128) → BN → ReLU → Drop → Linear(→64) → BN → ReLU → Drop → Linear(→1) → Sigmoid
 
-开发者：JunFun
+训练环境：RTX 5090 32GB × 1 / CPU Xeon 8470Q 25核心 / 内存 90GB
+开发者：JunFu
 """
 
 import os
@@ -53,7 +49,7 @@ from sklearn.metrics import roc_auc_score
 
 MODE_DIR = Path(__file__).resolve().parents[2] / "Mode"
 FE_DIR   = MODE_DIR / "feature_engineering"
-BST_DIR  = MODE_DIR / "fine_rank" / "bst"
+BST_DIR  = MODE_DIR / "coarse_rank" / "bst"   # BST 粗排层模型输出目录
 BST_DIR.mkdir(parents=True, exist_ok=True)
 
 INPUT_FEATURES  = FE_DIR / "features_v3.pkl"
@@ -70,9 +66,9 @@ OOF_PREDS_PATH = BST_DIR / "bst_oof.npy"
 OOF_IDX_PATH   = os.path.join(BST_DIR, "bst_oof_idx.npy")
 
 # 训练超参
-BATCH_SIZE          = 4096     # 样本数
-EPOCHS              = 40        # 最大训练轮数
-LEARNING_RATE       = 5e-5      # 初始学习率
+BATCH_SIZE          = 4096      # 样本数
+EPOCHS              = 40        # 最大训练轮数（早停兜底，实际运行约16轮）
+LEARNING_RATE       = 5e-5      # 初始学习率（CosineAnnealingLR 起点）
 L2_REG              = 8e-4      # 权重衰减
 LR_ETA_MIN          = 1e-6      # CosineAnnealingLR 最小学习率下限
 EARLY_STOP_PATIENCE = 7         # 早停耐心轮数
@@ -80,12 +76,12 @@ VALID_RATIO         = 0.10      # 验证集比例（按时间切分，后 10%）
 RANDOM_SEED         = 42        # 随机种子
 NUM_WORKERS         = 4         # DataLoader 子进程数
 # BST 模型超参
-EMBED_DIM   = 32                #稀疏特征 Embedding 维度（用户、歌曲、其他稀疏特征共享）
-SEQ_LEN     = 50                #用户历史行为序列长度（固定为 50，短序列前面 padding）
-N_HEADS     = 4                 #Transformer 多头注意力头数（d_model 必须能被 n_heads 整除）
-D_MODEL     = 128               #Transformer 隐层维度（注意力输出维度，必须能被 n_heads 整除）
+EMBED_DIM   = 32                # 稀疏特征 Embedding 维度（用户、歌曲、其他稀疏特征共享）
+SEQ_LEN     = 50                # 用户历史行为序列长度（固定为 50，短序列前面 padding）
+N_HEADS     = 8                 # Transformer 多头注意力头数（d_model=128 被8整除，注意力更精细）
+D_MODEL     = 128               # Transformer 隐层维度（注意力输出维度，必须能被 n_heads 整除）
 FFN_DIM     = 256               # Transformer 前馈网络隐藏层维度
-DROPOUT     = 0.45              # Dropout（3层 Transformer 最优值）
+DROPOUT     = 0.45              # Dropout 比率（防止过拟合）
 
 # 稀疏特征规格：(pkl_encoded_key, pkl_vocab_size_key)
 # 顺序必须与 build_pair_features 的行向量列 0-13 完全对齐
@@ -106,7 +102,7 @@ SPARSE_FEAT_SPECS = [
     ("user_peak_hour_encoded",   "n_peak_hours"),     # col 13
 ]
 
-# 稠密特征（与 train_deepfm_v3.py / train_lgbm.py 完全对齐，共 44 维）
+# 稠密特征（与 train_deepfm_v3.py / train_lgbm.py 完全对齐，共 52 维）
 DENSE_FEAT_SPECS = [
     # 用户基础统计
     "user_play_count_log",
@@ -149,7 +145,7 @@ DENSE_FEAT_SPECS = [
     "svd_dot_score",
 ]
 N_SPARSE       = len(SPARSE_FEAT_SPECS)   # 14
-N_DENSE        = len(DENSE_FEAT_SPECS)    # 44
+N_DENSE        = len(DENSE_FEAT_SPECS)    # 52
 N_OTHER_SPARSE = N_SPARSE - 2             # 12（排除 user_id 和 song_id）
 
 
@@ -229,7 +225,7 @@ class BSTDataset(Dataset):
 
 class PositionalEncoding(nn.Module):
     """
-    正弦波位置编码（Vaswani et al., 2017）。
+    正弦波位置编码
     支持可变序列长度，对 padding token（ID=0）无额外处理（模型自行学习忽略）。
     """
 
@@ -292,14 +288,21 @@ class BSTModel(nn.Module):
         self.d_model   = d_model
         self.embed_dim = embed_dim
 
+        # 保存词表上界，用于 forward() 中的越界保护
+        # feat[n_key] 已含 ENCODE_OFFSET=2（0=Padding, 1=UNK, 2+=真实值），
+        # 合法 ID 范围：[0, n_songs-1]，无需额外 +1
+        self.n_songs   = n_songs
+        self.n_users   = n_users
+        self.other_n   = list(other_sparse_sizes)  # 各其他稀疏特征词表大小
+
         # ── Embedding 层 ──
         # 歌曲 Embedding（序列 + 目标歌曲共享权重，ID=0 为 padding token）
-        self.song_embed = nn.Embedding(n_songs + 1, embed_dim, padding_idx=0)
+        self.song_embed = nn.Embedding(n_songs, embed_dim, padding_idx=0)
         # 用户 Embedding
-        self.user_embed = nn.Embedding(n_users + 1, embed_dim, padding_idx=0)
+        self.user_embed = nn.Embedding(n_users, embed_dim, padding_idx=0)
         # 其他稀疏特征 Embedding（各自独立）
         self.other_embeds = nn.ModuleList([
-            nn.Embedding(vocab_size + 1, embed_dim, padding_idx=0)
+            nn.Embedding(vocab_size, embed_dim, padding_idx=0)
             for vocab_size in other_sparse_sizes
         ])
 
@@ -377,16 +380,19 @@ class BSTModel(nn.Module):
         B = seq.size(0)
 
         # ── 从 feat 中分离稀疏/稠密特征 ──
-        user_id     = feat[:, 0].long().clamp(min=0)       # (B,)
-        song_id     = feat[:, 1].long().clamp(min=0)       # (B,)
-        other_int   = feat[:, 2:14].long().clamp(min=0)    # (B, 12)
-        dense_feats = feat[:, 14:]                          # (B, dense_dim)
+        # clamp 双向保护：min=0 防负值，max=n-1 防越界（低频ID已在预处理阶段映射到UNK=1，
+        # 此处作为最后一道安全网，避免服务推断时出现未见ID引发 CUDA index error）
+        user_id     = feat[:, 0].long().clamp(min=0, max=self.n_users - 1)   # (B,)
+        song_id     = feat[:, 1].long().clamp(min=0, max=self.n_songs - 1)   # (B,)
+        other_int   = feat[:, 2:14].long().clamp(min=0)                      # (B, 12) 逐列保护见下方
+        dense_feats = feat[:, 14:]                                            # (B, dense_dim)
 
         # ── 目标歌曲 Embedding ──
         target_emb = self.song_embed(song_id)              # (B, embed_dim)
 
         # ── 行为序列编码 ──
-        seq_emb  = self.song_embed(seq.clamp(min=0))       # (B, seq_len, embed_dim)
+        # seq 双向 clamp：0=padding 不变，未见 ID 截断到 n_songs-1 内（实为 UNK 区域）
+        seq_emb  = self.song_embed(seq.clamp(min=0, max=self.n_songs - 1))   # (B, seq_len, embed_dim)
         seq_h    = self.seq_proj(seq_emb)                  # (B, seq_len, d_model)
 
         # 目标 token 追加至序列末尾，与历史序列共同过 Transformer
@@ -417,8 +423,9 @@ class BSTModel(nn.Module):
         user_emb   = self.user_embed(user_id)             # (B, embed_dim)
 
         # ── 其他稀疏特征 Embedding ──
+        # 各稀疏特征词表大小不同，逐列施加上界保护
         other_emb_list = [
-            embed(other_int[:, i])
+            embed(other_int[:, i].clamp(max=self.other_n[i] - 1))
             for i, embed in enumerate(self.other_embeds)
         ]
         other_cat = torch.cat(other_emb_list, dim=-1)     # (B, 12*embed_dim)
@@ -511,6 +518,28 @@ def load_data():
     print(f"   训练集: {len(train_idx):,}  验证集: {len(valid_idx):,}")
     print(f"   正样本率 (train): {target_arr[train_idx].mean():.4f}")
     print(f"   正样本率 (valid): {target_arr[valid_idx].mean():.4f}")
+
+    # ── 低频 ID 过滤（min_count=3，只统计训练集，防长尾 ID 死记硬背）
+    # 与 DeepFM 对齐：0=Padding 语义特殊不可替换，低频 ID 统一映射到 1（UNK）
+    _MIN_COUNT = 3
+    print("   🔧 低频 ID 过滤（min_count=3）...")
+    song_col = sparse_arr[:, 1].copy()   # col 1 = song_id_encoded
+    user_col = sparse_arr[:, 0].copy()   # col 0 = user_id_encoded
+    _s_counts = np.bincount(song_col[train_idx].astype(np.int32),
+                            minlength=int(song_col.max()) + 1)
+    _u_counts = np.bincount(user_col[train_idx].astype(np.int32),
+                            minlength=int(user_col.max()) + 1)
+    rare_song_ids = np.where(_s_counts < _MIN_COUNT)[0]
+    rare_user_ids = np.where(_u_counts < _MIN_COUNT)[0]
+    sparse_arr[:, 1] = np.where(np.isin(sparse_arr[:, 1], rare_song_ids), 1, sparse_arr[:, 1])
+    sparse_arr[:, 0] = np.where(np.isin(sparse_arr[:, 0], rare_user_ids), 1, sparse_arr[:, 0])
+    # 同步处理行为序列：非 padding（>0）的低频歌曲 ID 也映射到 UNK(1)
+    seq_flat = seq_arr.ravel()
+    seq_rare_mask = (seq_flat > 0) & np.isin(seq_flat, rare_song_ids)
+    seq_flat[seq_rare_mask] = 1
+    # ravel 在连续内存上直接写回，无需 reshape（seq_arr 已同步修改）
+    print(f"   ✅ 稀疏用户 {len(rare_user_ids)} 个 → UNK(1)，"
+          f"稀疏歌曲 {len(rare_song_ids)} 首 → UNK(1)（含序列）")
 
     # 词表大小
     n_info = {}
@@ -644,7 +673,7 @@ def run_kfold_oof(sparse_arr, dense_arr, seq_arr, target_arr, train_idx, n_info,
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer, T_max=EPOCHS, eta_min=LR_ETA_MIN
         )
-        scaler = torch.cuda.amp.GradScaler(enabled=(device.type == "cuda"))
+        scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
 
         best_auc   = 0.0
         best_preds = None
@@ -660,7 +689,7 @@ def run_kfold_oof(sparse_arr, dense_arr, seq_arr, target_arr, train_idx, n_info,
                     [sparse_b.float().to(device), dense_b.to(device)], dim=-1
                 )
                 optimizer.zero_grad()
-                with torch.cuda.amp.autocast(enabled=(device.type == "cuda")):
+                with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
                     out = fold_model(seq_b, feat_b).squeeze(-1)
                 out  = out.float().clamp(min=1e-7, max=1.0 - 1e-7)
                 loss = criterion(out, tgt_b.float())
@@ -730,7 +759,7 @@ def train_epoch(
     optimizer: torch.optim.Optimizer,
     criterion: nn.Module,
     device: torch.device,
-    scaler: torch.cuda.amp.GradScaler,
+    scaler: torch.amp.GradScaler,
 ) -> tuple:
     """
     单轮训练。
@@ -753,7 +782,7 @@ def train_epoch(
         )   # (B, 14+44=58)
 
         optimizer.zero_grad()
-        with torch.cuda.amp.autocast(enabled=(device.type == "cuda")):
+        with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
             out = model(seq, feat).squeeze(-1)   # (B,)
         # BCELoss 必须在 autocast 外用 float32 计算；clamp 防止边界值触发 CUDA assertion
         out = out.float().clamp(min=1e-7, max=1.0 - 1e-7)
@@ -824,9 +853,11 @@ def eval_epoch(
 
 def train_bst_model():
     """BST 训练主函数。"""
+    # 脚本级计时：在任何工作开始前就记录，覆盖数据加载、OOF、主训练全程
+    _script_start = datetime.now()
     print("\n" + "=" * 62)
     print("🚀 BST 行为序列 Transformer 精排模型训练")
-    print(f"   {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"   启动时间: {_script_start.strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 62)
 
     set_seed(RANDOM_SEED)
@@ -891,7 +922,7 @@ def train_bst_model():
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=EPOCHS, eta_min=LR_ETA_MIN
     )
-    scaler = torch.cuda.amp.GradScaler(enabled=(device.type == "cuda"))
+    scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
 
     # Step 4: 训练
     print("\n" + "=" * 62)
@@ -1004,6 +1035,15 @@ def train_bst_model():
     plt.savefig(OUTPUT_PLOT, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"   训练曲线已保存: {OUTPUT_PLOT}")
+
+    # 脚本总耗时：与 _script_start 对齐，涵盖数据加载、OOF、主训练全程
+    _elapsed = str(datetime.now() - _script_start).split(".")[0]
+    print("\n" + "=" * 62)
+    print(f"✅ BST 训练完成！")
+    print(f"   最佳 val_AUC: {best_val_auc:.4f}（Epoch {best_epoch}）")
+    print(f"   结束时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"   总耗时:   {_elapsed}")
+    print("=" * 62)
 
     return best_val_auc
 

@@ -1,24 +1,25 @@
 # -*- coding: utf-8 -*-
 """
-build_ensemble.py — 双精排模型集成（DeepFM + BST）
+build_ensemble.py — 精排集成（DeepFM + LightGBM → Meta-LR）
 
 功能：
-  1. 加载 DeepFM、BST 在验证集上推断
+  1. 加载 DeepFM、LightGBM 在验证集上推断
   2. 元学习器（逻辑回归 Meta-LR）集成精排预测
   3. 输出对比报告 + ensemble_config.pkl
 
-模型说明：
-  DeepFM — 精排层，捕捉特征同时性交互（FM+DNN）
-  BST    — 精排层，捕捉用户行为时序模式（Transformer）
+架构说明：
+  DeepFM    — 精排层，捕捉特征同时性交互（FM+DNN），AUC=0.8202
+  LightGBM  — 精排层（原粗排，移至此层），梯度提升树，AUC=0.8226
+  BST       — 已移至粗排层（sync_recs_v3.py），负责 600→300 粗筛
 
 执行：
   python build_ensemble.py
 
 前置条件：
-  - python train_deepfm_v3.py
-  - python train_bst.py
+  - python train_deepfm_v3.py（产出 deepfm_model.pth + deepfm_oof.npy）
+  - python train_lgbm.py      （产出 lgbm_model.pkl  + lgbm_oof.npy）
 
-开发者：JunFun
+开发者：JunFu
 """
 
 import os
@@ -40,7 +41,12 @@ from sklearn.metrics import roc_auc_score
 MODE_DIR     = Path(__file__).resolve().parents[2] / "Mode"
 FE_DIR       = MODE_DIR / "feature_engineering"
 FR_DIR       = MODE_DIR / "fine_rank"
+CR_DIR       = MODE_DIR / "coarse_rank"    # BST 粗排层模型所在目录
 ENSEMBLE_DIR = FR_DIR / "ensemble"
+
+# train_bst.py 已迁至 coarse_rank/，import 时需插入该目录到 sys.path
+PROJECT_DIR    = str(Path(__file__).resolve().parent)                    # fine_rank/（本文件所在）
+CR_PROJECT_DIR = str(Path(__file__).resolve().parent.parent / "coarse_rank")  # coarse_rank/（train_bst所在）
 ENSEMBLE_DIR.mkdir(parents=True, exist_ok=True)
 
 INPUT_FEATURES  = FE_DIR / "features_v3.pkl"
@@ -53,21 +59,21 @@ VALID_RATIO  = 0.1   # 与训练脚本保持一致
 RANDOM_SEED  = 42
 BATCH_SIZE   = 8192
 
-# ── 模型路径配置（双神经网络精排：DeepFM + BST）
-# 架构说明：
-#   DeepFM — 精排层，归纳偏置=特征同时性交互（FM+DNN）
-#   BST    — 精排层，归纳偏置=序列时序模式（Transformer）
-#   两者归纳偏置不同，集成具有真正多样性（Diversity in Ensemble, NeurIPS 2021）
+# ── 模型路径配置（精排集成：DeepFM + LightGBM）
+# 架构调整说明（原 DeepFM+BST → 现 DeepFM+LightGBM）：
+#   DeepFM    — 精排层，归纳偏置=特征同时性交互（FM+DNN），AUC=0.8202
+#   LightGBM  — 精排层，归纳偏置=树模型特征分裂（GBDT），AUC=0.8226
+#   BST 已移至粗排层（sync_recs_v3.py），不再参与精排集成
+#   DeepFM（神经网络）+ LightGBM（树模型）归纳偏置互补，集成多样性更强
 MODEL_CONFIGS = {
     "DeepFM": {
         "type": "deepfm",
         "model_path":  FR_DIR / "deepfm" / "deepfm_model.pth",
         "config_path": FR_DIR / "deepfm" / "model_config.pkl",
     },
-    "BST": {
-        "type": "bst",
-        "model_path":  FR_DIR / "bst" / "bst_model.pth",
-        "config_path": FR_DIR / "bst" / "model_config.pkl",
+    "LightGBM": {
+        "type": "lgbm",
+        "model_path": FR_DIR / "lgbm" / "lgbm_model.pkl",
     },
 }
 
@@ -199,13 +205,14 @@ def load_val_data():
     _uv_ua  = _svd_ua.fit_transform(_ua_mat)
     _ui = np.clip(_u_all[val_idx].astype(np.int32), 0, _uv_us.shape[0]-1)
     _si = np.clip(_s_all[val_idx].astype(np.int32), 0, _sv_us.shape[0]-1)
-    _ai = np.clip(_a_all[val_idx].astype(np.int32), 0, _uv_ua.shape[0]-1)
+    # 注：_uv_ua 行索引为用户ID（_ui），与 train_lgbm.py 修复保持一致
+    # 原代码误用 _ai（歌手ID）索引用户-歌手矩阵，导致 svd_user_artist 特征全部错乱
     for _i in range(10):
         X_val[:, ALL_FEATURES.index(f"svd_user_song_{_i}")] = _uv_us[_ui, _i].astype(np.float32)
     for _i in range(10):
         X_val[:, ALL_FEATURES.index(f"svd_song_user_{_i}")] = _sv_us[_si, _i].astype(np.float32)
     for _i in range(5):
-        X_val[:, ALL_FEATURES.index(f"svd_user_artist_{_i}")] = _uv_ua[_ai, _i].astype(np.float32)
+        X_val[:, ALL_FEATURES.index(f"svd_user_artist_{_i}")] = _uv_ua[_ui, _i].astype(np.float32)
     X_val[:, ALL_FEATURES.index("svd_dot_score")] = (_uv_us[_ui] * _sv_us[_si]).sum(axis=1).astype(np.float32)
     print("   ✅ SVD 重拟合完成")
 
@@ -298,7 +305,7 @@ def predict_bst_model(name, cfg, feat, val_idx, train_idx):
     try:
         import torch
         from torch.utils.data import DataLoader
-        sys.path.insert(0, PROJECT_DIR)
+        sys.path.insert(0, CR_PROJECT_DIR)   # train_bst.py 已迁至 coarse_rank/
         # 从 train_bst 导入模型类和特征规格（保证与训练完全对齐）
         from train_bst import BSTModel, BSTDataset, SPARSE_FEAT_SPECS, DENSE_FEAT_SPECS, SEQ_LEN
 
@@ -395,17 +402,111 @@ def predict_bst_model(name, cfg, feat, val_idx, train_idx):
         return None
 
 
+def predict_lgbm_model(name, cfg, feat, val_idx):
+    """
+    LightGBM 验证集推断。
+    按模型保存的 feature_names 顺序从 feat 字典逐列提取，
+    确保特征顺序与 train_lgbm.py 训练时完全对齐。
+
+    Args:
+        name:    模型名称（用于日志输出）
+        cfg:     MODEL_CONFIGS 中的配置字典
+        feat:    features_v3.pkl 加载的完整特征字典
+        val_idx: 验证集样本的原始行索引
+
+    Returns:
+        preds: shape (n_val,) 的预测概率数组，失败时返回 None
+    """
+    if not os.path.exists(cfg["model_path"]):
+        print(f"   ⚠️  {name} 模型不存在，跳过: {cfg['model_path']}")
+        return None
+    try:
+        with open(cfg["model_path"], "rb") as f:
+            payload = pickle.load(f)
+        lgbm_model     = payload["model"]
+        feature_names  = payload["feature_names"]   # 59维，训练时保存的精确列名
+        best_iteration = payload.get("best_iteration")
+        val_auc_saved  = payload.get("val_auc", 0)
+
+        # 按 feature_names 顺序逐列从 feat 字典提取验证集特征
+        cols = []
+        for fn in feature_names:
+            col = feat.get(fn, np.zeros(len(feat["target"]), dtype=np.float32))
+            col = np.nan_to_num(np.asarray(col, dtype=np.float32), nan=0.0)
+            cols.append(col[val_idx].reshape(-1, 1))
+        X_val_lgbm = np.hstack(cols)   # (n_val, 59)
+
+        preds   = lgbm_model.predict(
+            X_val_lgbm, num_iteration=best_iteration
+        ).astype(np.float32)
+        auc_now = roc_auc_score(feat["target"][val_idx], preds)
+        print(f"   {name}: 训练时val_AUC={val_auc_saved:.4f}，"
+              f"重推AUC={auc_now:.4f}，特征维度={len(feature_names)}")
+        return preds
+
+    except Exception as e:
+        import traceback
+        print(f"   {name} 推断失败: {e}")
+        traceback.print_exc()
+        return None
+
+
+def _predict_lgbm_direct(name, cfg, X_val, y_val):
+    """
+    直接用 load_val_data() 已正确重算SVD的 X_val 进行LightGBM推断，
+    避免从 feat 字典重建特征时引入 nan_to_num=0.0 导致的 Training-Serving Skew。
+
+    train_lgbm.py 训练时：冷启动用户SVD特征设为 NaN（非0），LightGBM学会了NaN路由；
+    若此处用 nan_to_num 填0，会破坏该路由，导致验证集AUC从0.82降至0.70左右。
+    X_val 由 load_val_data() 按同一 SVD refit 流程计算，保证训练/推断特征口径一致。
+
+    Args:
+        name:  模型名称（日志用）
+        cfg:   MODEL_CONFIGS 中对应条目
+        X_val: load_val_data() 返回的验证集特征矩阵，已正确处理SVD和NaN
+        y_val: 验证集标签，用于计算并打印AUC
+
+    Returns:
+        preds (np.float32 array) 或 None（模型文件不存在/加载失败）
+    """
+    if not os.path.exists(cfg["model_path"]):
+        print(f"   ⚠️  {name} 模型不存在，跳过: {cfg['model_path']}")
+        return None
+    try:
+        with open(cfg["model_path"], "rb") as f:
+            payload = pickle.load(f)
+        lgbm_model     = payload["model"]
+        best_iteration = payload.get("best_iteration")
+        val_auc_saved  = payload.get("val_auc", 0)
+
+        # 直接用已重算SVD的 X_val，无需从 feat 逐列重建，保留 NaN 路由
+        preds   = lgbm_model.predict(X_val, num_iteration=best_iteration).astype(np.float32)
+        auc_now = roc_auc_score(y_val, preds)
+        print(f"   {name}: 训练时val_AUC={val_auc_saved:.4f}，"
+              f"重推AUC={auc_now:.4f}，特征维度={X_val.shape[1]}")
+        return preds
+
+    except Exception as e:
+        import traceback
+        print(f"   {name} 推断失败: {e}")
+        traceback.print_exc()
+        return None
+
+
 def collect_predictions(X_val, y_val, feat, val_idx, train_idx):
-    """收集 DeepFM 和 BST 的预测概率"""
+    """收集 DeepFM 和 LightGBM 的预测概率"""
     print("\n" + "=" * 62)
-    print("[Step 2] 各模型验证集推断（DeepFM / BST）")
+    print("[Step 2] 各模型验证集推断（DeepFM / LightGBM）")
     print("=" * 62)
 
     model_preds = {}
     model_aucs  = {}
 
     for name, cfg in MODEL_CONFIGS.items():
-        if cfg["type"] == "bst":
+        if cfg["type"] == "lgbm":
+            # 使用 _predict_lgbm_direct 避免从 feat 重建特征时 nan_to_num 破坏NaN路由
+            preds = _predict_lgbm_direct(name, cfg, X_val, y_val)
+        elif cfg["type"] == "bst":
             preds = predict_bst_model(name, cfg, feat, val_idx, train_idx)
         else:
             preds = predict_torch_model(name, cfg, feat, val_idx)
@@ -425,68 +526,73 @@ def collect_predictions(X_val, y_val, feat, val_idx, train_idx):
 
 def meta_learner_training(y_val, model_preds, feat, val_idx):
     """
-    加载 DeepFM + BST 的OOF预测，训练逻辑回归元学习器（Meta-LR），
+    加载 DeepFM + LightGBM 的OOF预测，训练逻辑回归元学习器（Meta-LR），
     并在验证集上评估其效果。
 
     两阶段Stacking框架：
-    - 第一阶段：DeepFM/BST通过K折OOF生成元特征
+    - 第一阶段：DeepFM/LightGBM通过K折OOF生成元特征（5折，保持一致）
     - 第二阶段：LogisticRegression拟合这两个元特征 → 输出最终集成分数
+
+    架构调整：BST已移至粗排层，精排集成改为 DeepFM（神经网络）+ LightGBM（树模型）
 
     Returns:
         (meta_lr, meta_auc): 元学习器对象和验证集AUC，若OOF文件不存在则返回 (None, 0.0)
     """
     from sklearn.linear_model import LogisticRegression
 
-    deepfm_oof_path = os.path.join(MODE_DIR, "deepfm", "deepfm_oof.npy")
-    deepfm_idx_path = os.path.join(MODE_DIR, "deepfm", "deepfm_oof_idx.npy")
-    bst_oof_path    = os.path.join(MODE_DIR, "bst",    "bst_oof.npy")
-    bst_idx_path    = os.path.join(MODE_DIR, "bst",    "bst_oof_idx.npy")
+    # OOF 文件路径：DeepFM 在 fine_rank/deepfm/，LightGBM 在 fine_rank/lgbm/
+    deepfm_oof_path = os.path.join(FR_DIR, "deepfm", "deepfm_oof.npy")
+    deepfm_idx_path = os.path.join(FR_DIR, "deepfm", "deepfm_oof_idx.npy")
+    lgbm_oof_path   = os.path.join(FR_DIR, "lgbm",   "lgbm_oof.npy")
+    lgbm_idx_path   = os.path.join(FR_DIR, "lgbm",   "lgbm_oof_idx.npy")
 
-    for p in [deepfm_oof_path, deepfm_idx_path, bst_oof_path, bst_idx_path]:
+    for p in [deepfm_oof_path, deepfm_idx_path, lgbm_oof_path, lgbm_idx_path]:
         if not os.path.exists(p):
             print(f"\n   ⚠️  OOF文件不存在: {p}")
             print("      跳过元学习器训练")
             return None, 0.0
 
     print("\n" + "=" * 62)
-    print("[Step 3] 元学习器训练（DeepFM + BST OOF → LogisticRegression）")
+    print("[Step 3] 元学习器训练（DeepFM + LightGBM OOF → LogisticRegression）")
     print("=" * 62)
 
     deepfm_oof = np.load(deepfm_oof_path)
     deepfm_idx = np.load(deepfm_idx_path)
-    bst_oof    = np.load(bst_oof_path)
-    bst_idx    = np.load(bst_idx_path)
+    lgbm_oof   = np.load(lgbm_oof_path)
+    lgbm_idx   = np.load(lgbm_idx_path)
 
     # 对齐两个OOF的原始索引（理论上完全相同，取交集作为保险）
     # OOF索引按时间排序，不是数值有序，需用字典映射避免searchsorted出错
     d_map = {int(idx): pos for pos, idx in enumerate(deepfm_idx)}
-    b_map = {int(idx): pos for pos, idx in enumerate(bst_idx)}
+    l_map = {int(idx): pos for pos, idx in enumerate(lgbm_idx)}
     common_set = np.array(
-        sorted(set(d_map.keys()) & set(b_map.keys())), dtype=np.int64
+        sorted(set(d_map.keys()) & set(l_map.keys())), dtype=np.int64
     )
     n_common = len(common_set)
 
     # 按 common_set 从各自OOF数组中取出对齐的预测值
     d_pos = np.array([d_map[int(i)] for i in common_set], dtype=np.int64)
-    b_pos = np.array([b_map[int(i)] for i in common_set], dtype=np.int64)
+    l_pos = np.array([l_map[int(i)] for i in common_set], dtype=np.int64)
 
     deepfm_oof_aligned = deepfm_oof[d_pos]
-    bst_oof_aligned    = bst_oof[b_pos]
+    lgbm_oof_aligned   = lgbm_oof[l_pos]
     y_oof = feat["target"][common_set].astype(np.int32)
 
     print(f"   OOF训练样本: {n_common:,} | 正样本率: {y_oof.mean():.4f}")
 
-    X_meta_train = np.column_stack([deepfm_oof_aligned, bst_oof_aligned])
+    X_meta_train = np.column_stack([deepfm_oof_aligned, lgbm_oof_aligned])
     meta_lr = LogisticRegression(C=1.0, max_iter=1000, random_state=42)
     meta_lr.fit(X_meta_train, y_oof)
     print(f"   逻辑回归元学习器训练完成（C=1.0, max_iter=1000）")
 
     # 在验证集上评估（使用 collect_predictions 已生成的验证集预测）
     meta_auc = 0.0
-    if "DeepFM" in model_preds and "BST" in model_preds:
-        X_val_meta = np.column_stack([model_preds["DeepFM"], model_preds["BST"]])
+    if "DeepFM" in model_preds and "LightGBM" in model_preds:
+        X_val_meta     = np.column_stack(
+            [model_preds["DeepFM"], model_preds["LightGBM"]]
+        )
         meta_val_preds = meta_lr.predict_proba(X_val_meta)[:, 1]
-        meta_auc = roc_auc_score(y_val, meta_val_preds)
+        meta_auc       = roc_auc_score(y_val, meta_val_preds)
         print(f"   元学习器验证集 AUC: {meta_auc:.4f}")
     else:
         print("   ⚠️  验证集预测不可用，跳过AUC评估")
@@ -518,9 +624,16 @@ def generate_report(model_aucs, ensemble_results):
             continue
         info = {"val_auc": model_aucs[name], "train_auc": 0, "duration_min": 0}
         try:
-            with open(cfg.get("config_path", ""), "rb") as f:
-                p = pickle.load(f)
-            info["train_auc"] = max(p.get("history", {}).get("val_auc", [0]))
+            if cfg["type"] == "lgbm":
+                # LightGBM pkl payload 直接存有 train_auc 字段
+                with open(cfg["model_path"], "rb") as f:
+                    p = pickle.load(f)
+                info["train_auc"] = p.get("train_auc", 0)
+            else:
+                # DeepFM/BST 通过 config_path 读取训练历史
+                with open(cfg.get("config_path", ""), "rb") as f:
+                    p = pickle.load(f)
+                info["train_auc"] = max(p.get("history", {}).get("val_auc", [0]))
         except Exception:
             pass
         model_info[name] = info
@@ -534,7 +647,7 @@ def generate_report(model_aucs, ensemble_results):
     lines.append(f"{'模型':<16} {'Train AUC':>10} {'Val AUC':>10} {'耗时(min)':>10}")
     lines.append("-" * 50)
 
-    for name in ["DeepFM", "BST"]:
+    for name in ["DeepFM", "LightGBM"]:
         if name in model_info:
             info = model_info[name]
             lines.append(f"{name:<16} {info['train_auc']:>10.4f} {info['val_auc']:>10.4f} {info['duration_min']:>10.1f}")
@@ -607,9 +720,11 @@ def save_config(model_aucs, ensemble_results, best_overall, meta_lr=None, meta_a
 # ============================================================
 
 def main():
+    # 脚本级计时：在任何工作开始前记录，覆盖数据加载、推断、元学习器训练全程
+    _start = datetime.now()
     print("\n" + "=" * 62)
-    print("   双神经网络精排集成（DeepFM + BST）")
-    print(f"   开始时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("   精排集成（DeepFM + LightGBM Meta-LR）")
+    print(f"   开始时间: {_start.strftime('%Y-%m-%d %H:%M:%S')}")
     print("   目标: 集成 AUC ≥ 0.800")
     print("=" * 62)
 
@@ -636,12 +751,15 @@ def main():
     # 5. 保存
     save_config(model_aucs, ensemble_results, best_overall, meta_lr=meta_lr, meta_auc=meta_auc)
 
+    _elapsed = str(datetime.now() - _start).split(".")[0]
     print(f"\n{'=' * 62}")
     print(f"✅ 集成对比完成！最终最佳 AUC: {best_overall:.4f}")
     if best_overall >= 0.80:
         print(f"   🎉 AUC 已达到 0.80 目标！")
     else:
         print(f"   ⚠️  距目标 0.80 还差 {0.80 - best_overall:.4f}")
+    print(f"   结束时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"   总耗时:   {_elapsed}")
     print(f"{'=' * 62}")
 
 

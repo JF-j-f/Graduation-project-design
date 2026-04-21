@@ -14,8 +14,31 @@
 /Document
 /README_V0.md
 
-# 模型文件（大型二进制，不进入版本库）
-Project/MusicMode/Mode/
+#音频文件
+/Video
+
+# 模型文件（大型二进制，不进入版本库,仅保留图片和txt）
+Project/MusicMode/Mode/coarse_rank/bst/*
+!Project/MusicMode/Mode/coarse_rank/bst/*.png
+!Project/MusicMode/Mode/coarse_rank/bst/*.txt
+Project/MusicMode/Mode/evaluation/*
+!Project/MusicMode/Mode/evaluation/*.png
+!Project/MusicMode/Mode/evaluation/*.txt
+Project/MusicMode/Mode/feature_engineering/*
+!Project/MusicMode/Mode/feature_engineering/*.png
+!Project/MusicMode/Mode/feature_engineering/*.txt
+Project/MusicMode/Mode/fine_rank/deepfm/*
+!Project/MusicMode/Mode/fine_rank/deepfm/*.png
+!Project/MusicMode/Mode/fine_rank/deepfm/*.txt
+Project/MusicMode/Mode/fine_rank/ensemble/*
+!Project/MusicMode/Mode/fine_rank/ensemble/*.png
+!Project/MusicMode/Mode/fine_rank/ensemble/*.txt
+Project/MusicMode/Mode/fine_rank/lgbm/*
+!Project/MusicMode/Mode/fine_rank/lgbm/*.png
+!Project/MusicMode/Mode/fine_rank/lgbm/*.txt
+Project/MusicMode/Mode/recall/*
+!Project/MusicMode/Mode/recall/*.png
+!Project/MusicMode/Mode/recall/*.txt
 
 # Python 编译缓存
 __pycache__/

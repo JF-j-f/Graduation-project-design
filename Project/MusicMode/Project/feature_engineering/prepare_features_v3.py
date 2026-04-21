@@ -21,7 +21,7 @@ prepare_features_v3.py — 特征工程 （62特征全集，含 SVD 嵌入）
   交互（4）: user_genre_match, user_artist_match,
               user_language_match, user_country_match
 
-开发者：JunFun
+开发者：JunFu
 """
 
 import os
@@ -57,9 +57,17 @@ FE_DIR.mkdir(parents=True, exist_ok=True)
 
 OUTPUT_FEATURES  = FE_DIR / "features_v3.pkl"
 OUTPUT_ENCODERS  = FE_DIR / "encoders_v3.pkl"
+OUTPUT_SEQ       = FE_DIR / "features_seq.pkl"   # BST 行为序列特征
 OUTPUT_USER_STATS= FE_DIR / "user_stats.pkl"
 OUTPUT_SONG_STATS= FE_DIR / "song_stats.pkl"
 OUTPUT_SVD_VECS  = FE_DIR / "svd_vecs.pkl"   # SVD向量，供在线推断查找
+
+# 稀疏编码偏移量：0=Padding，1=UNK，真实编码值从 2 起
+# 与 train_deepfm_v3.py / train_bst.py 的 Embedding 表设计保持一致
+ENCODE_OFFSET = 2
+
+# BST 序列长度：与 train_bst.py 中 SEQ_LEN 保持一致
+SEQ_LEN = 50
 
 # 今天的日期（用于计算 song_age_days 和 user_tenure）
 TODAY = date.today()
@@ -790,11 +798,89 @@ def encode_features(df: pd.DataFrame):
             print(f"   ⚠️  特征 {feat} 不在 df 中，跳过")
             continue
         le = LabelEncoder()
-        df[f"{feat}_encoded"] = le.fit_transform(df[feat].astype(str))
+        # LabelEncoder 产出 0..n-1；加 ENCODE_OFFSET 后变为 2..n+1
+        # 0 = Padding（BST 序列填充）；1 = UNK（推断时遇到未见过的类别）
+        df[f"{feat}_encoded"] = le.fit_transform(df[feat].astype(str)) + ENCODE_OFFSET
         encoders[feat] = le
-        print(f"   ✅ {feat}: {df[feat].nunique():,} 个类别")
+        print(f"   ✅ {feat}: {df[feat].nunique():,} 个类别（编码范围 "
+              f"{ENCODE_OFFSET}..{df[feat].nunique() + ENCODE_OFFSET - 1}）")
 
     return df, encoders
+
+
+# ============================================================
+# Step 5b: 构建 BST 行为序列特征
+# ============================================================
+
+def build_sequence_features(df: pd.DataFrame, seq_len: int = SEQ_LEN) -> np.ndarray:
+    """
+    为每条训练样本构建用户历史行为序列（严格时序，不含当前行）。
+
+    设计思路：
+      - 对每个用户按 play_time 排序，提取当前时刻之前最近 seq_len 首歌的编码
+      - 使用 numpy stride_tricks 滑动窗口，避免 Python 层面逐行循环，效率大幅提升
+      - 编码值与 encode_features() 的 ENCODE_OFFSET 保持一致（0=Padding，2+=真实值）
+      - 短序列左填充 0（Padding token）
+
+    Args:
+        df:      含 user_id / play_time / song_id_encoded（已含 +2 偏移）的 DataFrame
+        seq_len: 序列最大长度，默认与全局 SEQ_LEN 一致
+
+    Returns:
+        seq_arr: shape (N, seq_len) 的 int32 数组，行顺序与 df 原始行顺序完全一致
+
+    Raises:
+        ValueError: 若 df 缺少必要列
+    """
+    print(f"\n  ⚙️  构建用户行为序列（seq_len={seq_len}，ENCODE_OFFSET={ENCODE_OFFSET}）...")
+
+    required = ["user_id", "play_time", "song_id_encoded"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(f"build_sequence_features: df 缺少列 {missing}")
+
+    tmp = df[required].copy()
+    tmp["_orig_idx"] = np.arange(len(tmp))
+    tmp["play_time"] = pd.to_datetime(tmp["play_time"], errors="coerce")
+
+    # 按 (user_id, play_time) 升序排列，保证历史时序严格递增
+    tmp = tmp.sort_values(["user_id", "play_time"]).reset_index(drop=True)
+
+    result    = np.zeros((len(df), seq_len), dtype=np.int32)
+    enc_vals  = tmp["song_id_encoded"].values.astype(np.int32)
+    user_vals = tmp["user_id"].values
+    orig_idxs = tmp["_orig_idx"].values
+
+    # 找到每个用户在排序后数组中的起止位置
+    boundaries = np.where(
+        np.concatenate([[True], user_vals[1:] != user_vals[:-1]])
+    )[0]
+    boundaries = np.append(boundaries, len(user_vals))
+
+    for i in tqdm(range(len(boundaries) - 1), desc="     构建序列"):
+        start = int(boundaries[i])
+        end   = int(boundaries[i + 1])
+        m = end - start
+        if m == 0:
+            continue
+
+        user_enc  = enc_vals[start:end]    # 该用户时序歌曲编码（含 +2 偏移）
+        user_orig = orig_idxs[start:end]   # 对应原始行索引
+
+        # stride_tricks 滑动窗口：左填充 seq_len 个 0，每行向右滑动 1 步
+        # padded[pos : pos+seq_len] 即为 pos 行之前最近 seq_len 首历史
+        padded = np.concatenate(
+            [np.zeros(seq_len, dtype=np.int32), user_enc]
+        )
+        stride = padded.strides[0]
+        seq_matrix = np.lib.stride_tricks.as_strided(
+            padded, shape=(m, seq_len), strides=(stride, stride)
+        ).copy()   # copy() 使数组连续，避免写回时内存越界
+
+        result[user_orig] = seq_matrix
+
+    print(f"     ✅ 序列构建完成：{len(df):,} 条样本，序列长度 {seq_len}")
+    return result
 
 
 # ============================================================
@@ -866,7 +952,9 @@ def save_outputs(df, encoders, user_stats_dict, song_stats):
         **{col: df[col].values for col in SPARSE_ENCODED if col in df.columns},
         # 稠密特征（float32）
         **{col: df[col].values.astype(np.float32) for col in DENSE_FEATURES},
-        # 基数统计（用于 DeepFM Embedding 层初始化）
+        # 基数统计（用于 DeepFM / BST Embedding 层初始化）
+        # 含 ENCODE_OFFSET=2 后，max 值 = 真实类别数+1，max+1 = 类别数+2
+        # 即 Embedding 表大小 = 真实类别数 + 2（0=Padding, 1=UNK, 2+= 真实值）
         "n_users":        int(df["user_id_encoded"].max() + 1),
         "n_songs":        int(df["song_id_encoded"].max() + 1),
         "n_genders":      int(df["gender_encoded"].max() + 1),
@@ -895,13 +983,14 @@ def save_outputs(df, encoders, user_stats_dict, song_stats):
         pickle.dump(encoders, f, protocol=4)
     print(f"   ✅ {OUTPUT_ENCODERS}")
 
-    # ── _uid_map：MySQL user_id（整数）→ ALS 编码索引（整数）
+    # ── _uid_map：MySQL user_id（整数）→ ALS 紧凑索引（0..n-1，不含 ENCODE_OFFSET）
+    # 注意：ALS 使用紧凑 0-based 索引构造稀疏矩阵，与神经网络 Embedding 的 +2 偏移无关
     # sync_recs_v3.py 通过此映射判断用户是否在 ALS 训练集中（Tier 3 判断）
     # 若缺失此 key，所有用户均被判断为新用户，ALS 通道完全失效
     if "user_id" in encoders:
         _user_le = encoders["user_id"]
         user_stats_dict["_uid_map"] = {
-            int(uid_str): int(idx)
+            int(uid_str): int(idx)   # idx 为 LabelEncoder 原始 0-based 索引
             for idx, uid_str in enumerate(_user_le.classes_)
         }
         print(f"   ✅ _uid_map 已生成：{len(user_stats_dict['_uid_map']):,} 个用户")
@@ -942,6 +1031,15 @@ def save_outputs(df, encoders, user_stats_dict, song_stats):
     size_mb = os.path.getsize(OUTPUT_SVD_VECS) / 1024 / 1024
     print(f"   ✅ {OUTPUT_SVD_VECS}  ({size_mb:.1f} MB, "
           f"{len(svd_vecs['user']):,} 用户 / {len(svd_vecs['song']):,} 歌曲)")
+
+    # ── features_seq.pkl（BST 行为序列，shape=(N, SEQ_LEN) int32）
+    print(f"\n  构建并保存 features_seq.pkl ...")
+    seq_arr = build_sequence_features(df, seq_len=SEQ_LEN)
+    seq_data = {"seq_song_ids": seq_arr}
+    with open(OUTPUT_SEQ, "wb") as f:
+        pickle.dump(seq_data, f, protocol=4)
+    size_mb = os.path.getsize(OUTPUT_SEQ) / 1024 / 1024
+    print(f"   ✅ {OUTPUT_SEQ}  ({size_mb:.1f} MB, shape={seq_arr.shape})")
 
     # 打印维度统计
     print(f"\n📊 特征维度统计:")

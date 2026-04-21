@@ -5,7 +5,7 @@
 计算指标：CTR、平均完播率、收藏率、跳曲率、Precision@10、覆盖度、NDCG@10、Intra-list Diversity
 输出到控制台 + Mode/evaluation_report.txt
 
-开发者：JunFun
+开发者：JunFu
 """
 
 import sys

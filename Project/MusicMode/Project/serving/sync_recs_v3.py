@@ -1,23 +1,23 @@
 # -*- coding: utf-8 -*-
 """
-sync_recs_v3.py — 三路召回 + LightGBM粗排 + DeepFM/BST双模型精排集成
+sync_recs_v3.py — 三路召回 + BST粗排 + DeepFM/LightGBM双模型精排集成
 
 架构：
   召回层  (230万 → ~600): FAISS向量召回(200) + 个性化热度召回(200) + ALS协同过滤(200)
                           - 通道A（FAISS）：满意度感知，dissatisfied时强化偏好探索
                           - 通道B（热度）：满意度感知，动态调整流派过滤和艺术家加权
                           - 通道C（ALS）：新用户三层降级路由（Tier1冷启动/Tier2内容/Tier3协同）；dissatisfied时降权
-  粗排层  (~600 → 300):   LightGBM 打分（仅粗排，不参与精排集成）
-  精排层  (300 → 150):    DeepFM + BST 双模型加权融合
+  粗排层  (~600 → 300):   BST打分（仅粗排，不参与精排集成）
+  精排层  (300 → 150):    DeepFM + LightGBM 双模型加权融合
                           - DeepFM：特征共现交互（FM层+DNN层）
-                          - BST：行为序列 Transformer（Chen et al., DLP-KDD 2019）
+                          - LightGBM：行为序列 Transformer（Chen et al., DLP-KDD 2019）
                           由离线 build_ensemble.py 训练的LightGBM元学习器集成
   重排层  (150 → 50):     MMR（最大边际相关）软多样性 + 升级冷却/屏蔽过滤
                           - MMR：λ=0.7，70%相关性 + 30%多样性惩罚
                           - 升级冷却：负向交互1次→3天，2次→7天，3次+→14天冷宫
 计划任务：每天凌晨 4 点运行
 
-开发者：JunFun
+开发者：JunFu
 """
 
 import os
@@ -46,6 +46,7 @@ MYSQL_USER     = "root"
 MYSQL_PASSWORD = "JF123456"
 MYSQL_DB       = "musicweb"
 
+PROJECT_DIR= Path(__file__).resolve().parents[1]
 MODE_DIR   = Path(__file__).resolve().parents[2] / "Mode"
 FE_DIR     = MODE_DIR / "feature_engineering"
 RECALL_DIR = MODE_DIR / "recall"
@@ -54,11 +55,11 @@ FR_DIR     = MODE_DIR / "fine_rank"
 # 模型文件
 FAISS_INDEX_PATH   = RECALL_DIR / "song_index.faiss"
 SONG_ID_MAP_PATH   = RECALL_DIR / "song_id_map.pkl"
-LGBM_MODEL_PATH    = MODE_DIR / "coarse_rank" / "lgbm" / "lgbm_model.pkl"
+LGBM_MODEL_PATH    = FR_DIR / "lgbm" / "lgbm_model.pkl"       # LightGBM 精排层
 DEEPFM_MODEL_PATH  = FR_DIR / "deepfm" / "deepfm_model.pth"
 DEEPFM_CONFIG_PATH = FR_DIR / "deepfm" / "model_config.pkl"
-BST_MODEL_PATH     = FR_DIR / "bst" / "bst_model.pth"
-BST_CONFIG_PATH    = FR_DIR / "bst" / "model_config.pkl"
+BST_MODEL_PATH     = MODE_DIR / "coarse_rank" / "bst" / "bst_model.pth"    # BST 粗排层
+BST_CONFIG_PATH    = MODE_DIR / "coarse_rank" / "bst" / "model_config.pkl"
 # 集成配置：由 build_ensemble.py 生成，保存在 ensemble 子目录下
 ENSEMBLE_PATH      = FR_DIR / "ensemble" / "ensemble_config.pkl"
 # 元学习器：由 build_ensemble.py 在OOF文件存在时生成
@@ -74,18 +75,20 @@ TOP_N          = 50    # 最终推荐数
 RECALL_FAISS   = 200   # FAISS 召回候选数
 RECALL_HOT     = 200   # 热度召回候选数 
 RECALL_ALS     = 200   # ALS 召回候选数 
-RANK_TOP       = 300   # LightGBM 粗排保留数 
-ENSEMBLE_TOP   = 150   # DeepFM+BST 精排保留数 
+RANK_TOP       = 300   # BST 粗排保留数
+ENSEMBLE_TOP   = 150   # DeepFM+LightGBM 精排保留数
 MAX_PER_ARTIST = 10    # MMR安全上限
 
-# 满意度 → 艺术家加权分（通道B热度召回）
-ARTIST_BONUS_MAP = {
-    "dissatisfied":  800,   # 不满意：强调用户已知偏好艺术家
-    "neutral":       500,   # 中立：保持现有逻辑
-    "satisfied":     300,   # 满意：轻微探索新艺术家
-    "very_satisfied": 150,  # 非常满意：鼓励系统发现新艺术家
+# 满意度 → 艺术家乘法加成因子（通道B热度召回）
+# 笔记问题5修复：原加法（+800）在对数动量分尺度（约3~12）下会造成"艺术家独裁"灾难
+# 改用乘法：排序得分 = hot_score × (1 + γ_s)，加成与歌曲自身热度成比例，冷门歌无法凭艺术家翻身
+ARTIST_FACTOR_MAP = {
+    "dissatisfied":   1.5,  # hot_score × 2.5：不满意时强调偏好艺术家
+    "neutral":        0.8,  # hot_score × 1.8
+    "satisfied":      0.4,  # hot_score × 1.4
+    "very_satisfied": 0.1,  # hot_score × 1.1：非常满意时鼓励探索新艺术家
 }
-ARTIST_BONUS_DEFAULT = 500  # 未评分时默认加权
+ARTIST_FACTOR_DEFAULT = 0.8  # 未评分时默认（同 neutral）
 
 # MMR 多样性参数
 MMR_LAMBDA = 0.7  # 0.7×相关性 + 0.3×多样性惩罚（工业界常用起点）
@@ -103,6 +106,35 @@ WEIGHTS = {
 REDIS_HOST = "localhost"
 REDIS_PORT = 6379
 REDIS_DB   = 0
+
+# FAISS 向量缓存 TTL（秒）：30 分钟；新播放产生时由 PlayHistoryServlet 主动失效
+FAISS_VEC_CACHE_TTL   = 1800
+# 通道A 最低历史门槛：不足时放弃 FAISS 召回，交给通道 B+C 接管
+MIN_HISTORY_FOR_FAISS = 5
+
+# LightGBM 推断特征列名（与 train_lgbm.py DENSE_FEATURES + 稀疏特征顺序严格一致）
+# 提升为模块级常量：避免每次调用 rank_with_lgbm 时重建列表；配套 dict 实现 O(1) 索引查找
+X66_FEAT_NAMES = [
+    "user_id_encoded", "song_id_encoded", "genre_encoded", "language_encoded",
+    "artist_encoded", "origin_country_encoded", "year_bucket_encoded",
+    "source_channel_encoded", "city_encoded", "gender_encoded",
+    "age_bucket_encoded", "tenure_bucket_encoded", "duration_bucket_encoded",
+    "user_peak_hour_encoded",
+    "user_play_count_log", "user_avg_completion", "user_genre_diversity",
+    "user_30d_active_days", "song_play_count_log", "song_avg_completion",
+    "song_popularity_norm", "song_age_days_log", "song_target_rate",
+    "user_artist_match", "user_skip_rate", "song_skip_rate",
+    "hour_match", "dow_match", "days_since_artist_log", "days_since_last_play_log",
+    "user_has_in_playlist", "user_playlist_artist_count_log",
+    "user_song_prev_play_days", "user_song_play_count_before",
+    "user_7d_play_count_log", "user_30d_play_count_log", "user_7d_avg_completion",
+    "song_7d_play_count_log", "song_30d_play_count_log", "song_trending_ratio",
+] + [f"svd_user_song_{i}"   for i in range(10)] \
+  + [f"svd_song_user_{i}"   for i in range(10)] \
+  + [f"svd_user_artist_{i}" for i in range(5)] \
+  + ["svd_dot_score"]
+# O(1) 列名 → 列索引映射，替代 list.index() 的 O(n) 线性查找
+X66_FEAT_IDX = {name: idx for idx, name in enumerate(X66_FEAT_NAMES)}
 
 
 # ============================================================
@@ -183,11 +215,7 @@ class Resources:
     def __init__(self):
         print("📥 加载推荐系统资源...")
 
-        # FAISS 索引
-        self.index        = faiss.read_index(FAISS_INDEX_PATH)
-        with open(SONG_ID_MAP_PATH, "rb") as f:
-            self.map_data = pickle.load(f)
-
+        # ── 公共基础资源（编码器 / 统计表）────────────────────────────
         # 编码器
         self.encoders = {}
         if os.path.exists(ENCODERS_PATH):
@@ -210,113 +238,30 @@ class Resources:
             with open(SONG_STATS_PATH, "rb") as f:
                 self.song_stats = pickle.load(f)
 
-        # LightGBM
-        self.lgbm_model  = None
-        self.lgbm_feats  = None
-        if os.path.exists(LGBM_MODEL_PATH):
-            with open(LGBM_MODEL_PATH, "rb") as f:
-                payload          = pickle.load(f)
-                self.lgbm_model  = payload["model"]
-                self.lgbm_feats  = payload["feature_names"]
-                self.lgbm_iter   = payload.get("best_iteration")
-            print(f"   ✅ LightGBM 加载（val_AUC={payload.get('val_auc', 0):.4f}）")
+        # ── 召回层：FAISS（通道A）/ 热度（通道B）/ ALS（通道C）/ SVD特征 ──
+        print("\n   ── [召回层] ──")
 
-        # DeepFM
-        self.deepfm_model   = None
-        self.deepfm_feat_names = None
-        self.deepfm_sparse  = []
-        self.deepfm_dense   = []
-        if os.path.exists(DEEPFM_CONFIG_PATH) and os.path.exists(DEEPFM_MODEL_PATH):
-            import torch
-            from deepctr_torch.models import DeepFM
-            from deepctr_torch.inputs import get_feature_names
-            with open(DEEPFM_CONFIG_PATH, "rb") as f:
-                cfg = pickle.load(f)
-            feature_columns = cfg["feature_columns"]
-            m = DeepFM(
-                linear_feature_columns=feature_columns,
-                dnn_feature_columns=feature_columns,
-                dnn_hidden_units=cfg.get("dnn_hidden_units", (512, 256, 128, 64)),
-                dnn_dropout=cfg.get("dnn_dropout", 0.2),
-                device='cpu',
-            )
-            sd = torch.load(DEEPFM_MODEL_PATH, map_location='cpu', weights_only=True)
-            m.load_state_dict(sd)
-            m.eval()
-            self.deepfm_model      = m
-            self.deepfm_feat_names = get_feature_names(feature_columns)
-            self.deepfm_sparse     = cfg.get("sparse_feat_specs", [])
-            self.deepfm_dense      = cfg.get("dense_feat_specs", [])
-            print(f"   ✅ DeepFM v3 加载（val_AUC={cfg.get('best_val_auc', 0):.4f}）")
+        # FAISS 索引 + MySQL↔FAISS 双向映射（v4_cold_start 格式：全量歌曲）
+        self.index    = faiss.read_index(str(FAISS_INDEX_PATH))
+        with open(SONG_ID_MAP_PATH, "rb") as f:
+            self.map_data = pickle.load(f)
 
-        # BST（行为序列 Transformer，替换 DIN；需要 train_bst.py 中的 BSTModel）
-        self.bst_model      = None
-        self.bst_config     = None
-        if os.path.exists(BST_CONFIG_PATH) and os.path.exists(BST_MODEL_PATH):
-            try:
-                import torch
-                # 动态导入 train_bst 模块（与 sync_recs_v3.py 同目录）
-                import importlib.util
-                _bst_spec = importlib.util.spec_from_file_location(
-                    "train_bst",
-                    os.path.join(PROJECT_DIR, "train_bst.py")
-                )
-                _bst_mod = importlib.util.module_from_spec(_bst_spec)
-                _bst_spec.loader.exec_module(_bst_mod)
-                with open(BST_CONFIG_PATH, "rb") as f:
-                    bst_cfg = pickle.load(f)
-                bst_m = _bst_mod.BSTModel(
-                    n_songs=bst_cfg["n_songs"],
-                    n_users=bst_cfg["n_users"],
-                    other_sparse_sizes=bst_cfg["other_sparse_sizes"],
-                    dense_dim=bst_cfg["dense_dim"],
-                    embed_dim=bst_cfg.get("embed_dim", 32),
-                    seq_len=bst_cfg.get("seq_len", 50),
-                    n_heads=bst_cfg.get("n_heads", 4),
-                    d_model=bst_cfg.get("d_model", 64),
-                    ffn_dim=bst_cfg.get("ffn_dim", 128),
-                    dropout=bst_cfg.get("dropout", 0.4),
-                )
-                sd = torch.load(BST_MODEL_PATH, map_location='cpu', weights_only=True)
-                bst_m.load_state_dict(sd)
-                bst_m.eval()
-                self.bst_model  = bst_m
-                self.bst_config = bst_cfg
-                self._bst_mod   = _bst_mod   # 保留模块引用，供 rank_with_bst 使用
-                print(f"   ✅ BST 加载（val_AUC={bst_cfg.get('best_val_auc', 0):.4f}）")
-            except Exception as e:
-                print(f"   ⚠️ BST 加载失败（{e}），精排仅使用 DeepFM")
+        md = self.map_data
+        if "faiss_to_mysql" in md:
+            # v4_cold_start 格式（全量 2.3M 歌曲）
+            self.faiss2mysql: dict[int, int] = md["faiss_to_mysql"]
+            self.mysql2faiss: dict[int, int] = md["mysql_to_faiss"]
+            self.mysql2enc:   dict[int, int] = md["mysql_to_enc"]
+            print(f"   ✅ FAISS 索引：{self.index.ntotal:,} 首歌曲"
+                  f"（暖: {md.get('n_warm', '?'):,}, 冷: {self.index.ntotal - md.get('n_warm', 0):,}）")
+        else:
+            # 旧格式兼容
+            self.mysql2faiss: dict[int, int] = {}
+            self.faiss2mysql: dict[int, int] = {}
+            self.mysql2enc:   dict[int, int] = {}
+            print(f"   ✅ FAISS 索引：{self.index.ntotal:,} 首歌曲（旧格式，需重建映射）")
 
-        # 双模型集成权重（DeepFM + BST，由 build_ensemble.py 离线训练）
-        # LightGBM 仅参与粗排（300→50），不参与精排集成
-        self.w_deepfm = 0.5
-        self.w_bst    = 0.5
-        self.meta_lr  = None   # 逻辑回归元学习器（优先于加权平均使用）
-        if os.path.exists(ENSEMBLE_PATH):
-            with open(ENSEMBLE_PATH, "rb") as f:
-                ec = pickle.load(f)
-            bw = ec.get("best_weights", {})
-            raw_deepfm = bw.get("DeepFM", 0.0)
-            raw_bst    = bw.get("BST",    0.0)
-            total = raw_deepfm + raw_bst
-            if total > 0:
-                self.w_deepfm = raw_deepfm / total
-                self.w_bst    = raw_bst    / total
-            print(
-                f"   ✅ 集成权重（精排）: DeepFM={self.w_deepfm:.3f}, BST={self.w_bst:.3f}"
-                f"（集成 AUC={ec.get('best_overall_auc', 0):.4f}）"
-            )
-            # 优先加载元学习器（build_ensemble.py 在OOF文件存在时才会生成）
-            if ec.get("meta_learner_available", False) and os.path.exists(META_LEARNER_PATH):
-                try:
-                    with open(META_LEARNER_PATH, "rb") as f:
-                        self.meta_lr = pickle.load(f)
-                    print(f"   ✅ 元学习器加载（meta AUC={ec.get('meta_auc', 0):.4f}）"
-                          f" — 推断将使用 LR(DeepFM, BST)")
-                except Exception as e:
-                    print(f"   ⚠️ 元学习器加载失败（{e}），降级到加权平均")
-
-        # ALS
+        # ALS（矩阵分解协同过滤，召回通道 C）
         self.als_model = None
         if os.path.exists(ALS_MODEL_PATH):
             with open(ALS_MODEL_PATH, "rb") as f:
@@ -335,13 +280,13 @@ class Resources:
         else:
             print("   ⚠️ svd_vecs.pkl 不存在，SVD 特征将补零（需先运行 prepare_features_v3.py）")
 
-        # 歌曲滚动窗口特征缓存 + 热度缓存（Redis + MySQL 双层架构）
-        # 读取顺序：Redis（亚毫秒）→ 新鲜度不一致则终止，要求先运行 refresh_song_stats.py
+        # 通道B 热度召回数据 + 歌曲滚动统计特征（来源：Redis + MySQL 双层架构）
+        # 在模型加载前完成新鲜度校验：Redis 不一致时 fail-fast，避免白等模型加载
         # 格式：
         #   self.song_rolling: {song_id: {"log_7d": float, "log_30d": float, "trending": float}}
-        #   self.hot_cache:    {song_id: total_plays}（取 total_plays 最高的 10000 首）
+        #   self.hot_cache:    {song_id: hot_score}（对数动量分，取得分最高的 10000 首）
         self.song_rolling: dict[int, dict] = {}
-        self.hot_cache: dict[int, int] = {}
+        self.hot_cache: dict[int, float] = {}
 
         # ── Step 1: 查 MySQL 权威时间戳
         _ts_conn = pymysql.connect(
@@ -353,7 +298,7 @@ class Resources:
             _cur.execute("SELECT MAX(updated_at) FROM song_rolling_stats")
             _row = _cur.fetchone()
         _ts_conn.close()
-        _mysql_ts = str(_row[0]) if _row and _row[0] else None
+        _mysql_ts = str(_row[0]) if _row and _row[0] else ""
 
         if not _mysql_ts:
             raise SystemExit(
@@ -381,37 +326,143 @@ class Resources:
         _pipe  = _redis.pipeline(transaction=False)
         for _k in _keys:
             _pipe.hgetall(_k)
-        _hot_raw: dict[int, int] = {}
+        # 笔记问题4修复：对数动量分（Logarithmic Momentum Score）
+        # hot_score = log10(1 + cnt_30d) × (1 + k × trending)
+        # 用 cnt_30d 替代 total_plays，消除马太效应；trending 赋予爆火新歌动量奖励
+        # k=0.5 为工业经验初始值，可用 Recall@200 做离线网格搜索调优
+        _HOT_K   = 0.5
+        _hot_raw: dict[int, float] = {}
         for _k, _vals in zip(_keys, _pipe.execute()):
-            _sid = int(_k.split(":")[1])
+            _sid      = int(_k.split(":")[1])
+            _cnt_30d  = int(_vals.get("c30", 0))
+            _trending = float(_vals.get("tr", 1.0))
             self.song_rolling[_sid] = {
-                "log_7d":   math.log1p(int(_vals.get("c7",  0))),
-                "log_30d":  math.log1p(int(_vals.get("c30", 0))),
-                "trending": float(_vals.get("tr", 1.0)),
+                "log_7d":   math.log1p(int(_vals.get("c7", 0))),
+                "log_30d":  math.log1p(_cnt_30d),
+                "trending": _trending,
             }
-            _hot_raw[_sid] = int(_vals.get("tp", 0))
+            _hot_raw[_sid] = math.log10(1 + _cnt_30d) * (1 + _HOT_K * _trending)
 
         self.hot_cache = dict(
             sorted(_hot_raw.items(), key=lambda x: x[1], reverse=True)[:10000]
         )
-        print(f"   ✅ 歌曲缓存加载（Redis，已验证最新）：{len(self.song_rolling):,} 首"
-              f" | 热度 Top-{len(self.hot_cache):,}")
+        print(f"   ✅ 热度召回（通道B）：{len(self.hot_cache):,} 首候选"
+              f" | 滚动统计覆盖 {len(self.song_rolling):,} 首（Redis，已验证最新）")
 
-        # MySQL ID ↔ FAISS 索引 双向映射（从 song_id_map.pkl 直接加载）
-        md = self.map_data
-        if "faiss_to_mysql" in md:
-            # v4_cold_start 格式（全量 2.3M 歌曲）
-            self.faiss2mysql: dict[int, int] = md["faiss_to_mysql"]
-            self.mysql2faiss: dict[int, int] = md["mysql_to_faiss"]
-            self.mysql2enc:   dict[int, int] = md["mysql_to_enc"]
-            print(f"   ✅ FAISS 索引：{self.index.ntotal:,} 首歌曲"
-                  f"（暖: {md.get('n_warm', '?'):,}, 冷: {self.index.ntotal - md.get('n_warm', 0):,}）")
-        else:
-            # 旧格式兼容
-            self.mysql2faiss: dict[int, int] = {}
-            self.faiss2mysql: dict[int, int] = {}
-            self.mysql2enc:   dict[int, int] = {}
-            print(f"   ✅ FAISS 索引：{self.index.ntotal:,} 首歌曲（旧格式，需重建映射）")
+        # ── 粗排层：BST ────────────────────────────────────────────────
+        print("\n   ── [粗排层] ──")
+
+        # BST（行为序列 Transformer，替换 DIN；需要 train_bst.py 中的 BSTModel）
+        self.bst_model      = None
+        self.bst_config     = None
+        if os.path.exists(BST_CONFIG_PATH) and os.path.exists(BST_MODEL_PATH):
+            try:
+                import torch
+                # 动态导入 train_bst 模块
+                import importlib.util
+                _bst_spec = importlib.util.spec_from_file_location(
+                    "train_bst",
+                    os.path.join(PROJECT_DIR, "coarse_rank", "train_bst.py")
+                )
+                _bst_mod = importlib.util.module_from_spec(_bst_spec)
+                _bst_spec.loader.exec_module(_bst_mod)
+                with open(BST_CONFIG_PATH, "rb") as f:
+                    bst_cfg = pickle.load(f)
+                bst_m = _bst_mod.BSTModel(
+                    n_songs=bst_cfg["n_songs"],
+                    n_users=bst_cfg["n_users"],
+                    other_sparse_sizes=bst_cfg["other_sparse_sizes"],
+                    dense_dim=bst_cfg["dense_dim"],
+                    embed_dim=bst_cfg.get("embed_dim", 32),
+                    seq_len=bst_cfg.get("seq_len", 50),
+                    n_heads=bst_cfg.get("n_heads", 4),
+                    d_model=bst_cfg.get("d_model", 64),
+                    ffn_dim=bst_cfg.get("ffn_dim", 128),
+                    dropout=bst_cfg.get("dropout", 0.4),
+                )
+                sd = torch.load(BST_MODEL_PATH, map_location='cpu', weights_only=True)
+                bst_m.load_state_dict(sd)
+                bst_m.eval()
+                self.bst_model  = bst_m
+                self.bst_config = bst_cfg
+                self._bst_mod   = _bst_mod   # 保留模块引用，供 rank_with_bst 使用
+                print(f"   ✅ BST 加载（val_AUC={bst_cfg.get('best_val_auc', 0):.4f}）")
+            except Exception as e:
+                print(f"   ⚠️ BST 加载失败（{e}），粗排BST不可用，精排层仍正常（DeepFM+LightGBM）")
+
+        # ── 精排层：DeepFM + LightGBM + Meta-LR ────────────────────────
+        print("\n   ── [精排层] ──")
+
+        # DeepFM（双路神经网络，精排集成第一路输入）
+        self.deepfm_model   = None
+        self.deepfm_feat_names = None
+        self.deepfm_sparse  = []
+        self.deepfm_dense   = []
+        if os.path.exists(DEEPFM_CONFIG_PATH) and os.path.exists(DEEPFM_MODEL_PATH):
+            import torch
+            from deepctr_torch.models import DeepFM
+            from deepctr_torch.inputs import get_feature_names
+            with open(DEEPFM_CONFIG_PATH, "rb") as f:
+                cfg = pickle.load(f)
+            feature_columns = cfg["feature_columns"]
+            m = DeepFM(
+                linear_feature_columns=feature_columns,
+                dnn_feature_columns=feature_columns,
+                dnn_hidden_units=cfg.get("dnn_hidden_units", (512, 256, 128, 64)),
+                dnn_dropout=cfg.get("dnn_dropout", 0.2),
+                device='cpu',
+            )
+            sd = torch.load(DEEPFM_MODEL_PATH, map_location='cpu', weights_only=True)
+            m.load_state_dict(sd)
+            m.eval()
+            self.deepfm_model      = m
+            self.deepfm_feat_names = get_feature_names(feature_columns)
+            self.deepfm_sparse     = cfg.get("sparse_feat_specs", [])
+            self.deepfm_dense      = cfg.get("dense_feat_specs", [])
+            print(f"   ✅ DeepFM v3 加载（val_AUC={cfg.get('best_val_auc', 0):.4f}）")
+
+        # LightGBM（GBDT，精排集成第二路输入）
+        self.lgbm_model  = None
+        self.lgbm_feats  = None
+        if os.path.exists(LGBM_MODEL_PATH):
+            with open(LGBM_MODEL_PATH, "rb") as f:
+                payload          = pickle.load(f)
+                self.lgbm_model  = payload["model"]
+                self.lgbm_feats  = payload["feature_names"]
+                self.lgbm_iter   = payload.get("best_iteration")
+            print(f"   ✅ LightGBM 加载（val_AUC={payload.get('val_auc', 0):.4f}）")
+
+        # 精排集成：唯一推断路径为 Meta-LR，不设加权平均降级策略
+        # Meta-LR 未就绪则启动时直接报错，而非静默降级污染推荐质量
+        self.meta_lr = None
+        if not os.path.exists(ENSEMBLE_PATH):
+            raise FileNotFoundError(
+                f"\n❌ 集成配置不存在: {ENSEMBLE_PATH}\n"
+                "   请先运行: python build_ensemble.py"
+            )
+        with open(ENSEMBLE_PATH, "rb") as f:
+            ec = pickle.load(f)
+        print(f"   ✅ 集成配置加载（best AUC={ec.get('best_overall_auc', 0):.4f}）")
+
+        if not ec.get("meta_learner_available", False):
+            raise RuntimeError(
+                "\n❌ 集成配置中 meta_learner_available=False\n"
+                "   请先运行 build_ensemble.py 生成 OOF 文件后重试"
+            )
+        if not os.path.exists(META_LEARNER_PATH):
+            raise FileNotFoundError(
+                f"\n❌ Meta-LR 文件不存在: {META_LEARNER_PATH}\n"
+                "   请先运行: python build_ensemble.py"
+            )
+        with open(META_LEARNER_PATH, "rb") as f:
+            self.meta_lr = pickle.load(f)
+        print(f"   ✅ Meta-LR 元学习器加载（AUC={ec.get('meta_auc', 0):.4f}）"
+              f" — 推断路径：LR(DeepFM, LightGBM)")
+
+        # ── 重排层：MMR ────────────────────────────────────────────────
+        # MMR 重排基于 λ=0.7 参数配置与 FAISS 向量计算多样性，无需独立模型文件
+        print("\n   ── [重排层] ──")
+        print("   ✅ MMR 重排就绪（λ=0.7，FAISS 向量多样性 + metadata 兜底）")
 
     def build_song_mappings(self, db_songs: list):
         """构建 MySQL song_id ↔ FAISS idx / song_encoded 的双向映射"""
@@ -637,6 +688,18 @@ def build_user_profile(db, user_id, res: Resources,
         except Exception:
             pass
 
+    # 笔记通道A问题5修复：播放历史不足时主动降级，避免偏好标签均值向量引发维度坍塌
+    # 历史歌曲不足 MIN_HISTORY_FOR_FAISS 首时，加权平均结果趋近于零向量，
+    # FAISS检索退化为随机邻居，不如直接交由通道B（热度）+通道C（内容）接管
+    with db.cursor() as _guard_cur:
+        _guard_cur.execute(
+            "SELECT COUNT(*) AS cnt FROM play_history WHERE user_id = %s",
+            (user_id,)
+        )
+        _play_count = (_guard_cur.fetchone() or {}).get("cnt", 0)
+    if _play_count < MIN_HISTORY_FOR_FAISS:
+        return None   # 主动放弃通道A，交由通道B+C接管
+
     today     = datetime.datetime.now()
     yesterday = today - datetime.timedelta(days=1)
     seven_days = today - datetime.timedelta(days=7)
@@ -683,8 +746,15 @@ def build_user_profile(db, user_id, res: Resources,
             comp = row["comp"] or 0.5
             base_w = WEIGHTS["play_yesterday"] if pt >= yesterday else (
                      WEIGHTS["play_7days"]     if pt >= seven_days else WEIGHTS["play_older"])
-            cf = 1.5 if comp > 0.8 else (0.5 if comp < 0.2 else 1.0)
-            w  = base_w * cf * hist_damp
+            # 笔记通道A问题1修复：comp<0.2改为负权重斥力，主动推离被极速跳过的歌
+            # 原逻辑用0.5折扣，仍为正向，画像仍偏向用户讨厌的歌；改为负权重后
+            # 向量叠加时主动推离，等效于在用户偏好空间施加明确的"反偏好"方向约束
+            if comp < 0.2:
+                w = -base_w * 0.3              # 负权重斥力：排斥极速跳过的歌
+            elif comp > 0.8:
+                w = base_w * 1.5 * hist_damp  # 高完播加成
+            else:
+                w = base_w * hist_damp         # 正常播放
 
             if sid in res.mysql2faiss:
                 vectors.append(res.index.reconstruct(res.mysql2faiss[sid]))
@@ -765,12 +835,12 @@ def build_user_profile(db, user_id, res: Resources,
         profile /= norm
     profile_vec = profile.reshape(1, -1)
 
-    # 写入 Redis FAISS 向量缓存（TTL=30分钟）
+    # 写入 Redis FAISS 向量缓存（TTL=FAISS_VEC_CACHE_TTL）
     # 新播放产生时，PlayHistoryServlet 应删除 user:faiss:{user_id} 以主动失效
     if _redis is not None:
         try:
             _redis.setex(
-                _faiss_key, 1800,
+                _faiss_key, FAISS_VEC_CACHE_TTL,
                 base64.b64encode(profile_vec.tobytes()).decode()
             )
         except Exception:
@@ -805,7 +875,8 @@ def recall_candidates(db, user_id, res: Resources,
                     continue
                 if any(ba in artist for ba in blocked_artists):
                     continue
-                candidates[sql_id] = float(score)
+                # 通道A：FAISS余弦相似度分存入faiss_score，其余通道分为0
+                candidates[sql_id] = {"faiss_score": float(score), "als_score": 0.0, "hot_score": 0.0}
                 if len([k for k in candidates]) >= RECALL_FAISS:
                     break
 
@@ -818,26 +889,28 @@ def recall_candidates(db, user_id, res: Resources,
     hot_sati   = _get_user_sati(db, user_id, _redis_b)
     pref_b     = _get_user_pref(db, user_id, _redis_b)
 
-    # 根据满意度决定流派过滤策略
-    # dissatisfied/neutral → 使用所有 preferred_genres（OR 匹配，扩大覆盖）
-    # satisfied/未评分     → 只用第一个流派（现有逻辑，精准过滤）
-    # very_satisfied       → 不做流派过滤（广撒网，探索新领域）
+    # 笔记问题1+3修复：满意度→流派过滤改为单调梯度
+    # 原V型逻辑（satisfied最窄，比dissatisfied更严）修复为：满意度越高探索越宽
+    # dissatisfied：Top-1流派（最保守，守住最确定的偏好，负反馈时先稳住）
+    # neutral     ：Top-2流派（未评分/感觉一般，小幅拓宽）
+    # satisfied   ：Top-3流派（推得不错，适度扩展边界）
+    # very_satisfied：不过滤（非常信任系统，大胆探索新领域）
     preferred_genres_list = []
     if pref_b and pref_b.get("preferred_genres"):
         preferred_genres_list = [g.strip() for g in pref_b["preferred_genres"].split(";") if g.strip()]
 
     if hot_sati == "very_satisfied":
-        # 不做流派限制，鼓励探索
-        hot_genre_filters: list = []
-    elif hot_sati in ("dissatisfied", "neutral"):
-        # 用全部偏好流派（OR 逻辑），提高召回覆盖面
-        hot_genre_filters = preferred_genres_list
+        hot_genre_filters: list = []               # 不限流派，最大探索
+    elif hot_sati == "satisfied":
+        hot_genre_filters = preferred_genres_list[:3]  # Top-3 流派
+    elif hot_sati == "neutral":
+        hot_genre_filters = preferred_genres_list[:2]  # Top-2 流派
     else:
-        # satisfied 或未评分：只用第一个流派（保持原有精准过滤）
+        # dissatisfied 或未评分：最保守，仅 Top-1 流派
         hot_genre_filters = preferred_genres_list[:1]
 
-    # 满意度影响偏好艺术家加权分
-    artist_bonus = ARTIST_BONUS_MAP.get(hot_sati, ARTIST_BONUS_DEFAULT)
+    # 笔记问题5修复：改用乘法加成因子（替代原加法 ARTIST_BONUS_MAP）
+    artist_factor = ARTIST_FACTOR_MAP.get(hot_sati, ARTIST_FACTOR_DEFAULT)
 
     # 获取用户偏好艺术家（top-20），来源：user_stats.pkl 历史播放分布
     user_fav_artists: set = set()
@@ -848,16 +921,19 @@ def recall_candidates(db, user_id, res: Resources,
         user_fav_artists = {a for a, _ in top_artists}
 
     if res.hot_cache:
-        # 按满意度动态加权排序：偏好艺术家 + artist_bonus
+        # 笔记问题5修复：乘法加成排序，hot_score × (1 + γ_s)，替代原加法（+800）
+        # 乘法保证加成与歌曲自身热度成比例，冷门歌无法仅凭艺术家偏好翻身
         hot_sorted = sorted(
             res.hot_cache.items(),
-            key=lambda kv: kv[1] + (
-                artist_bonus if song_meta_map.get(kv[0], ("", ""))[1] in user_fav_artists else 0
+            key=lambda kv: kv[1] * (
+                (1 + artist_factor)
+                if song_meta_map.get(kv[0], ("", ""))[1] in user_fav_artists
+                else 1.0
             ),
             reverse=True,
         )
         _added_hot = 0
-        for sid, _cnt in hot_sorted:
+        for sid, _hot_score in hot_sorted:
             if _added_hot >= RECALL_HOT:
                 break
             if sid in exclude_set or sid in candidates:
@@ -870,7 +946,10 @@ def recall_candidates(db, user_id, res: Resources,
                 continue
             if any(ba in artist for ba in blocked_artists):
                 continue
-            candidates[sid] = 0.05   # 低基础分，靠精排提升
+            # 笔记问题2修复：Rank-based Decay，保留热度梯度传递给粗排
+            # score_r = 0.1 / log2(r+2)，第1名=0.100，第200名≈0.013，与FAISS余弦相似度量级可比
+            # 通道B热度：Rank-based Decay分存入hot_score
+            candidates[sid] = {"faiss_score": 0.0, "als_score": 0.0, "hot_score": 0.1 / math.log2(_added_hot + 2)}
             _added_hot += 1
     else:
         # 回退：songs.popularity（hot_cache 加载失败时兜底）
@@ -897,7 +976,8 @@ def recall_candidates(db, user_id, res: Resources,
                         continue
                     if any(ba in artist for ba in blocked_artists):
                         continue
-                    candidates[sid] = 0.05
+                    # 通道B兜底：热度DB召回分存入hot_score
+                    candidates[sid] = {"faiss_score": 0.0, "als_score": 0.0, "hot_score": 0.05}
 
     # ── 通道C: 三层分层路由
     # Tier 3（ALS）  : 在 ALS 训练集中，且训练时有效播放 ≥ 10 首
@@ -971,7 +1051,8 @@ def recall_candidates(db, user_id, res: Resources,
                                 continue
                             if any(ba in artist for ba in blocked_artists):
                                 continue
-                            candidates[sql_id] = float(scores[enc_id]) * als_score_factor
+                            # 通道C Tier3 simple_als：ALS分存入als_score
+                            candidates[sql_id] = {"faiss_score": 0.0, "als_score": float(scores[enc_id]) * als_score_factor, "hot_score": 0.0}
                             count += 1
                             if count >= RECALL_ALS:
                                 break
@@ -985,7 +1066,8 @@ def recall_candidates(db, user_id, res: Resources,
                 for enc_id, sc_val in zip(ids.tolist(), sc.tolist()):
                     sql_id = res.faiss2mysql.get(enc_id)
                     if sql_id and sql_id not in exclude_set and sql_id not in candidates:
-                        candidates[sql_id] = float(sc_val) * als_score_factor
+                        # 通道C Tier3 implicit ALS：ALS分存入als_score
+                        candidates[sql_id] = {"faiss_score": 0.0, "als_score": float(sc_val) * als_score_factor, "hot_score": 0.0}
         except Exception as e:
             print(f"      ⚠️ ALS 召回失败: {e}")
 
@@ -1068,7 +1150,8 @@ def recall_candidates(db, user_id, res: Resources,
                             continue
                         if any(ba in a for ba in blocked_artists):
                             continue
-                        candidates[sid] = aw * 0.05
+                        # 通道C Tier2 艺术家维度：内容分存入als_score
+                        candidates[sid] = {"faiss_score": 0.0, "als_score": aw * 0.05, "hot_score": 0.0}
 
                 for genre_tok, gw in top_genres:
                     cur.execute("""
@@ -1084,7 +1167,8 @@ def recall_candidates(db, user_id, res: Resources,
                             continue
                         if any(ba in a for ba in blocked_artists):
                             continue
-                        candidates[sid] = gw * 0.04
+                        # 通道C Tier2 流派维度：内容分存入als_score
+                        candidates[sid] = {"faiss_score": 0.0, "als_score": gw * 0.04, "hot_score": 0.0}
 
                 for lang, lw in top_langs:
                     cur.execute("""
@@ -1100,7 +1184,8 @@ def recall_candidates(db, user_id, res: Resources,
                             continue
                         if any(ba in a for ba in blocked_artists):
                             continue
-                        candidates[sid] = lw * 0.03
+                        # 通道C Tier2 语种维度：内容分存入als_score
+                        candidates[sid] = {"faiss_score": 0.0, "als_score": lw * 0.03, "hot_score": 0.0}
 
         except Exception as e:
             print(f"      ⚠️ Tier2 多维度召回失败，降级为 Tier1: {e}")
@@ -1135,7 +1220,8 @@ def recall_candidates(db, user_id, res: Resources,
                             g, a = song_meta_map.get(sid, ("", ""))
                             if any(bg in g for bg in blocked_genres): continue
                             if any(ba in a for ba in blocked_artists): continue
-                            candidates[sid] = 0.03
+                            # 通道C Tier1 冷启动：注册偏好内容分存入als_score
+                            candidates[sid] = {"faiss_score": 0.0, "als_score": 0.03, "hot_score": 0.0}
 
                 # ② 注册流派的热门歌曲（补足至 RECALL_ALS）
                 for genre_token in reg_genres[:3]:
@@ -1150,7 +1236,8 @@ def recall_candidates(db, user_id, res: Resources,
                             g, a = song_meta_map.get(sid, ("", ""))
                             if any(bg in g for bg in blocked_genres): continue
                             if any(ba in a for ba in blocked_artists): continue
-                            candidates[sid] = 0.03
+                            # 通道C Tier1 冷启动：注册偏好内容分存入als_score
+                            candidates[sid] = {"faiss_score": 0.0, "als_score": 0.03, "hot_score": 0.0}
         except Exception as e:
             print(f"      ⚠️ 通道C冷启动召回失败: {e}")
 
@@ -1248,7 +1335,6 @@ def _get_user_sati(db, user_id, redis_conn):
             pass
     return sati
 
-
 def build_pair_features(user_id, song_ids, db, res: Resources, realtime_dists=None):
     """
     为 (user_id, song_ids[]) 构建特征矩阵 shape (len(song_ids), 66)。
@@ -1337,6 +1423,7 @@ def build_pair_features(user_id, song_ids, db, res: Resources, realtime_dists=No
     gender_enc = _safe_encode(encoders.get("gender"), urow.get("gender") or "unknown")
     city_enc   = _safe_encode(encoders.get("city"),   urow.get("city")   or "unknown")
 
+    # 用户年龄
     bd = urow.get("bd") or 25
     if bd <= 0 or bd > 100:
         bd = 25
@@ -1347,6 +1434,7 @@ def build_pair_features(user_id, song_ids, db, res: Resources, realtime_dists=No
     else:          age_bucket = 4
     age_enc = _safe_encode(encoders.get("age_bucket"), str(age_bucket))
 
+    # 用户生命周期
     create_time = urow.get("create_time") or datetime.datetime.now()
     tenure_days = (datetime.datetime.now() - create_time).days if isinstance(create_time, datetime.datetime) else 0
     if   tenure_days < 30:   tenure_b = 0
@@ -1355,8 +1443,10 @@ def build_pair_features(user_id, song_ids, db, res: Resources, realtime_dists=No
     else:                    tenure_b = 3
     tenure_enc = _safe_encode(encoders.get("tenure_bucket"), str(tenure_b))
 
+    # 用户统计特征
     play_count  = urow.get("play_count") or 0
-    avg_comp_u  = float(urow.get("avg_comp") or 0.5)
+    _ac = urow.get("avg_comp")
+    avg_comp_u  = float(_ac) if _ac is not None else 0.5
     active_30d  = urow.get("active_30d")  or 0
     user_play_count_log = math.log1p(play_count)
 
@@ -1435,7 +1525,7 @@ def build_pair_features(user_id, song_ids, db, res: Resources, realtime_dists=No
 
     # 用户跳过率（从 user_history 实时计算，若无则用 user_stats 中预计算值）
     if user_history:
-        skip_count = sum(1 for r in user_history if (r.get("comp") or 0.5) < 0.10)
+        skip_count = sum(1 for r in user_history if float(r.get("comp", 0.0)) < 0.15)
         user_skip_rate = skip_count / len(user_history)
 
     # 最近播放该歌 / 该艺术家 的时间（days, log1p）
@@ -1469,7 +1559,7 @@ def build_pair_features(user_id, song_ids, db, res: Resources, realtime_dists=No
     user_7d_play_count_log  = math.log1p(len(hist_7d))
     user_30d_play_count_log = math.log1p(len(hist_30d))
     user_7d_avg_completion  = (
-        float(sum(r.get("comp") or 0.5 for r in hist_7d) / len(hist_7d))
+        float(sum(float(r.get("comp", 0.0)) for r in hist_7d) / len(hist_7d))
         if hist_7d else 0.5
     )
 
@@ -1558,13 +1648,22 @@ def build_pair_features(user_id, song_ids, db, res: Resources, realtime_dists=No
         song_log_30d    = _sr.get("log_30d",  0.0)
         song_trending   = _sr.get("trending", 1.0)
 
-        # SVD 嵌入特征（从 Resources.svd_vecs 查找，未知用户/歌曲补零）
+        # SVD 嵌入特征（从 Resources.svd_vecs 查找，未知用户/歌曲补 NaN，避免 0.0 陷阱）
         _u_svd = res.svd_vecs.get("user", {}).get(user_enc, {})
         _s_svd = res.svd_vecs.get("song", {}).get(song_enc, {})
-        svd_us   = [float(_u_svd.get(f"svd_user_song_{i}", 0.0)) for i in range(10)]
-        svd_su   = [float(_s_svd.get(f"svd_song_user_{i}", 0.0)) for i in range(10)]
-        svd_ua   = [float(_u_svd.get(f"svd_user_artist_{i}", 0.0)) for i in range(5)]
-        svd_dot  = float(sum(a * b for a, b in zip(svd_us, svd_su)))
+        
+        u_is_cold = not bool(_u_svd)
+        s_is_cold = not bool(_s_svd)
+
+        # 缺失特征填 np.nan（LightGBM 原生支持缺失值分离路由）
+        svd_us = [float(_u_svd.get(f"svd_user_song_{i}", np.nan if u_is_cold else 0.0)) for i in range(10)]
+        svd_su = [float(_s_svd.get(f"svd_song_user_{i}", np.nan if s_is_cold else 0.0)) for i in range(10)]
+        svd_ua = [float(_u_svd.get(f"svd_user_artist_{i}", np.nan if u_is_cold else 0.0)) for i in range(5)]
+        
+        if u_is_cold or s_is_cold:
+            svd_dot = np.nan
+        else:
+            svd_dot = float(sum(a * b for a, b in zip(svd_us, svd_su)))
 
         row = [
             # ── 稀疏特征（14列，严格对齐 train_deepfm_v3.py SPARSE_FEAT_SPECS）
@@ -1622,37 +1721,37 @@ def build_pair_features(user_id, song_ids, db, res: Resources, realtime_dists=No
 def rank_with_lgbm(candidate_ids: list, X: np.ndarray, res: Resources) -> list:
     """LightGBM 粗排打分，返回 (song_id, lgbm_score) 列表，按分降序。
 
-    build_pair_features 输出 66 列（14稀疏+52稠密），LightGBM 训练时为 59 列
-    （7稀疏+52稠密）。从 X66 中抽取对应列组装 X59，顺序与 train_lgbm.py ALL_FEATURES 一致。
-
-    X66 列索引（build_pair_features 输出）：
-      稀疏(14): 0=user_id,1=song_id,2=genre,3=lang,4=artist,5=country,
-                6=year_bucket,7=src_channel,8=city,9=gender,10=age,
-                11=tenure,12=dur,13=peak_hour
-      稠密(52): 14-65，与 DENSE_FEATURES 顺序完全一致
-
-    X59 列布局（对齐 train_lgbm.py ALL_FEATURES = SPARSE_FEATURES + DENSE_FEATURES）：
-      稀疏(7):  0=user_id,1=song_id,2=genre,3=lang,4=artist,5=country,6=src_channel
-      稠密(52): 7-58，直接映射自 X66[:,14:66]
+    build_pair_features 输出 66 列（14稀疏+52稠密），LightGBM 训练时可能采用子集特征
+    使用模型训练时保存的 exact 特征序列 `res.lgbm_feats` 动态提取，彻底消除特征顺序硬编码隐患。
     """
     if res.lgbm_model is None or len(candidate_ids) == 0:
         return [(sid, 0.5) for sid in candidate_ids]
 
     n = X.shape[0]
-    # 构建 59 列特征矩阵（与训练时 ALL_FEATURES 顺序完全一致）
-    X59 = np.zeros((n, 59), dtype=np.float32)
-    # 稀疏特征（7列）：LightGBM 不含 year_bucket/city/gender/age/tenure/dur/peak_hour
-    X59[:, 0] = X[:, 0]   # user_id_encoded
-    X59[:, 1] = X[:, 1]   # song_id_encoded
-    X59[:, 2] = X[:, 2]   # genre_encoded
-    X59[:, 3] = X[:, 3]   # language_encoded
-    X59[:, 4] = X[:, 4]   # artist_encoded
-    X59[:, 5] = X[:, 5]   # origin_country_encoded
-    X59[:, 6] = X[:, 7]   # source_channel_encoded（X66 col 7，跳过 year_bucket col 6）
-    # 稠密特征（52列）：直接从 X66 的稠密区段（cols 14-65）复制，顺序完全一致
-    X59[:, 7:59] = X[:, 14:66]
+    lgbm_feats = getattr(res, "lgbm_feats", [])
 
-    scores = res.lgbm_model.predict(X59, num_iteration=res.lgbm_iter)
+    if not lgbm_feats:
+        # 万一 lgbm_feats 丢失，退化为硬编码旧逻辑（防御性设计）
+        print("      ⚠️ 未找到模型特征顺序 lgbm_feats，退化为硬编码拼接")
+        X59 = np.zeros((n, 59), dtype=np.float32)
+        X59[:, 0] = X[:, 0]; X59[:, 1] = X[:, 1]; X59[:, 2] = X[:, 2]
+        X59[:, 3] = X[:, 3]; X59[:, 4] = X[:, 4]; X59[:, 5] = X[:, 5]
+        X59[:, 6] = X[:, 7]
+        X59[:, 7:59] = X[:, 14:66]
+        scores = res.lgbm_model.predict(X59, num_iteration=getattr(res, "lgbm_iter", None))
+    else:
+        # 使用模块级 X66_FEAT_IDX（O(1) dict 查找），替代原函数内 list.index() O(n) 线性扫描
+        X_lgbm = np.zeros((n, len(lgbm_feats)), dtype=np.float32)
+        for i, feat_name in enumerate(lgbm_feats):
+            idx = X66_FEAT_IDX.get(feat_name, -1)
+            if idx >= 0:
+                X_lgbm[:, i] = X[:, idx]
+            else:
+                # 理论上不会发生：模型训练时用了推理端不存在的特征，此处填0并预警
+                print(f"      ⚠️ 特征 [{feat_name}] 在推理端未生成，由于被 LightGBM 需求，默认填0")
+                
+        scores = res.lgbm_model.predict(X_lgbm, num_iteration=getattr(res, "lgbm_iter", None))
+
     ranked = sorted(zip(candidate_ids, scores.tolist()), key=lambda x: -x[1])
     return ranked
 
@@ -1682,6 +1781,9 @@ def rank_with_deepfm(candidate_ids: list, X: np.ndarray, res: Resources) -> list
     import torch
     n_feat = len(res.deepfm_feat_names) if res.deepfm_feat_names else 66
     X_deep = _build_deep_input(X, n_feat)
+    # DeepFM 训练时全量 SVD 无 NaN；冷启动样本 SVD 缺失时补 0.0，
+    # 与 LightGBM 的 NaN 路由完全隔离，不引入 Training-Serving Skew
+    X_deep = np.nan_to_num(X_deep, nan=0.0)
     X_tensor = torch.from_numpy(X_deep).float()
 
     with torch.no_grad():
@@ -1733,7 +1835,9 @@ def rank_with_bst(candidate_ids: list, X: np.ndarray, res: Resources,
                     seq_raw = [
                         _safe_encode(_song_enc, str(sid)) for sid in _live_ids
                     ]
-                    seq_raw = [e for e in seq_raw if e != 0]   # 过滤训练集外歌曲
+                    # 笔记6.2修复：训练集外歌曲（编码=0）应映射为UNK=1，而非直接丢弃
+                    # 丢弃会导致序列长度与实际行为不符，映射UNK保留位置信息
+                    seq_raw = [e if e != 0 else 1 for e in seq_raw]
                     print(f"      ℹ️ BST 实时序列构建：{len(seq_raw)} 首")
             except Exception as _e:
                 print(f"      ℹ️ BST 实时序列构建失败: {_e}")
@@ -1746,8 +1850,10 @@ def rank_with_bst(candidate_ids: list, X: np.ndarray, res: Resources,
         # build_pair_features 输出已为 66 列（14稀疏+52稠密），与 BST 输入对齐
         # _build_deep_input 在列数匹配时直接透传，无需重映射
         BST_N_FEAT = 14 + 52   # = 66
-        X_mat = _build_deep_input(X, BST_N_FEAT)       # (N, 66)
-        feat_tensor = torch.from_numpy(X_mat).float()   # (N, 66)
+        X_mat = _build_deep_input(X, BST_N_FEAT)           # (N, 66)
+        # BST 是神经网络，不支持 NaN；冷启动 SVD 缺失值补 0.0（与 DeepFM 处理一致）
+        X_mat = np.nan_to_num(X_mat, nan=0.0)
+        feat_tensor = torch.from_numpy(X_mat).float()       # (N, 66)
 
         with torch.no_grad():
             # BSTModel forward(seq, feat): (B, seq_len), (B, 49) → (B, 1)
@@ -1777,6 +1883,12 @@ def mmr_rerank(ranked: list, song_meta_map: dict, res: "Resources",
     替代原硬约束 diversity_rerank（同艺术家 ≤ N 首），改用软约束：
       MMR(d) = λ × relevance(d) - (1-λ) × max_sim(d, already_selected)
 
+    优化点：
+      1. 【NumPy矩阵化】有FAISS向量的候选批量计算相似度（C @ S.T），
+         替代双层Python for循环，BLAS加速，速度提升50~100倍。
+      2. 【新歌劫榜漏洞修复（笔记第五章）】无向量候选不再固定 max_sim=0.0，
+         改用元数据分层兜底：同艺术家=0.75 / 同流派=0.40 / 无重叠=0.15。
+
     参数：
         ranked         : [(song_id, score), ...] 精排后候选列表
         song_meta_map  : {song_id: (genre, artist)} 元数据
@@ -1791,77 +1903,98 @@ def mmr_rerank(ranked: list, song_meta_map: dict, res: "Resources",
     if not ranked:
         return []
 
-    # ── 1. 查询所有候选的 FAISS 向量（80维，部分歌曲可能无向量）
-    vec_map: dict[int, np.ndarray] = {}   # {song_id: embedding}
+    # ── 1. 查询所有候选的 FAISS 向量并预归一化（80维，部分新歌可能无向量）
+    # 预归一化一次性完成，避免每轮贪心循环重复计算，节省 top_n × M 次 norm 操作
+    normed_map: dict[int, np.ndarray] = {}   # {song_id: L2归一化向量}
     for sid, _ in ranked:
         if sid in res.mysql2faiss:
             try:
-                vec_map[sid] = res.index.reconstruct(res.mysql2faiss[sid]).astype(np.float32)
+                vec = res.index.reconstruct(res.mysql2faiss[sid]).astype(np.float32)
+                norm = np.linalg.norm(vec) + 1e-9
+                normed_map[sid] = vec / norm
             except Exception:
                 pass
 
-    # ── 2. 归一化集成评分到 [0, 1]
+    # ── 2. 归一化集成评分到 [0, 1]，建立原始分映射表
     scores = np.array([s for _, s in ranked], dtype=np.float32)
     s_min, s_max = scores.min(), scores.max()
-    if s_max > s_min:
-        norm_scores = (scores - s_min) / (s_max - s_min)
-    else:
-        norm_scores = np.ones_like(scores)
-    score_map = {sid: float(ns) for (sid, _), ns in zip(ranked, norm_scores)}
+    norm_scores  = (scores - s_min) / (s_max - s_min) if s_max > s_min else np.ones_like(scores)
+    score_map    = {sid: float(ns) for (sid, _), ns in zip(ranked, norm_scores)}
+    ranked_dict  = dict(ranked)   # 预建原始分映射，避免每轮 dict(ranked)
 
-    # ── 3. MMR 贪心选取循环
-    remaining   = [sid for sid, _ in ranked]
-    selected    = []   # [(sid, original_score)]
-    artist_cnt  = {}   # 艺术家计数（安全上限兜底）
-    sel_vecs    = []   # 已选歌曲的向量列表
+    # ── 3. MMR 贪心选取循环（NumPy矩阵化版本）
+    remaining        = [sid for sid, _ in ranked]
+    selected         = []   # [(sid, original_score)]
+    artist_cnt: dict = {}   # 艺术家计数（同艺术家上限安全兜底）
+    sel_vecs_normed  = []   # 已选歌曲的已归一化向量（累积，供矩阵乘法使用）
 
     for _ in range(top_n):
         if not remaining:
             break
 
-        best_sid   = None
-        best_score = -1e9
+        # 区分有向量与无向量（新歌）的候选
+        valid_sids   = [sid for sid in remaining if sid in normed_map]
+        invalid_sids = [sid for sid in remaining if sid not in normed_map]
 
+        mmr_score_map: dict[int, float] = {}
+
+        if not sel_vecs_normed:
+            # 首轮：尚无已选歌曲，max_sim=0.0，MMR分退化为 λ×rel
+            for sid in remaining:
+                mmr_score_map[sid] = lam * score_map[sid]
+        else:
+            # 已选矩阵 S：(K_sel, 80)，供本轮所有有向量候选批量相似度计算
+            S = np.stack(sel_vecs_normed)   # (K_sel, 80)
+
+            # 有向量候选：一次矩阵乘法替代双层 for 循环（BLAS加速）
+            if valid_sids:
+                C = np.stack([normed_map[sid] for sid in valid_sids])  # (M_valid, 80)
+                # sim_matrix[i, j] = cosine_sim(candidate_i, selected_j)
+                sim_matrix  = C @ S.T                            # (M_valid, K_sel)
+                max_sims    = sim_matrix.max(axis=1)             # (M_valid,)
+                rel_arr     = np.array([score_map[sid] for sid in valid_sids], dtype=np.float32)
+                mmr_arr     = lam * rel_arr - (1.0 - lam) * max_sims
+                for sid, mmr_val in zip(valid_sids, mmr_arr.tolist()):
+                    mmr_score_map[sid] = mmr_val
+
+            # 无向量候选（新歌）：笔记第五章分层兜底，修复 max_sim=0.0 劫榜漏洞
+            # 原逻辑固定 max_sim=0.0，使新歌免受多样性惩罚，精排分0.6的新歌可超过精排分0.9的老歌
+            for sid in invalid_sids:
+                s_genre, s_artist = song_meta_map.get(sid, ("", ""))
+                artist_match = any(
+                    song_meta_map.get(s, ("", ""))[1] == s_artist and s_artist
+                    for s, _ in selected
+                )
+                genre_match = any(
+                    song_meta_map.get(s, ("", ""))[0] == s_genre and s_genre
+                    for s, _ in selected
+                )
+                if artist_match:
+                    fb_sim = 0.75   # 同艺术家：风格高度相似，受到惩罚
+                elif genre_match:
+                    fb_sim = 0.40   # 同流派：中度相似
+                else:
+                    fb_sim = 0.15   # 流派艺术家均不重复：真正的多样性贡献
+                mmr_score_map[sid] = lam * score_map[sid] - (1.0 - lam) * fb_sim
+
+        # 同艺术家安全上限兜底：软惩罚 -10.0（保证极端情况下不会除尽候选池）
         for sid in remaining:
-            rel = score_map[sid]   # 相关性分（归一化集成评分）
-
-            # 计算与已选列表的最大余弦相似度（多样性惩罚）
-            if sel_vecs and sid in vec_map:
-                sv = vec_map[sid]
-                sv_norm = sv / (np.linalg.norm(sv) + 1e-9)
-                sims = []
-                for ov in sel_vecs:
-                    ov_norm = ov / (np.linalg.norm(ov) + 1e-9)
-                    sims.append(float(np.dot(sv_norm, ov_norm)))
-                max_sim = max(sims)
-            else:
-                # 无向量：相似度为 0（视为完全不同，鼓励选入）
-                max_sim = 0.0
-
-            mmr_val = lam * rel - (1.0 - lam) * max_sim
-
-            # 安全上限兜底：同艺术家超限时降级惩罚
             _, artist = song_meta_map.get(sid, ("", ""))
             if artist_cnt.get(artist, 0) >= max_per_artist:
-                mmr_val -= 10.0   # 软惩罚，极端情况下仍可选入
+                mmr_score_map[sid] = mmr_score_map.get(sid, 0.0) - 10.0
 
-            if mmr_val > best_score:
-                best_score = mmr_val
-                best_sid   = sid
+        # 选入 MMR 分最高的候选
+        best_sid = max(remaining, key=lambda s: mmr_score_map.get(s, -1e9))
 
-        if best_sid is None:
-            break
-
-        # 选入
+        # 更新状态
         _, best_artist = song_meta_map.get(best_sid, ("", ""))
-        original_score = dict(ranked).get(best_sid, 0.0)
-        selected.append((best_sid, original_score))
+        selected.append((best_sid, ranked_dict.get(best_sid, 0.0)))
         artist_cnt[best_artist] = artist_cnt.get(best_artist, 0) + 1
         remaining.remove(best_sid)
 
-        # 记录已选向量（用于后续多样性计算）
-        if best_sid in vec_map:
-            sel_vecs.append(vec_map[best_sid])
+        # 记录已归一化向量（仅有向量的候选，供下轮矩阵乘法追加行）
+        if best_sid in normed_map:
+            sel_vecs_normed.append(normed_map[best_sid])
 
     return selected
 
@@ -1990,45 +2123,45 @@ def generate_recommendations():
                 print(f"      ⚠️ 无候选歌曲，跳过")
                 continue
 
-            # ── LightGBM 粗排：~600 → 300（v7 扩展漏斗）
+            # ── BST 粗排：~600 → 300（架构重组：BST移至粗排层，取代原LightGBM位置）
+            # BST AUC=0.7886 适合做粗筛，精排集成改用 DeepFM+LightGBM 组合
             # realtime_dists 在 Tier2 时非空，使 user_artist_match 特征更准确
             X = build_pair_features(uid, cand_ids, db, res, realtime_dists)
-            lgbm_ranked      = rank_with_lgbm(cand_ids, X, res)
-            top_coarse       = lgbm_ranked[:RANK_TOP]
-            top_coarse_ids   = [sid for sid, _ in top_coarse]
-            print(f"      LightGBM 粗排: top {len(top_coarse_ids)} 首")
+            bst_coarse_ranked = rank_with_bst(cand_ids, X, res, uid, db)
+            top_coarse        = bst_coarse_ranked[:RANK_TOP]
+            top_coarse_ids    = [sid for sid, _ in top_coarse]
+            print(f"      BST粗排: top {len(top_coarse_ids)} 首")
 
-            # ── 双模型精排集成：300 → 150（DeepFM + BST 加权融合）
-            # LightGBM 仅用于粗排（~600→300），不参与精排集成，避免集成退化
+            # ── DeepFM + LightGBM 精排集成：300 → 150
+            # Meta-LR输入改为[DeepFM_score, LightGBM_score]，两模型AUC差距<0.3%，
+            # 元学习器可充分利用双模型互补，避免退化为单模型
             if top_coarse_ids:
-                X_fine        = build_pair_features(uid, top_coarse_ids, db, res, realtime_dists)
-                deepfm_scored = rank_with_deepfm(top_coarse_ids, X_fine, res)
-                bst_scored    = rank_with_bst(top_coarse_ids, X_fine, res, uid, db)
+                X_fine         = build_pair_features(uid, top_coarse_ids, db, res, realtime_dists)
+                deepfm_scored  = rank_with_deepfm(top_coarse_ids, X_fine, res)
+                lgbm_scored    = rank_with_lgbm(top_coarse_ids, X_fine, res)
                 deepfm_score_map = {sid: s for sid, s in deepfm_scored}
-                bst_score_map    = {sid: s for sid, s in bst_scored}
+                lgbm_score_map   = {sid: s for sid, s in lgbm_scored}
 
-                if res.meta_lr is not None:
-                    # 元学习器推断：LR(DeepFM_score, BST_score) → 集成分
-                    _d = np.array([deepfm_score_map.get(sid, 0.5) for sid in top_coarse_ids], dtype=np.float32)
-                    _b = np.array([bst_score_map.get(sid, 0.5)    for sid in top_coarse_ids], dtype=np.float32)
-                    _X = np.column_stack([_d, _b])
-                    _scores = res.meta_lr.predict_proba(_X)[:, 1]
-                    ensemble_scored = list(zip(top_coarse_ids, _scores.tolist()))
-                else:
-                    # 降级策略：等权加权平均（meta_lr不可用时）
-                    ensemble_scored = [
-                        (sid,
-                         res.w_deepfm * deepfm_score_map.get(sid, 0.5)
-                         + res.w_bst  * bst_score_map.get(sid, 0.5))
-                        for sid in top_coarse_ids
-                    ]
-                ensemble_scored.sort(key=lambda x: -x[1])
-                top_fine = ensemble_scored[:ENSEMBLE_TOP]
+                # Meta-LR 推断（唯一集成路径，Resources 加载时已确保可用）
+                # nan_to_num 兜底：防止冷启动NaN或极端溢出值传入 LogisticRegression
+                _d = np.nan_to_num(
+                    np.array([deepfm_score_map.get(sid, 0.5) for sid in top_coarse_ids], dtype=np.float32),
+                    nan=0.5
+                )
+                _l = np.nan_to_num(
+                    np.array([lgbm_score_map.get(sid, 0.5) for sid in top_coarse_ids], dtype=np.float32),
+                    nan=0.5
+                )
+                _scores = res.meta_lr.predict_proba(np.column_stack([_d, _l]))[:, 1]
+                ensemble_scored = sorted(
+                    zip(top_coarse_ids, _scores.tolist()),
+                    key=lambda x: -x[1]
+                )
+                top_fine = list(ensemble_scored)[:ENSEMBLE_TOP]
             else:
                 top_fine = top_coarse[:ENSEMBLE_TOP]
 
-            _method = "元学习器LR" if res.meta_lr is not None else f"加权平均DeepFM×{res.w_deepfm:.2f}+BST×{res.w_bst:.2f}"
-            print(f"      精排集成（{_method}）: top {len(top_fine)} 首")
+            print(f"      精排集成（Meta-LR）: top {len(top_fine)} 首")
 
             # ── MMR 多样性重排：150 → 50（v7：替代硬约束 diversity_rerank）
             # MMR λ=0.7：70%集成评分相关性 + 30%余弦相似度多样性惩罚

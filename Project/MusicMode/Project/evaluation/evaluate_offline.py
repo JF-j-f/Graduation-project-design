@@ -5,9 +5,9 @@ evaluate_offline.py — KKBox 验证集离线推荐效果评估
 
 计算指标：HR@K、Precision@K、Recall@K、NDCG@K、MRR
 评估集：从 features_v3.pkl 中按用户级时序切分出的验证集（VALID_RATIO=0.1）
-模型：双神经网络精排集成（DeepFM + BST），与 build_ensemble.py 保持一致
+模型：精排集成（DeepFM + LightGBM Meta-LR），BST 为粗排层，与 build_ensemble.py 保持一致
 
-开发者：JunFun
+开发者：JunFu
 """
 import os
 import sys
@@ -28,12 +28,15 @@ MODE_DIR = Path(__file__).resolve().parents[2] / "Mode"
 FE_DIR   = MODE_DIR / "feature_engineering"
 FR_DIR   = MODE_DIR / "fine_rank"
 
+# build_ensemble.py 位于 fine_rank/，predict_lgbm_model 需要从中 import
+PROJECT_DIR = str(Path(__file__).resolve().parents[1] / "fine_rank")
+CR_DIR      = MODE_DIR / "coarse_rank"                  # BST 粗排层模型所在目录
+
 FEATURES_PATH = FE_DIR / "features_v3.pkl"
-INPUT_SEQ     = FE_DIR / "features_seq.pkl"       # BST 序列特征
+INPUT_SEQ     = FE_DIR / "features_seq.pkl"             # BST 序列特征（BST已迁至粗排层）
 DEEPFM_CFG    = FR_DIR / "deepfm" / "model_config.pkl"
 DEEPFM_PATH   = FR_DIR / "deepfm" / "deepfm_model.pth"
-BST_CFG       = FR_DIR / "bst"    / "model_config.pkl"
-BST_PATH      = FR_DIR / "bst"    / "bst_model.pth"
+LGBM_PATH     = FR_DIR / "lgbm"   / "lgbm_model.pkl"   # LightGBM 精排集成用模型
 ENSEMBLE_PATH = FR_DIR / "ensemble" / "ensemble_config.pkl"
 REPORT_PATH   = MODE_DIR / "evaluation" / "offline_evaluation_report.txt"
 REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -41,7 +44,9 @@ REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
 # ── 超参数（与训练脚本保持一致） ────────────────────────────────────────────
 VALID_RATIO      = 0.1
 RANDOM_SEED      = 42
-MIN_INTERACTIONS = 5
+# 笔记4.1修复：原值=5会过滤掉真正的冷启动用户，导致全局NDCG实为"≥5次交互用户"的均值
+# 改为1允许冷启动用户进入评估，配合分层分析真实揭示系统对各活跃度用户的表现
+MIN_INTERACTIONS = 1
 BATCH_SIZE       = 8192
 K_LIST           = [5, 10, 20]
 
@@ -162,7 +167,16 @@ def load_val_data():
     y_val   = y[val_idx]
     uid_val = user_id_enc[val_idx]
 
-    return X_val, y_val, uid_val, feat, val_idx, train_idx
+    # 统计每个用户的总交互次数（_cnt 列包含全量 train+val 总数），供分层评估使用
+    # 键为 encoded uid（int），值为总交互次数
+    user_total_counts = (
+        _df_meta.drop_duplicates("uid")
+        .set_index("uid")["_cnt"]
+        .astype(int)
+        .to_dict()
+    )
+
+    return X_val, y_val, uid_val, feat, val_idx, train_idx, user_total_counts
 
 
 # ============================================================
@@ -207,7 +221,9 @@ def predict_torch(model_path, cfg_path, feat, val_idx, name="DeepFM"):
             data_dict[feat_name] = raw[val_idx].astype(np.int32)
         for col in dense_specs:
             raw = feat.get(col, np.zeros(len(user_id_enc), dtype=np.float32))
-            data_dict[col] = raw[val_idx].astype(np.float32)
+            # nan_to_num：SVD特征对冷启动用户为 NaN，神经网络无法处理 NaN（会向后传播）
+            # 与 sync_recs_v3.py 的 rank_with_deepfm 保持一致（nan=0.0）
+            data_dict[col] = np.nan_to_num(raw[val_idx].astype(np.float32), nan=0.0)
 
         # song_target_rate 是基于全量数据的目标编码，推断时置全局先验以防泄漏
         _global_prior = float(feat["target"][val_idx].mean())
@@ -229,13 +245,18 @@ def predict_torch(model_path, cfg_path, feat, val_idx, name="DeepFM"):
         print(f"   ⚠️  {name} 推断失败: {e}")
         return None
 
+def predict_lgbm(X_val, y_val):
+    """
+    LightGBM 验证集推断，委托给 build_ensemble._predict_lgbm_direct()。
 
-def predict_bst(feat, val_idx, train_idx):
-    """BST 验证集推断，委托给 build_ensemble.predict_bst_model()，避免重复逻辑。"""
+    使用 load_val_data() 已正确重算SVD的 X_val 直接推断，保留 NaN 路由，
+    避免从 feat 字典逐列重建时 nan_to_num=0.0 造成的 Training-Serving Skew
+    （该 Skew 会使 val AUC 从 0.82 错误降至 0.70）。
+    """
     sys.path.insert(0, PROJECT_DIR)
-    from build_ensemble import predict_bst_model
-    cfg = {"model_path": BST_PATH, "config_path": BST_CFG}
-    return predict_bst_model("BST", cfg, feat, val_idx, train_idx)
+    from build_ensemble import _predict_lgbm_direct
+    cfg = {"model_path": LGBM_PATH}
+    return _predict_lgbm_direct("LightGBM", cfg, X_val, y_val)
 
 
 # ============================================================
@@ -317,15 +338,172 @@ def compute_ranking_metrics(preds, y_val, uid_val, k_list=None):
     for k in k_list:
         m = metrics[k]
         n = len(m["hr"])
+        # 空列表时 np.mean([]) 返回 NaN，会导致下游 set_ylim / max 崩溃；
+        # 改为空列表返回 0.0，语义清晰（该分层无有效用户，指标记为零）
+        def _safe_mean(lst):
+            return float(np.mean(lst)) if lst else 0.0
+
         results[k] = {
             "n_users":   n,
-            "HR":        np.mean(m["hr"]),
-            "Precision": np.mean(m["prec"]),
-            "Recall":    np.mean(m["recall"]),
-            "NDCG":      np.mean(m["ndcg"]),
-            "MRR":       np.mean(m["mrr"]),
+            "HR":        _safe_mean(m["hr"]),
+            "Precision": _safe_mean(m["prec"]),
+            "Recall":    _safe_mean(m["recall"]),
+            "NDCG":      _safe_mean(m["ndcg"]),
+            "MRR":       _safe_mean(m["mrr"]),
         }
     return results
+
+
+# ============================================================
+# Step 4.5: 冷启动分层评估（笔记6.5节）
+# ============================================================
+
+def compute_stratified_metrics(preds, y_val, uid_val, user_total_counts, k=5):
+    """
+    按用户历史交互次数将用户分四档，分别计算 NDCG@K 和 HR@K。
+
+    设计依据（笔记4.2）：
+    协同过滤SVD嵌入和OOF目标编码对少于10次交互的用户贡献几乎为零，
+    全局平均NDCG会被Power Users拉高，掩盖冷启动用户的真实表现（辛普森悖论）。
+    分层评估诚实披露系统对各类用户的服务能力差异。
+
+    Args:
+        preds:              全量验证集预测分数 (N,)
+        y_val:              全量验证集标签 (N,)
+        uid_val:            全量验证集用户 encoded_id (N,)
+        user_total_counts:  {encoded_uid: 总交互次数} 字典
+        k:                  评估截断位置（默认 K=5，对应论文首屏指标）
+
+    Returns:
+        dict: {stratum_name: {"label", "n_users", f"NDCG@{k}", f"HR@{k}"}}
+    """
+    STRATA = [
+        ("cold",    1,   9,   "冷启动层（1~9次）"),
+        ("growing", 10,  49,  "成长层（10~49次）"),
+        ("active",  50,  199, "活跃层（50~199次）"),
+        ("power",   200, None, "超级用户层（≥200次）"),
+    ]
+
+    results = {}
+    for name, lo, hi, label in STRATA:
+        stratum_users = set(
+            uid for uid, cnt in user_total_counts.items()
+            if cnt >= lo and (hi is None or cnt <= hi)
+        )
+        mask = np.array([int(uid) in stratum_users for uid in uid_val])
+        if mask.sum() == 0:
+            results[name] = {
+                "label": label, "n_users": 0,
+                f"NDCG@{k}": 0.0, f"HR@{k}": 0.0,
+            }
+            continue
+
+        m = compute_ranking_metrics(
+            preds[mask], y_val[mask], uid_val[mask], k_list=[k]
+        )
+        results[name] = {
+            "label":      label,
+            "n_users":    m[k]["n_users"],
+            f"NDCG@{k}":  m[k]["NDCG"],
+            f"HR@{k}":    m[k]["HR"],
+        }
+
+    return results
+
+
+# ============================================================
+# Step 4.6: 冷启动分层评估柱状图（笔记6.5节）
+# ============================================================
+
+def plot_stratified_bar(stratum_results):
+    """
+    冷启动分层评估柱状图（笔记6.5节）。
+
+    X轴：四个用户层级（冷启动/成长/活跃/超级用户）
+    Y轴：NDCG@5 和 HR@5（双色分组柱）
+
+    设计依据：
+    分层评估诚实披露系统对各类用户的服务能力差异，
+    揭示全局NDCG被超级用户拉高掩盖的冷启动困境（笔记4.2 辛普森悖论）。
+
+    Args:
+        stratum_results: compute_stratified_metrics 的返回值
+                         {stratum_name: {"label", "n_users", "NDCG@5", "HR@5"}}
+
+    Returns:
+        None（保存图片至 REPORT_PATH.parent/冷启动分层评估_NDCG@5.png）
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.font_manager as fm
+
+    # 字体配置（宋体覆盖中文，Times New Roman用于数字）
+    matplotlib.rcParams["font.family"]       = "sans-serif"
+    matplotlib.rcParams["font.sans-serif"]   = ["SimSun", "Microsoft YaHei", "DejaVu Sans"]
+    matplotlib.rcParams["axes.unicode_minus"] = False
+
+    _tnr_sm = fm.FontProperties(family="Times New Roman", size=9)
+    _cn_sm  = fm.FontProperties(family="SimSun", size=10)
+    _cn_md  = fm.FontProperties(family="SimSun", size=11)
+
+    # ── 取四档数据 ──────────────────────────────────────────
+    keys    = ["cold", "growing", "active", "power"]
+    labels  = [stratum_results[k]["label"] for k in keys]
+    ndcg5   = [stratum_results[k].get("NDCG@5", 0.0) for k in keys]
+    hr5     = [stratum_results[k].get("HR@5",   0.0) for k in keys]
+    n_users = [stratum_results[k]["n_users"] for k in keys]
+
+    # ── 绘图 ───────────────────────────────────────────────
+    x       = np.arange(len(keys))
+    bar_w   = 0.35
+    fig, ax = plt.subplots(figsize=(10, 5.5))
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
+
+    bars_ndcg = ax.bar(x - bar_w/2, ndcg5, width=bar_w,
+                       color="#3A7EBF", label="NDCG@5", zorder=3,
+                       edgecolor="white", linewidth=0.5)
+    bars_hr   = ax.bar(x + bar_w/2, hr5,   width=bar_w,
+                       color="#E07B39", label="HR@5",   zorder=3,
+                       edgecolor="white", linewidth=0.5)
+
+    # 柱顶数值标注
+    for bar in bars_ndcg:
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.005,
+                f"{bar.get_height():.4f}", ha="center", va="bottom",
+                fontproperties=_tnr_sm, color="#3A7EBF", fontsize=8, zorder=5)
+    for bar in bars_hr:
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.005,
+                f"{bar.get_height():.4f}", ha="center", va="bottom",
+                fontproperties=_tnr_sm, color="#E07B39", fontsize=8, zorder=5)
+
+    # X轴标签：层级名 + 有效用户数（双行）
+    x_tick_labels = [f"{lb}\n(n={nu:,})" for lb, nu in zip(labels, n_users)]
+    ax.set_xticks(x)
+    ax.set_xticklabels(x_tick_labels, fontproperties=_cn_sm)
+    ax.set_ylabel("指标值", fontproperties=_cn_md, labelpad=8)
+
+    # Y轴从0开始，留足标注空间
+    _y_max_val = max(max(ndcg5) if ndcg5 else 0.0, max(hr5) if hr5 else 0.0)
+    ax.set_ylim(0, _y_max_val + 0.12)
+
+    ax.legend(loc="upper left", prop=_cn_sm, framealpha=0.9, edgecolor="#BBBBBB")
+    ax.yaxis.grid(True, linestyle="--", alpha=0.4, color="#BBBBBB", zorder=0)
+    ax.set_axisbelow(True)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_color("#BBBBBB")
+    ax.spines["bottom"].set_color("#BBBBBB")
+
+    # ── 保存图片 ───────────────────────────────────────────
+    _img_dir  = REPORT_PATH.parent
+    _img_dir.mkdir(parents=True, exist_ok=True)
+    save_path = str(_img_dir / "冷启动分层评估_NDCG@5.png")
+    plt.tight_layout(pad=1.2)
+    plt.savefig(save_path, dpi=300, bbox_inches="tight", facecolor="white")
+    plt.close()
+    print(f"   ✅ 分层评估柱状图已保存: {save_path}")
 
 
 # ============================================================
@@ -364,16 +542,20 @@ def format_report(results, n_total_users, n_total_samples, generated_at, model_n
 # ============================================================
 
 def main():
+    # 脚本级计时：在任何工作开始前记录，覆盖数据加载、推断、指标计算全程
+    _start = datetime.datetime.now()
     print("\n" + "=" * 62)
     print("   KKBox 验证集离线推荐效果评估")
-    print(f"   开始时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"   开始时间: {_start.strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 62)
 
     # Step 1: 加载数据
-    X_val, y_val, uid_val, feat, val_idx, train_idx = load_val_data()
+    X_val, y_val, uid_val, feat, val_idx, train_idx, user_total_counts = load_val_data()
 
     # Step 2: 各模型推断
-    print("\n[Step 2] 各模型验证集推断（DeepFM / BST）")
+    # ⚠️ 列顺序关键：Meta-LR 训练时 column_stack 顺序为 [DeepFM, LightGBM]；
+    # preds_dict 插入顺序必须与之一致（Python 3.7+ dict 保序），否则集成列映射错误
+    print("\n[Step 2] 各模型验证集推断（DeepFM / LightGBM，精排集成层）")
     print("=" * 62)
     preds_dict = {}
 
@@ -381,9 +563,9 @@ def main():
     if p_deepfm is not None:
         preds_dict["DeepFM"] = p_deepfm
 
-    p_bst = predict_bst(feat, val_idx, train_idx)
-    if p_bst is not None:
-        preds_dict["BST"] = p_bst
+    p_lgbm = predict_lgbm(X_val, y_val)
+    if p_lgbm is not None:
+        preds_dict["LightGBM"] = p_lgbm
 
     if len(preds_dict) == 0:
         print("\n❌ 无可用模型！请先训练至少一个模型。")
@@ -412,15 +594,55 @@ def main():
         print(f"   HR@{k}={m['HR']:.4f}  P@{k}={m['Precision']:.4f}  "
               f"R@{k}={m['Recall']:.4f}  NDCG@{k}={m['NDCG']:.4f}  MRR@{k}={m['MRR']:.4f}")
 
+    # Step 4.5: 冷启动分层评估（笔记6.5节：基于用户活跃度的NDCG@5分层对比）
+    print("\n[Step 4.5] 冷启动分层评估（四档用户，NDCG@5 + HR@5）")
+    print("=" * 62)
+    stratum_results = compute_stratified_metrics(
+        final_preds, y_val, uid_val, user_total_counts, k=5
+    )
+    for name, sr in stratum_results.items():
+        print(f"   {sr['label']:<22} n={sr['n_users']:>5}  "
+              f"NDCG@5={sr.get('NDCG@5', 0.0):.4f}  "
+              f"HR@5={sr.get('HR@5', 0.0):.4f}")
+
+    # Step 4.6: 分层评估柱状图（笔记6.5节：将分层数据可视化）
+    plot_stratified_bar(stratum_results)
+
     # Step 5: 输出报告
     generated_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     report = format_report(results, n_users, n_samples, generated_at, model_names)
     print("\n" + report)
 
+    # 分层评估结果追加到报告尾部
+    stratum_lines = [
+        "\n\n" + "=" * 62,
+        "  冷启动分层评估（基于用户活跃度，NDCG@5 / HR@5）",
+        "=" * 62,
+        f"  {'用户层级':<22} {'有效用户数':>8}  {'NDCG@5':>8}  {'HR@5':>7}",
+        "-" * 62,
+    ]
+    for name, sr in stratum_results.items():
+        stratum_lines.append(
+            f"  {sr['label']:<22} {sr['n_users']:>8}  "
+            f"{sr.get('NDCG@5', 0.0):>8.4f}  "
+            f"{sr.get('HR@5', 0.0):>7.4f}"
+        )
+    stratum_lines += [
+        "-" * 62,
+        "  说明：Power Users特征最丰富，NDCG最高；冷启动用户SVD嵌入近零，",
+        "        个性化能力受限——这是协同过滤类系统的结构性局限，非实现bug。",
+        "=" * 62,
+    ]
+    report_full = report + "\n".join(stratum_lines)
+
     os.makedirs(os.path.dirname(REPORT_PATH), exist_ok=True)
     with open(REPORT_PATH, "w", encoding="utf-8") as f:
-        f.write(report)
+        f.write(report_full)
     print(f"\n✅ 报告已写入: {os.path.abspath(REPORT_PATH)}")
+
+    _elapsed = str(datetime.datetime.now() - _start).split(".")[0]
+    print(f"\n   结束时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"   总耗时:   {_elapsed}")
 
 
 if __name__ == "__main__":

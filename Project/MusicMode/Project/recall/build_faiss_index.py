@@ -9,7 +9,7 @@ build_faiss_index.py — FAISS 向量索引构建（v3）
 3. L2 归一化后构建 FAISS IndexFlatIP 索引（余弦相似度搜索）
 4. 输出 song_index.faiss + song_id_map.pkl
 
-开发者：JunFun
+开发者：JunFu
 """
 
 import os
@@ -78,7 +78,7 @@ def load_model_and_features():
     print(f"   ✅ 流派数:          {features.get('n_genres', 'N/A')}")
     print(f"   ✅ 语言数:          {features.get('n_languages', 'N/A')}")
     print(f"   ✅ 艺术家数:        {features.get('n_artists', 'N/A')}")
-    print(f"   ✅ 发行国数:        {features.get('n_origin_countries', 'N/A')}")
+    print(f"   ✅ 发行国数:        {features.get('n_countries', 'N/A')}")
 
     # 重建模型（从 model_config_v3.pkl 读取特征列）
     print(f"\n   📥 重建 DeepFM v3 模型 ...")
@@ -190,8 +190,14 @@ def extract_embeddings(model, features):
     song_emb  = emb_matrices["song_id"]
     song_dim  = SONG_EMB_PARTS[0][1]
 
+    # ENCODE_OFFSET=2 对齐：embedding矩阵行0=Padding, 行1=UNK, 行2..n_songs-1=真实歌曲
+    # features["n_songs"] = 词汇表大小 = n_real_songs + ENCODE_OFFSET（含Padding和UNK两个特殊行）
+    # song_emb.shape = (n_songs, song_dim)，最大有效行索引为 n_songs-1（即360178）
+    # 因此只能取 song_emb[2:n_songs]（共n_real_songs行），写入 warm_vecs 前 n_real_songs 行
+    ENCODE_OFFSET = 2
+    n_real_songs = n_songs - ENCODE_OFFSET   # 真实歌曲数（排除 Padding=行0 和 UNK=行1）
     offset = 0
-    warm_vecs[:, offset:offset+song_dim] = song_emb[:n_songs]
+    warm_vecs[:n_real_songs, offset:offset+song_dim] = song_emb[ENCODE_OFFSET:n_songs]
     offset += song_dim
     for name, dim in SONG_EMB_PARTS[1:]:
         mat = emb_matrices[name]
@@ -241,7 +247,7 @@ def extract_embeddings(model, features):
 
     # 冷门歌曲：内容代理向量（song_id 部分保持零）
     if len(cold_idx) > 0:
-        offset = SONG_EMB_PARTS[0][1]   # 跳过 song_id(16维)
+        offset = SONG_EMB_PARTS[0][1]   # 跳过 song_id(32维)，冷门歌曲无协同嵌入，仅用内容向量
         for name, dim in SONG_EMB_PARTS[1:]:
             v2e  = val_to_enc_cache[name]
             mat  = emb_matrices[name]
@@ -291,9 +297,9 @@ def build_faiss_index(song_vectors):
     print("\n   ⏱️ 检索速度测试（Top-20，100次平均）...")
     query = song_vectors[:1]
     t0 = time.time()
-    for _ in range(100):
-        index.search(query, 20)
-    elapsed_ms = (time.time() - t0) / 100 * 1000
+    for _ in range(100): # 100次循环
+        index.search(query, 20) # 检索20个最相似的向量
+    elapsed_ms = (time.time() - t0) / 100 * 1000  #用总耗时除以 100，算出来的就是单次搜索的平均耗时。乘以 1000 把秒转换成毫秒
     print(f"   ✅ 单次 Top-20 检索耗时: {elapsed_ms:.2f} ms")
 
     # 示例输出
@@ -316,7 +322,8 @@ def save_index(index, faiss_to_mysql, mysql_to_faiss, mysql_to_enc, features):
 
     import faiss
 
-    faiss.write_index(index, OUTPUT_FAISS)
+    # faiss.write_index 底层是 C++ 接口，只接受 str，不接受 Path 对象
+    faiss.write_index(index, str(OUTPUT_FAISS))
     size_mb = os.path.getsize(OUTPUT_FAISS) / 1024 / 1024
     print(f"   ✅ FAISS 索引: {OUTPUT_FAISS}  ({size_mb:.1f} MB)")
 
@@ -340,8 +347,12 @@ def save_index(index, faiss_to_mysql, mysql_to_faiss, mysql_to_enc, features):
 # ============================================================
 
 def main():
+    # 脚本级计时：在任何工作开始前记录，覆盖模型加载、Embedding提取、索引构建全程
+    from datetime import datetime as _dt
+    _start = _dt.now()
     print("\n" + "🎵" * 31)
     print("   MusicMode FAISS 索引构建（5×32维嵌入，共160维）")
+    print(f"   开始时间: {_start.strftime('%Y-%m-%d %H:%M:%S')}")
     print("🎵" * 31)
 
     model, features = load_model_and_features()
@@ -349,10 +360,13 @@ def main():
     index = build_faiss_index(all_vecs)
     save_index(index, faiss_to_mysql, mysql_to_faiss, mysql_to_enc, features)
 
+    _elapsed = str(_dt.now() - _start).split(".")[0]
     print("\n" + "=" * 62)
     print("✅ FAISS 索引构建完成！")
     print(f"   索引: {OUTPUT_FAISS}")
     print(f"   映射: {OUTPUT_MAP}")
+    print(f"   结束时间: {_dt.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"   总耗时:   {_elapsed}")
     print("=" * 62)
     print("\n🚀 下一步:")
     print("   python build_ensemble.py   # 校准集成系数 α")

@@ -19,7 +19,7 @@ refresh_song_stats.py — 歌曲滚动统计物化刷新脚本
   - sync_recs_v3.py 通过 song_rolling:version 与 MySQL MAX(updated_at) 对比
     验证 Redis 新鲜度，不一致则终止并提示重新运行本脚本
 
-开发者：JunFun
+开发者：JunFu
 """
 
 import os
@@ -50,7 +50,8 @@ MYSQL_PASSWORD = "JF123456"
 REDIS_HOST = "localhost"
 REDIS_PORT = 6379
 REDIS_DB   = 0
-REDIS_TTL  = 90000   # 单位秒，约 25 小时（保证每天定时刷新一次时，旧数据不会过期）
+REDIS_TTL        = 90000   # 单位秒，约 25 小时（保证每天定时刷新一次时，旧数据不会过期）
+MYSQL_BATCH_SIZE = 5000    # MySQL executemany 每批行数
 
 # ============================================================
 # Redis 启停辅助
@@ -205,21 +206,23 @@ def write_to_mysql(agg, conn):
     ]
 
     with conn.cursor() as cur:
-        # 清空旧数据（TRUNCATE 比 DELETE 快，且重置 auto_increment）
-        cur.execute("TRUNCATE TABLE song_rolling_stats")
+        # DELETE 替代 TRUNCATE：保持事务原子性
+        # TRUNCATE 是 DDL，执行后隐式提交，后续 INSERT 失败时无法回滚；
+        # DELETE 属于 DML，与后续 INSERT 处于同一事务，失败可整体回滚
+        cur.execute("DELETE FROM song_rolling_stats")
 
-        # 批量插入（executemany 每批 5000 行）
+        # 批量插入（executemany 每批 MYSQL_BATCH_SIZE 行）
         sql = ("INSERT INTO song_rolling_stats "
                "(song_id, cnt_7d, cnt_30d, trending, total_plays) "
                "VALUES (%s, %s, %s, %s, %s)")
-        batch = 5000
-        for i in range(0, len(rows), batch):
-            cur.executemany(sql, rows[i:i+batch])
+        for i in range(0, len(rows), MYSQL_BATCH_SIZE):
+            cur.executemany(sql, rows[i:i + MYSQL_BATCH_SIZE])
         conn.commit()
 
         # 查询权威时间戳（updated_at 由 DB 自动设置）
         cur.execute("SELECT MAX(updated_at) FROM song_rolling_stats")
-        mysql_ts = str(cur.fetchone()[0])
+        _val = cur.fetchone()[0]
+        mysql_ts = str(_val) if _val else ""
 
     print(f"   ✅ MySQL 写入完成：{len(rows):,} 行，耗时 {time.time()-t0:.1f}s")
     print(f"   📌 权威时间戳：{mysql_ts}")
@@ -244,11 +247,15 @@ def write_to_redis(agg, mysql_ts):
     r, started_by_us = _ensure_redis_running()
 
     # 先删除旧的 song_rolling:* 键（避免残留脏数据）
-    old_keys = r.keys("song_rolling:[0-9]*")
-    if old_keys:
-        batch = 1000
-        for i in range(0, len(old_keys), batch):
-            r.delete(*old_keys[i:i+batch])
+    # 使用 SCAN 替代 KEYS：KEYS 是阻塞命令，歌曲量大时会短暂冻结 Redis；
+    # SCAN 分批迭代，每批不超过 1000 个 key，对 Redis 服务无感知影响
+    cursor = 0
+    while True:
+        cursor, batch_keys = r.scan(cursor, match="song_rolling:[0-9]*", count=1000)
+        if batch_keys:
+            r.delete(*batch_keys)
+        if cursor == 0:
+            break
 
     # Pipeline 批量写入
     pipe = r.pipeline(transaction=False)

@@ -2,6 +2,27 @@
 
 本文档记录 MusicMode 项目的所有更新历史。
 
+## v2.8.1 (2026-04-17) - 消融实验框架重设计与评估指标规范化
+
+### 🚀 新增功能
+
+- **消融实验脚本**（`Project/evaluation/eval_experiment.py`）：新增独立消融实验与模型对比实验模块，在 KKBox 验证集上执行学术标准的五阶段消融实验，实验报告输出至 `Mode/evaluation/eval_experiment_report.txt`，图表输出至根目录 `image/` 文件夹
+
+### ⚡ 性能优化
+
+- **五阶段消融设计**（`eval_experiment.py`）：重新设计消融实验，引入正确的学术对照结构：A0（随机基准下界）→ A1（热度召回，通道B单独）→ A2（+BST粗排）→ A3（+精排集成 Meta-LR）→ A4（+MMR完整管道）。修正原设计中 ALS/SVD 存在闭合世界评估偏差的问题，使 A1→A2 的增量合理反映 BST 粗排层的真实贡献
+- **评估指标统一规范**（`eval_experiment.py`）：将消融实验与模型对比实验的评估 K 值从 @10 统一为 @5，消除同一脚本内量纲不一致问题
+- **Shannon 熵动态化**（`eval_experiment.py`）：4 处硬编码的 Shannon 熵值全部改为从 MMR 帕累托扫描结果中动态提取，消融报告与图表中的熵值均为 λ=0.7 设计点的实测值
+- **AUC 对比图优化**（`eval_experiment.py`）：移除混入 AUC 对比图的 NDCG@10 量纲基线柱，改为仅展示具有真实 AUC 的四个模型，按管道层级排序（BST粗排→DeepFM精排→LightGBM精排→Meta-LR集成），统一学术蓝配色
+- **MMR 帕累托图优化**（`eval_experiment.py`）：删除图内红色箭头注释，过滤仅展示 λ=0.4~1.0 的有效设计点，修复 λ=0.4 标注因位于最低精度点而偏移至坐标轴下方的显示问题
+- **ALS 辅助函数抽取**（`eval_experiment.py`）：从 `eval_als` 中抽取 `_compute_als_scores()` 辅助函数，避免 ALS 模型在消融实验与对比实验中重复加载，降低内存开销
+
+### 🚧 待解决问题
+
+- `evaluate_offline.py` 仍使用 @K=10 评估，与 `eval_experiment.py` 的 @K=5 口径不一致。两者面向不同分析场景：前者用于系统整体快速评估，后者用于消融对比实验，引用指标时需注明来源脚本
+
+---
+
 ## v2.8.0 (2026-04-06) - 两阶段 Stacking 集成：K折OOF + 逻辑回归元学习器
 
 ### 🚀 新增功能

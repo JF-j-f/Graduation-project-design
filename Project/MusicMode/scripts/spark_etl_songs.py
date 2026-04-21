@@ -4,7 +4,7 @@
 MusicMode - PySpark ETL 脚本 (Phase 1)
 功能：全量导入 KKBOX songs.csv 到 MySQL，同时计算歌曲热度
 项目：MusicMode (Python 后端/模型训练)
-作者：Antigravity Assistant
+作者：JunFu
 ============================================
 
 数据流说明:
@@ -17,7 +17,7 @@ MusicMode - PySpark ETL 脚本 (Phase 1)
 运行方式:
     spark-submit spark_etl_songs.py
     或
-    python spark_etl_songs.py (需要 PySpark 已安装)
+    python spark_etl_songs.py 
 """
 
 import os
