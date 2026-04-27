@@ -41,7 +41,7 @@ from sklearn.metrics import roc_auc_score
 MODE_DIR     = Path(__file__).resolve().parents[2] / "Mode"
 FE_DIR       = MODE_DIR / "feature_engineering"
 FR_DIR       = MODE_DIR / "fine_rank"
-CR_DIR       = MODE_DIR / "coarse_rank"    # BST 粗排层模型所在目录
+CR_DIR       = MODE_DIR / "coarse_rank"    
 ENSEMBLE_DIR = FR_DIR / "ensemble"
 
 # train_bst.py 已迁至 coarse_rank/，import 时需插入该目录到 sys.path
@@ -264,7 +264,7 @@ def predict_torch_model(name, cfg, feat, val_idx):
         if feat_name in feat:
             data_dict[feat_name] = np.nan_to_num(feat[feat_name][val_idx].astype(np.float32), nan=0.0)
 
-    # Leakage 修复（简化版，用全局先验）
+    # 如果某些目标编码特征缺失，填充训练集的全局均值（或其他合理值）
     _gp = float(feat["target"].mean())
     if "user_artist_repeat_rate" in data_dict: data_dict["user_artist_repeat_rate"][:] = _gp
     if "user_target_rate"        in data_dict: data_dict["user_target_rate"][:] = _gp
@@ -305,7 +305,7 @@ def predict_bst_model(name, cfg, feat, val_idx, train_idx):
     try:
         import torch
         from torch.utils.data import DataLoader
-        sys.path.insert(0, CR_PROJECT_DIR)   # train_bst.py 已迁至 coarse_rank/
+        sys.path.insert(0, CR_PROJECT_DIR)   
         # 从 train_bst 导入模型类和特征规格（保证与训练完全对齐）
         from train_bst import BSTModel, BSTDataset, SPARSE_FEAT_SPECS, DENSE_FEAT_SPECS, SEQ_LEN
 

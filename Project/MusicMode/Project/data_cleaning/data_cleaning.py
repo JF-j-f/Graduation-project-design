@@ -24,7 +24,7 @@ warnings.filterwarnings('ignore')
 # 配置
 # ============================================
 
-# 脚本位于 Project/MusicMode/Project/data_cleaning/，向上 4 级到仓库根
+# 脚本位置
 _ROOT = Path(__file__).resolve().parents[4]
 DATA_DIR = _ROOT / "Data"
 TRAIN_CSV = DATA_DIR / "train.csv"
@@ -40,7 +40,7 @@ CLEANED_SONGS_PATH = MODE_DIR / "feature_engineering" / "cleaned_songs.pkl"
 RANDOM_SEED = 42
 NEGATIVE_SAMPLE_RATIO = 3  # 正:负 = 1:3
 MIN_USER_INTERACTIONS = 3   # 最少交互次数
-MIN_SONG_INTERACTIONS = 1   # 最少被听次数（保留全部歌曲以最大化 Embedding 覆盖）
+MIN_SONG_INTERACTIONS = 1   # 最少被听次数（保留尽可能多的歌曲以最大化 Embedding 覆盖）
 
 
 def load_data():

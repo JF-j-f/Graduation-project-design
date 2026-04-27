@@ -277,7 +277,7 @@ def compute_user_stats(ph_df: pd.DataFrame, songs_df: pd.DataFrame) -> pd.DataFr
         lambda x: set(x.head(3).tolist())
     ).to_dict()
 
-    # ── 新增：跳过率特征
+    # ── 跳过率特征
     print("     计算用户跳过率...")
     ph_songs["is_skip"] = (ph_songs["completion"] < 0.10).astype(float)
     user_skip_rate = ph_songs.groupby("user_id")["is_skip"].mean().rename("user_skip_rate").reset_index()
@@ -336,7 +336,7 @@ def compute_song_stats(ph_df: pd.DataFrame, songs_df: pd.DataFrame) -> pd.DataFr
     song_stats = song_stats.merge(song_target_rate, on="song_id", how="left")
     song_stats["song_target_rate"] = song_stats["song_target_rate"].fillna(0.5)
 
-    # ── 新增：歌曲跳过率
+    # ── 歌曲跳过率
     ph_songs["is_skip"] = (ph_songs["completion"] < 0.10).astype(float)
     song_skip_rate = ph_songs.groupby("song_id")["is_skip"].mean().rename("song_skip_rate")
     song_stats = song_stats.merge(song_skip_rate, on="song_id", how="left")
@@ -644,7 +644,7 @@ def build_feature_matrix(ph_df, songs_df, users_df, user_stats_dict, song_stats,
     )
     df.drop(columns=["_hour", "_dow"], inplace=True)
 
-    # ── 新增：最近交互特征（days_since_last_play_log / days_since_artist_log）
+    # ── 最近交互特征（days_since_last_play_log / days_since_artist_log）
     print("  计算最近交互特征（days_since）...")
     TODAY_TS = pd.Timestamp(TODAY)
 
@@ -674,7 +674,7 @@ def build_feature_matrix(ph_df, songs_df, users_df, user_stats_dict, song_stats,
                   on=["user_id", "artist"], how="left")
     df["days_since_artist_log"] = df["days_since_artist_log"].fillna(np.log1p(9999))
 
-    # ── 新增：用户-艺术家重复收听率
+    # ── 用户-艺术家重复收听率
     print("  计算用户-艺术家重复收听率...")
     global_prior = ph_df["target"].mean()
     ua_repeat = (
@@ -684,7 +684,7 @@ def build_feature_matrix(ph_df, songs_df, users_df, user_stats_dict, song_stats,
     df = df.merge(ua_repeat, on=["user_id", "artist"], how="left")
     df["user_artist_repeat_rate"] = df["user_artist_repeat_rate"].fillna(global_prior)
 
-    # ── 新增：歌单亲和力特征
+    # ── 歌单亲和力特征
     print("  计算歌单亲和力特征（user_has_in_playlist / user_playlist_artist_count_log）...")
     if len(pl_df) > 0:
         # user_has_in_playlist: 该 (user, song) 是否在用户歌单中
@@ -895,16 +895,21 @@ def save_outputs(df, encoders, user_stats_dict, song_stats):
 
     # ── features_v3.pkl（36 特征：14 稀疏 + 22 稠密）
     DENSE_FEATURES = [
-        # 原 14 个
-        "user_play_count_log", "user_avg_completion",
-        "user_genre_diversity", "user_30d_active_days",
-        "song_play_count_log", "song_avg_completion",
-        "song_popularity_norm", "song_age_days_log",
-        "user_genre_match", "user_artist_match",
-        "user_language_match", "user_country_match",
-        "user_target_rate",
-        "song_target_rate",
-        # 新增 8 个
+        # 原 22 个
+        "user_play_count_log",              # 用户总播放次数（log1p）
+        "user_avg_completion",              # 用户平均完播率
+        "user_genre_diversity",             # 用户历史听歌类型多样性（基于 genre 的信息熵）
+        "user_30d_active_days",             # 近30天活跃天数（log1p）
+        "song_play_count_log",              # 歌曲总播放次数（log1p）
+        "song_avg_completion",              # 歌曲平均完播率
+        "song_popularity_norm",             # 歌曲流行度归一化
+        "song_age_days_log",                # 歌曲年龄（天，log1p）
+        "user_genre_match",                 # 用户与歌曲类型匹配度
+        "user_artist_match",                # 用户与歌曲艺术家匹配度
+        "user_language_match",              # 用户与歌曲语言匹配度
+        "user_country_match",               # 用户与歌曲产地匹配度
+        "user_target_rate",                 # 用户正反馈率
+        "song_target_rate",                 # 歌曲正反馈率
         "user_skip_rate",                   # 用户跳过率
         "song_skip_rate",                   # 歌曲被跳过率
         "hour_match",                       # 当前时段是否在用户 Top-3 时段

@@ -80,12 +80,12 @@ ENSEMBLE_TOP   = 150   # DeepFM+LightGBM 精排保留数
 MAX_PER_ARTIST = 10    # MMR安全上限
 
 # 满意度 → 艺术家乘法加成因子（通道B热度召回）
-# 笔记问题5修复：原加法（+800）在对数动量分尺度（约3~12）下会造成"艺术家独裁"灾难
+# 原加法（+800）在对数动量分尺度（约3~12）下会造成"艺术家独裁"灾难
 # 改用乘法：排序得分 = hot_score × (1 + γ_s)，加成与歌曲自身热度成比例，冷门歌无法凭艺术家翻身
 ARTIST_FACTOR_MAP = {
     "dissatisfied":   1.5,  # hot_score × 2.5：不满意时强调偏好艺术家
-    "neutral":        0.8,  # hot_score × 1.8
-    "satisfied":      0.4,  # hot_score × 1.4
+    "neutral":        0.8,  # hot_score × 1.8：一般则保持当前探索方向
+    "satisfied":      0.4,  # hot_score × 1.4：满意则探索top-3
     "very_satisfied": 0.1,  # hot_score × 1.1：非常满意时鼓励探索新艺术家
 }
 ARTIST_FACTOR_DEFAULT = 0.8  # 未评分时默认（同 neutral）
@@ -326,24 +326,28 @@ class Resources:
         _pipe  = _redis.pipeline(transaction=False)
         for _k in _keys:
             _pipe.hgetall(_k)
-        # 笔记问题4修复：对数动量分（Logarithmic Momentum Score）
-        # hot_score = log10(1 + cnt_30d) × (1 + k × trending)
-        # 用 cnt_30d 替代 total_plays，消除马太效应；trending 赋予爆火新歌动量奖励
-        # k=0.5 为工业经验初始值，可用 Recall@200 做离线网格搜索调优
+        '''对数动量分计算公式：hot_score = log10(1 + cnt_30d) × (1 + k × trending)
+            用 cnt_30d 替代历史总播放量（total_plays），消除马太效应；
+            用log10 对数操作起到了边际递减的作用（抑制几百万播放量的超大数值击穿后续的模型分布）；
+            用trending 是动量奖励因子，专门用来提拔近期突然爆火、势头猛烈的新歌；
+            k=0.5 为工业经验初始值，可用 Recall@200 做离线网格搜索调优。
+        '''
         _HOT_K   = 0.5
         _hot_raw: dict[int, float] = {}
         for _k, _vals in zip(_keys, _pipe.execute()):
-            _sid      = int(_k.split(":")[1])
-            _cnt_30d  = int(_vals.get("c30", 0))
-            _trending = float(_vals.get("tr", 1.0))
-            self.song_rolling[_sid] = {
-                "log_7d":   math.log1p(int(_vals.get("c7", 0))),
-                "log_30d":  math.log1p(_cnt_30d),
-                "trending": _trending,
+            _sid      = int(_k.split(":")[1])  #提取键中的歌曲ID
+            _cnt_30d  = int(_vals.get("c30", 0))  #30天播放量
+            _trending = float(_vals.get("tr", 1.0))  #热度趋势
+            self.song_rolling[_sid] = {  #构建字典
+                "log_7d":   math.log1p(int(_vals.get("c7", 0))),  #7天播放量的对数
+                "log_30d":  math.log1p(_cnt_30d),  #30天播放量的对数
+                "trending": _trending,  
             }
-            _hot_raw[_sid] = math.log10(1 + _cnt_30d) * (1 + _HOT_K * _trending)
+            '''为什么用对数动量分？因为它能平滑播放量的极端值，避免少数爆款歌曲的巨大播放量压垮模型，
+            同时引入趋势因子奖励近期爆火的新歌，提升推荐的新鲜感和多样性,缓解马太效应。'''
+            _hot_raw[_sid] = math.log10(1 + _cnt_30d) * (1 + _HOT_K * _trending)  #对数动量分计算公式
 
-        self.hot_cache = dict(
+        self.hot_cache = dict( #取播放量最大的10000首歌
             sorted(_hot_raw.items(), key=lambda x: x[1], reverse=True)[:10000]
         )
         print(f"   ✅ 热度召回（通道B）：{len(self.hot_cache):,} 首候选"
@@ -352,7 +356,7 @@ class Resources:
         # ── 粗排层：BST ────────────────────────────────────────────────
         print("\n   ── [粗排层] ──")
 
-        # BST（行为序列 Transformer，替换 DIN；需要 train_bst.py 中的 BSTModel）
+        # BST（行为序列 Transformer）
         self.bst_model      = None
         self.bst_config     = None
         if os.path.exists(BST_CONFIG_PATH) and os.path.exists(BST_MODEL_PATH):
@@ -489,7 +493,7 @@ class Resources:
 
 
 # ============================================================
-# 反馈回收（与 v2 完全相同）
+# 反馈回收
 # ============================================================
 
 def update_feedback(db):
@@ -548,7 +552,7 @@ def update_feedback(db):
             """, (lookback, today))
             print(f"   B 同步收藏状态: {cur.rowcount} 条")
 
-            # C: 计算行为评分 + 负向交互计数（v7：新增 negative_count 字段追踪）
+            # C: 计算行为评分 + 负向交互计数
             # 负向交互定义：推荐后不播放 / 只听一点点(comp<0.2) / 半途而废(0.2≤comp<0.8)
             cur.execute("""
                 SELECT id, user_id, song_id, was_played, play_completion, was_favorited,
@@ -622,8 +626,7 @@ def update_feedback(db):
                             consecutive_ignore_days = %s
                         WHERE id = %s
                     """, (score_delta, new_ignore, fid))
-
-                # v7：负向交互时累增 negative_count（该字段需提前执行数据库迁移）
+               
                 # ALTER TABLE recommendation_feedback ADD COLUMN negative_count INT DEFAULT 0
                 if is_negative:
                     try:
@@ -633,7 +636,7 @@ def update_feedback(db):
                             WHERE user_id = %s AND song_id = %s
                         """, (uid, sid))
                     except Exception:
-                        pass   # 字段不存在时静默忽略（兼容迁移前环境）
+                        pass   # 字段不存在时静默忽略
 
             print(f"   C 更新行为评分: {len(update_data)} 条")
 
@@ -688,7 +691,6 @@ def build_user_profile(db, user_id, res: Resources,
         except Exception:
             pass
 
-    # 笔记通道A问题5修复：播放历史不足时主动降级，避免偏好标签均值向量引发维度坍塌
     # 历史歌曲不足 MIN_HISTORY_FOR_FAISS 首时，加权平均结果趋近于零向量，
     # FAISS检索退化为随机邻居，不如直接交由通道B（热度）+通道C（内容）接管
     with db.cursor() as _guard_cur:
@@ -746,8 +748,8 @@ def build_user_profile(db, user_id, res: Resources,
             comp = row["comp"] or 0.5
             base_w = WEIGHTS["play_yesterday"] if pt >= yesterday else (
                      WEIGHTS["play_7days"]     if pt >= seven_days else WEIGHTS["play_older"])
-            # 笔记通道A问题1修复：comp<0.2改为负权重斥力，主动推离被极速跳过的歌
-            # 原逻辑用0.5折扣，仍为正向，画像仍偏向用户讨厌的歌；改为负权重后
+            
+            # comp<0.2改为负权重斥力，主动推离被极速跳过的歌
             # 向量叠加时主动推离，等效于在用户偏好空间施加明确的"反偏好"方向约束
             if comp < 0.2:
                 w = -base_w * 0.3              # 负权重斥力：排斥极速跳过的歌
@@ -889,8 +891,7 @@ def recall_candidates(db, user_id, res: Resources,
     hot_sati   = _get_user_sati(db, user_id, _redis_b)
     pref_b     = _get_user_pref(db, user_id, _redis_b)
 
-    # 笔记问题1+3修复：满意度→流派过滤改为单调梯度
-    # 原V型逻辑（satisfied最窄，比dissatisfied更严）修复为：满意度越高探索越宽
+    # 采用单调梯度，满意度越高探索越宽：
     # dissatisfied：Top-1流派（最保守，守住最确定的偏好，负反馈时先稳住）
     # neutral     ：Top-2流派（未评分/感觉一般，小幅拓宽）
     # satisfied   ：Top-3流派（推得不错，适度扩展边界）
@@ -909,7 +910,7 @@ def recall_candidates(db, user_id, res: Resources,
         # dissatisfied 或未评分：最保守，仅 Top-1 流派
         hot_genre_filters = preferred_genres_list[:1]
 
-    # 笔记问题5修复：改用乘法加成因子（替代原加法 ARTIST_BONUS_MAP）
+    # 使用用乘法加成因子（替代原加法 ARTIST_BONUS_MAP）
     artist_factor = ARTIST_FACTOR_MAP.get(hot_sati, ARTIST_FACTOR_DEFAULT)
 
     # 获取用户偏好艺术家（top-20），来源：user_stats.pkl 历史播放分布
@@ -921,7 +922,7 @@ def recall_candidates(db, user_id, res: Resources,
         user_fav_artists = {a for a, _ in top_artists}
 
     if res.hot_cache:
-        # 笔记问题5修复：乘法加成排序，hot_score × (1 + γ_s)，替代原加法（+800）
+        # 乘法加成排序，hot_score × (1 + γ_s)，替代原加法（+800）
         # 乘法保证加成与歌曲自身热度成比例，冷门歌无法仅凭艺术家偏好翻身
         hot_sorted = sorted(
             res.hot_cache.items(),
@@ -946,7 +947,7 @@ def recall_candidates(db, user_id, res: Resources,
                 continue
             if any(ba in artist for ba in blocked_artists):
                 continue
-            # 笔记问题2修复：Rank-based Decay，保留热度梯度传递给粗排
+            # Rank-based Decay，保留热度梯度传递给粗排
             # score_r = 0.1 / log2(r+2)，第1名=0.100，第200名≈0.013，与FAISS余弦相似度量级可比
             # 通道B热度：Rank-based Decay分存入hot_score
             candidates[sid] = {"faiss_score": 0.0, "als_score": 0.0, "hot_score": 0.1 / math.log2(_added_hot + 2)}
@@ -1398,7 +1399,7 @@ def build_pair_features(user_id, song_ids, db, res: Resources, realtime_dists=No
         """, song_ids)
         song_rows = {r["id"]: r for r in cur.fetchall()}
 
-        # ── 新增：用户播放历史时序数据（用于 skip_rate, days_since, peak_hour）
+        # 用户播放历史时序数据（用于 skip_rate, days_since, peak_hour）
         cur.execute("""
             SELECT ph.song_id, ph.play_time,
                    CASE WHEN s.duration > 0 THEN LEAST(1.0, ph.play_duration/s.duration) ELSE 0.5 END AS comp,
@@ -1409,7 +1410,7 @@ def build_pair_features(user_id, song_ids, db, res: Resources, realtime_dists=No
         """, (user_id,))
         user_history = cur.fetchall()
 
-        # ── 新增：用户歌单歌曲集合
+        # 用户歌单歌曲集合
         cur.execute("""
             SELECT ps.song_id, s.artist
             FROM playlist_songs ps
@@ -1419,7 +1420,7 @@ def build_pair_features(user_id, song_ids, db, res: Resources, realtime_dists=No
         """, (user_id,))
         pl_rows = cur.fetchall()
 
-    # ── 用户稀疏编码
+    # 用户稀疏编码
     gender_enc = _safe_encode(encoders.get("gender"), urow.get("gender") or "unknown")
     city_enc   = _safe_encode(encoders.get("city"),   urow.get("city")   or "unknown")
 
@@ -1880,14 +1881,8 @@ def mmr_rerank(ranked: list, song_meta_map: dict, res: "Resources",
     """
     MMR（最大边际相关，Maximal Marginal Relevance）多样性重排。
 
-    替代原硬约束 diversity_rerank（同艺术家 ≤ N 首），改用软约束：
+   采用软约束：
       MMR(d) = λ × relevance(d) - (1-λ) × max_sim(d, already_selected)
-
-    优化点：
-      1. 【NumPy矩阵化】有FAISS向量的候选批量计算相似度（C @ S.T），
-         替代双层Python for循环，BLAS加速，速度提升50~100倍。
-      2. 【新歌劫榜漏洞修复（笔记第五章）】无向量候选不再固定 max_sim=0.0，
-         改用元数据分层兜底：同艺术家=0.75 / 同流派=0.40 / 无重叠=0.15。
 
     参数：
         ranked         : [(song_id, score), ...] 精排后候选列表
@@ -1922,7 +1917,7 @@ def mmr_rerank(ranked: list, song_meta_map: dict, res: "Resources",
     score_map    = {sid: float(ns) for (sid, _), ns in zip(ranked, norm_scores)}
     ranked_dict  = dict(ranked)   # 预建原始分映射，避免每轮 dict(ranked)
 
-    # ── 3. MMR 贪心选取循环（NumPy矩阵化版本）
+    # ── 3. MMR 贪心选取循环
     remaining        = [sid for sid, _ in ranked]
     selected         = []   # [(sid, original_score)]
     artist_cnt: dict = {}   # 艺术家计数（同艺术家上限安全兜底）
@@ -1956,9 +1951,8 @@ def mmr_rerank(ranked: list, song_meta_map: dict, res: "Resources",
                 mmr_arr     = lam * rel_arr - (1.0 - lam) * max_sims
                 for sid, mmr_val in zip(valid_sids, mmr_arr.tolist()):
                     mmr_score_map[sid] = mmr_val
-
-            # 无向量候选（新歌）：笔记第五章分层兜底，修复 max_sim=0.0 劫榜漏洞
-            # 原逻辑固定 max_sim=0.0，使新歌免受多样性惩罚，精排分0.6的新歌可超过精排分0.9的老歌
+            
+            # 无向量候选（新歌）
             for sid in invalid_sids:
                 s_genre, s_artist = song_meta_map.get(sid, ("", ""))
                 artist_match = any(
@@ -2036,7 +2030,6 @@ def generate_recommendations():
             print(f"\n   处理用户 ID={uid}...")
 
             with db.cursor() as cur:
-                # ── v7 升级冷却逻辑（基于 negative_count 字段）
                 # 统一负向交互定义：推荐后不播放 / 只听一点点(<20%) / 半途而废(20-80%)
                 # 冷却升级：1次→3天, 2次→7天, 3次+→14天冷宫
                 # 注：高完播率(≥80%) 或 已收藏 → 不排除（用户喜欢，应继续推荐）
@@ -2123,8 +2116,7 @@ def generate_recommendations():
                 print(f"      ⚠️ 无候选歌曲，跳过")
                 continue
 
-            # ── BST 粗排：~600 → 300（架构重组：BST移至粗排层，取代原LightGBM位置）
-            # BST AUC=0.7886 适合做粗筛，精排集成改用 DeepFM+LightGBM 组合
+            # ── BST 粗排：~600 → 300
             # realtime_dists 在 Tier2 时非空，使 user_artist_match 特征更准确
             X = build_pair_features(uid, cand_ids, db, res, realtime_dists)
             bst_coarse_ranked = rank_with_bst(cand_ids, X, res, uid, db)
@@ -2133,7 +2125,6 @@ def generate_recommendations():
             print(f"      BST粗排: top {len(top_coarse_ids)} 首")
 
             # ── DeepFM + LightGBM 精排集成：300 → 150
-            # Meta-LR输入改为[DeepFM_score, LightGBM_score]，两模型AUC差距<0.3%，
             # 元学习器可充分利用双模型互补，避免退化为单模型
             if top_coarse_ids:
                 X_fine         = build_pair_features(uid, top_coarse_ids, db, res, realtime_dists)
@@ -2163,7 +2154,7 @@ def generate_recommendations():
 
             print(f"      精排集成（Meta-LR）: top {len(top_fine)} 首")
 
-            # ── MMR 多样性重排：150 → 50（v7：替代硬约束 diversity_rerank）
+            # ── MMR 多样性重排：150 → 50
             # MMR λ=0.7：70%集成评分相关性 + 30%余弦相似度多样性惩罚
             final_recs = mmr_rerank(top_fine, song_meta_map, res)
 

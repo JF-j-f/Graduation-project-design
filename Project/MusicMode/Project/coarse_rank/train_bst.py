@@ -17,7 +17,7 @@ train_bst.py — BST（行为序列 Transformer）粗排模型训练
   MLP 输出层：
     Linear(→256) → BN → ReLU → Drop → Linear(→128) → BN → ReLU → Drop → Linear(→64) → BN → ReLU → Drop → Linear(→1) → Sigmoid
 
-训练环境：RTX 5090 32GB × 1 / CPU Xeon 8470Q 25核心 / 内存 90GB
+训练环境：RTX 4060 16GB 
 开发者：JunFu
 """
 
@@ -68,9 +68,9 @@ OOF_IDX_PATH   = os.path.join(BST_DIR, "bst_oof_idx.npy")
 # 训练超参
 BATCH_SIZE          = 4096      # 样本数
 EPOCHS              = 40        # 最大训练轮数（早停兜底，实际运行约16轮）
-LEARNING_RATE       = 5e-5      # 初始学习率（CosineAnnealingLR 起点）
-L2_REG              = 8e-4      # 权重衰减
-LR_ETA_MIN          = 1e-6      # CosineAnnealingLR 最小学习率下限
+LEARNING_RATE       = 5e-5      # 初始学习率（CosineAnnealingLR 起点）控制每次参数更新步子多大。太大容易震荡，太小训练慢。
+L2_REG              = 8e-4      # L2 正则化，也叫权重衰减，用来抑制过拟合。
+LR_ETA_MIN          = 1e-6      # 余弦退火学习率（CosineAnnealingLR）调度的最低学习率，防止学习率降到 0。
 EARLY_STOP_PATIENCE = 7         # 早停耐心轮数
 VALID_RATIO         = 0.10      # 验证集比例（按时间切分，后 10%）
 RANDOM_SEED         = 42        # 随机种子
@@ -78,7 +78,7 @@ NUM_WORKERS         = 4         # DataLoader 子进程数
 # BST 模型超参
 EMBED_DIM   = 32                # 稀疏特征 Embedding 维度（用户、歌曲、其他稀疏特征共享）
 SEQ_LEN     = 50                # 用户历史行为序列长度（固定为 50，短序列前面 padding）
-N_HEADS     = 8                 # Transformer 多头注意力头数（d_model=128 被8整除，注意力更精细）
+N_HEADS     = 8                 # Transformer 多头注意力头数（表示 Transformer 会从 8 个不同子空间学习用户历史行为和候选歌曲之间的关系。）
 D_MODEL     = 128               # Transformer 隐层维度（注意力输出维度，必须能被 n_heads 整除）
 FFN_DIM     = 256               # Transformer 前馈网络隐藏层维度
 DROPOUT     = 0.45              # Dropout 比率（防止过拟合）
@@ -521,7 +521,7 @@ def load_data():
 
     # ── 低频 ID 过滤（min_count=3，只统计训练集，防长尾 ID 死记硬背）
     # 与 DeepFM 对齐：0=Padding 语义特殊不可替换，低频 ID 统一映射到 1（UNK）
-    _MIN_COUNT = 3
+    _MIN_COUNT = 3  
     print("   🔧 低频 ID 过滤（min_count=3）...")
     song_col = sparse_arr[:, 1].copy()   # col 1 = song_id_encoded
     user_col = sparse_arr[:, 0].copy()   # col 0 = user_id_encoded

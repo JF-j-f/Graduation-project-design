@@ -32,14 +32,16 @@
 - **逻辑回归元学习器**（`build_ensemble.py`）：新增 `meta_learner_training()` 函数（Step 3.5），在OOF文件存在时自动加载、对齐索引、训练 `LogisticRegression(C=1.0)` 元学习器，在验证集上评估并与SLSQP加权平均对比；保存到 `Mode/ensemble/meta_learner.pkl`，`ensemble_config.pkl` 新增 `meta_learner_available` + `meta_auc` 字段
 - **精排推断双路径**（`sync_recs_v3.py`）：新增 `META_LEARNER_PATH` 常量和 `self.meta_lr` 属性；启动时若 `meta_learner_available=True` 则优先加载逻辑回归元学习器，推断时用 `LR.predict_proba([deepfm_score, bst_score])` 输出集成分；元学习器不可用时自动降级到原有SLSQP加权平均
 
-### 📝 执行步骤（主人手动按顺序执行）
+### 📝 执行步骤
 
 **阶段一：K=2 快速验证（约3-5小时）**
+
 ```bash
 python -X utf8 Project/MusicMode/Project/train_deepfm_v3.py
 python -X utf8 Project/MusicMode/Project/train_bst.py
 python -X utf8 Project/MusicMode/Project/build_ensemble.py
 ```
+
 确认 deepfm_oof.npy、bst_oof.npy、meta_learner.pkl 均生成，meta AUC数值合理后进行阶段二。
 
 **阶段二：K=5 正式训练（约30-50小时）**
@@ -210,6 +212,7 @@ python -X utf8 Project/MusicMode/Project/build_ensemble.py
   | `early_stopping_rounds` | 100  | 300  | 充分探索，避免伪早停             |
   | `reg_alpha`             | 0.1  | 1.0  | 加强 L1 正则，促进稀疏           |
   | `reg_lambda`            | 1.0  | 5.0  | 加强 L2 正则，减少方差           |
+
 - **DeepFM 配置升级**（`train_deepfm_v3.py`）：
 
   | 参数                    | 旧值         | 新值          | 说明                                  |
@@ -217,6 +220,7 @@ python -X utf8 Project/MusicMode/Project/build_ensemble.py
   | `embedding_dim`       | 16           | 32            | 全部 14 个稀疏特征 embedding 维度加倍 |
   | `DNN_HIDDEN_UNITS`    | (256,128,64) | (512,256,128) | 网络容量提升，与 DIEN 对齐            |
   | `EARLY_STOP_PATIENCE` | 10           | 12            | 更充分的收敛探索                      |
+
 - **数据库 language/origin_country 全面清洗**（ISRC 交叉验证）：
 
   - 通过 ISRC 国家码统计分布发现 KKBOX songs.csv language 字段 10 个编码中 8 个映射错误（如 code 52 旧映射"法语"→实为"英语"，code 31 旧映射"国语"→实为"韩语"）

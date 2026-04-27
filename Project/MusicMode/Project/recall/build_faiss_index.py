@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-build_faiss_index.py — FAISS 向量索引构建（v3）
+build_faiss_index.py — FAISS 向量索引构建
 
 功能：
-1. 从训练好的 DeepFM v3 模型中提取歌曲侧 Embedding
+1. 从训练好的 DeepFM 模型中提取歌曲侧 Embedding
 2. 拼接 song(32) + genre(32) + language(32) + artist(32) + origin_country(32)
    → 160维复合向量（代表歌曲内容语义）
 3. L2 归一化后构建 FAISS IndexFlatIP 索引（余弦相似度搜索）
@@ -42,7 +42,7 @@ OUTPUT_MAP       = RECALL_DIR / "song_id_map.pkl"
 # ⚠️ 所有 SparseFeat 统一 embedding_dim=32（与 train_deepfm_v3.py SPARSE_FEAT_SPECS 一致）
 EMBEDDING_DIM = 160
 
-# 组成复合向量的 embedding 名称（需与 DeepFM v3 的 SparseFeat 名称一致）
+# 组成复合向量的 embedding 名称（需与 DeepFM的 SparseFeat 名称一致）
 SONG_EMB_PARTS = [
     ("song_id",        32),
     ("genre",          32),

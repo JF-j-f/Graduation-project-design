@@ -6,12 +6,14 @@
 
 *A full-stack music platform powered by a multi-model recommendation engine*
 
-[![Java](https://img.shields.io/badge/Java-23-orange?logo=openjdk)](https://openjdk.org/)
-[![Python](https://img.shields.io/badge/Python-3.12-blue?logo=python)](https://python.org/)
-[![MySQL](https://img.shields.io/badge/MySQL-8.4-blue?logo=mysql)](https://mysql.com/)
-[![Redis](https://img.shields.io/badge/Redis-5.0+-red?logo=redis)](https://redis.io/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.x-ee4c2c?logo=pytorch)](https://pytorch.org/)
-[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+<p align="center">
+  <a href="https://openjdk.org/"><img src="https://img.shields.io/badge/Java-23-orange?logo=openjdk" alt="Java"></a>
+  <a href="https://python.org/"><img src="https://img.shields.io/badge/Python-3.12-blue?logo=python" alt="Python"></a>
+  <a href="https://mysql.com/"><img src="https://img.shields.io/badge/MySQL-8.4-blue?logo=mysql" alt="MySQL"></a>
+  <a href="https://redis.io/"><img src="https://img.shields.io/badge/Redis-5.0+-red?logo=redis" alt="Redis"></a>
+  <a href="https://pytorch.org/"><img src="https://img.shields.io/badge/PyTorch-2.x-ee4c2c?logo=pytorch" alt="PyTorch"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green" alt="License"></a>
+</p>
 
 </div>
 
@@ -34,17 +36,17 @@ MusicWeb 是一个**双模块全栈音乐平台**，由 Java Web 前端服务与
 
 ## 效果展示 (Screenshots)
 
+### 首页
+
+![index](image/README/index.png)
+
 ### 用户端界面
 
-<!-- 截图：用户主页 -->
-
-> 💡 *截图待上传 — 个人主页、播放器、推荐列表、歌单管理*
+![users](image/README/users.png)
 
 ### 管理员后台
 
-<!-- 截图：管理后台 -->
-
-> 💡 *截图待上传 — 数据仪表盘、用户管理、申诉审批*
+![admin](image/README/admin.png)
 
 ---
 
@@ -52,11 +54,11 @@ MusicWeb 是一个**双模块全栈音乐平台**，由 Java Web 前端服务与
 
 ### 服务拓扑
 
-![1774927456711](image/README/1774927456711.png)
+![System Topology](image/README/topology.png)
 
 ### 推荐四层漏斗
 
-![1774927483150](image/README/1774927483150.png)
+![Recommendation Funnel](image/README/funnel.png)
 
 ---
 
@@ -318,13 +320,13 @@ python -X utf8 Project/MusicMode/Project/data_cleaning.py
 # Step 2：特征工程，生成 66 维（14稀疏+52稠密）7.37M 样本
 python -X utf8 Project/MusicMode/Project/prepare_features_v3.py
 
-# Step 3：LightGBM 粗排训练
+# Step 3：LightGBM 精排训练
 python -X utf8 Project/MusicMode/Project/train_lgbm.py
 
 # Step 4：DeepFM 精排训练
 python -X utf8 Project/MusicMode/Project/train_deepfm_v3.py
 
-# Step 5：BST 序列精排训练
+# Step 5：BST 序列粗排训练
 python -X utf8 Project/MusicMode/Project/train_bst.py
 
 # Step 6：Meta-LR OOF Stacking 集成训练
@@ -564,7 +566,7 @@ Graduation-project-design/
 │   │   └── src/main/
 │   │       ├── java/com/music/
 │   │       │   ├── listener/              # 生命周期监听器
-│   │       │   │   └── SecretsLoader.java		 # 启动时将 secrets.txt 注入 System.properties
+│   │       │   │   └── SecretsLoader.java   # 启动时将 secrets.txt 注入 System.properties
 │   │       │   ├── javabean/              # 实体类
 │   │       │   │   ├── Appeal.java        # 申诉实体
 │   │       │   │   ├── DBUtil.java        # 数据库连接池工具
@@ -656,7 +658,7 @@ Graduation-project-design/
 │       ├── scripts/
 │       │   ├── spark_etl_songs.py         # KKBOX 229 万歌曲全量导入
 │       │   ├── start_daily_recommend.bat  # 每日推荐定时任务
-│       │   └── requirements.txt 			#依赖安装
+│       │   └── requirements.txt    #依赖安装
 │       ├── Project/                       # 算法核心源码
 │       │   ├── data_cleaning.py           # 数据清洗与负采样
 │       │   ├── prepare_features_v3.py     # 特征工程 v3

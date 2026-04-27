@@ -3,9 +3,9 @@
 refresh_song_stats.py — 歌曲滚动统计物化刷新脚本
 
 功能：
-  1. 从 play_history 读取 song_id + play_time（仅 2 列，约 1~2 分钟）
-  2. 用 pandas 向量化聚合 cnt_7d / cnt_30d / total_plays / trending（约 10 秒）
-  3. 结果批量写入 MySQL song_rolling_stats（持久化，约 30 秒）
+  1. 从 play_history 读取 song_id + play_time
+  2. 用 pandas 向量化聚合 cnt_7d / cnt_30d / total_plays / trending
+  3. 结果批量写入 MySQL song_rolling_stats（持久化）
   4. 同步写入 Redis（hash + version key，TTL=25h）
 
 触发时机：
@@ -14,7 +14,7 @@ refresh_song_stats.py — 歌曲滚动统计物化刷新脚本
 
 设计说明（物化视图 + Redis 缓存）：
   - MySQL GROUP BY 在 737 万行无索引列上需 15 分钟+，不可用于在线
-  - pandas 向量化聚合同量数据约 2~3 分钟
+  - pandas 向量化聚合同量数据
   - Redis 读取：< 0.1s（亚毫秒），sync_recs_v3.py 强制要求 Redis 最新才允许推荐
   - sync_recs_v3.py 通过 song_rolling:version 与 MySQL MAX(updated_at) 对比
     验证 Redis 新鲜度，不一致则终止并提示重新运行本脚本
@@ -178,8 +178,8 @@ def compute_stats():
 
     # trending_ratio = 近7天日均 / 近30天日均（衡量是否"正在变火"）
     agg["trending"] = (
-        (agg["cnt_7d"].astype("float64") / 7.0)
-        / (agg["cnt_30d"].astype("float64") / 30.0 + 1e-8)
+        (agg["cnt_7d"].astype("float64") + 1.0)
+        / (agg["cnt_30d"].astype("float64") / 30.0 + 1.0)
     )
     agg["cnt_7d"]      = agg["cnt_7d"].astype("int32")
     agg["cnt_30d"]     = agg["cnt_30d"].astype("int32")
