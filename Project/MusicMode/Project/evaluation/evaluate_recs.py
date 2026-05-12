@@ -18,13 +18,13 @@ from collections import defaultdict
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
+# MySQL 连接配置（从 secrets.txt 读取）
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+from config_loader import get_mysql_config
+
 # ── 数据库连接配置 ──────────────────────────────────────────
-DB_CONFIG = dict(
-    host='localhost', port=3306,
-    user='root', password='JF123456',
-    db='musicweb', charset='utf8mb4',
-    cursorclass=pymysql.cursors.DictCursor
-)
+DB_CONFIG = get_mysql_config()
+DB_CONFIG["cursorclass"] = pymysql.cursors.DictCursor
 
 # 脚本位于 Project/MusicMode/Project/evaluation/，Mode/evaluation/ 在 MusicMode 下
 REPORT_PATH = Path(__file__).resolve().parents[2] / "Mode" / "evaluation" / "evaluation_report.txt"

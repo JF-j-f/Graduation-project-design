@@ -41,11 +41,15 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 # 配置
 # ============================================================
 
-MYSQL_HOST     = "localhost"
-MYSQL_PORT     = 3306
-MYSQL_DB       = "musicweb"
-MYSQL_USER     = "root"
-MYSQL_PASSWORD = "JF123456"
+# MySQL 连接配置（从 secrets.txt 读取）
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+from config_loader import get_mysql_config
+_db_cfg        = get_mysql_config()
+MYSQL_HOST     = _db_cfg["host"]
+MYSQL_PORT     = _db_cfg["port"]
+MYSQL_DB       = _db_cfg["db"]
+MYSQL_USER     = _db_cfg["user"]
+MYSQL_PASSWORD = _db_cfg["password"]
 
 REDIS_HOST = "localhost"
 REDIS_PORT = 6379

@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 import os
+import sys
+from pathlib import Path
 import pymysql
 
+# 将 MusicMode/scripts 加入搜索路径以复用 config_loader
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "MusicMode" / "scripts"))
+from config_loader import get_mysql_config
+
 def run_sql_file():
-    db = pymysql.connect(
-        host='localhost',
-        user='root',
-        password='JF123456',
-        db='musicweb',
-        charset='utf8mb4'
-    )
+    db = pymysql.connect(**get_mysql_config())
     cur = db.cursor()
     
     sql_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'update_comments.sql')

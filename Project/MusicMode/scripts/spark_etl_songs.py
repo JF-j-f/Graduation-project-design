@@ -26,6 +26,8 @@ from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import IntegerType, StringType
 
+from config_loader import get_mysql_config
+
 
 # ============================================
 # 配置区域 - 请根据实际情况修改
@@ -37,12 +39,13 @@ DATA_DIR = os.path.join(_ROOT, "Data")
 SONGS_CSV = os.path.join(DATA_DIR, "songs.csv")
 TRAIN_CSV = os.path.join(DATA_DIR, "train.csv")
 
-# MySQL 连接配置
-MYSQL_HOST = "localhost"
-MYSQL_PORT = "3306"
-MYSQL_DB = "musicweb"
-MYSQL_USER = "root"
-MYSQL_PASSWORD = "JF123456"  # TODO: 请修改为实际密码
+# MySQL 连接配置（从 secrets.txt 读取，避免硬编码）
+_db_cfg = get_mysql_config()
+MYSQL_HOST = _db_cfg["host"]
+MYSQL_PORT = str(_db_cfg["port"])
+MYSQL_DB = _db_cfg["db"]
+MYSQL_USER = _db_cfg["user"]
+MYSQL_PASSWORD = _db_cfg["password"]
 
 # JDBC URL
 JDBC_URL = f"jdbc:mysql://{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DB}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&rewriteBatchedStatements=true&characterEncoding=UTF-8"

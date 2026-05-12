@@ -23,8 +23,8 @@ import java.nio.charset.StandardCharsets;
 @WebServlet(name = "ImageProxyServlet", urlPatterns = "/img/*")
 public class ImageProxyServlet extends HttpServlet {
 
-    // 源码目录路径 (硬编码为开发环境路径)
-    private static final String SOURCE_WEBAPP_PATH = "F:/Graduation-project-design/Project/MusicWeb/src/main/webapp";
+    // 源码目录路径（从 secrets.txt 注入 System.properties，避免硬编码）
+    private static final String SOURCE_WEBAPP_PATH = System.getProperty("SOURCE_WEBAPP_PATH", "");
 
     @Override
     protected void doGet(HttpServletRequest request, HttpServletResponse response)

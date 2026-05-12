@@ -56,6 +56,12 @@ secrets.txt
 **/Cookie/api_credentials.json
 **/Cookie/qq_credential_*.json
 
+# QQ音乐OAuth凭证（含access_token等敏感信息，禁止上传）
+**/qq_api/qq_credential.json
+
+# Data目录下的SQL导出（文件过大不上传）
+Data/*.sql
+
 #脚本
 Project/MusicMode/scripts/update_song_metadata.py
 Project/MusicMode/scripts/generate_auc_chart.py

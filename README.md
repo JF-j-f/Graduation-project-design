@@ -129,15 +129,43 @@ MusicWeb 是一个**双模块全栈音乐平台**，由 Java Web 前端服务与
 | Node.js | 18+  | 网易云 API 服务         |
 | Python  | 3.12 | 推荐引擎 · QQ 音乐 API |
 
-### 第一步：数据库初始化
+### 第一步：获取数据集
+
+项目使用[KKBOX音乐推荐挑战赛](https://www.kaggle.com/c/kkbox-music-recommendation-challenge)数据集作为训练数据。
+
+`Data/kkbox-music-recommendation-challenge.zip`通过Git LFS管理，clone仓库时自动获取。解压后得到以下CSV文件：
+
+| 文件 | 说明 |
+|------|------|
+| `songs.csv` | 229万首歌曲元数据（歌名、艺术家、流派等） |
+| `train.csv` | 用户-歌曲交互训练集（播放/跳过行为） |
+| `members.csv` | 用户人口统计特征（城市、年龄、性别等） |
+| `song_extra_info.csv` | 歌曲附加信息（ISRC编码等） |
 
 ```bash
-mysql -u root -p < Project/MusicWeb/sql/database.sql
+cd Data
+unzip kkbox-music-recommendation-challenge.zip
 ```
 
-### 第二步：创建隐私配置文件（必须）
+> 完整数据库导出（含2万条网易云爬取数据）因体积过大未上传。如需获取，请联系：jun_fu2025@163.com
 
-复制模板文件并重命名：
+### 第二步：数据库初始化
+
+先执行SQL脚本创建表结构：
+
+```bash
+mysql -u <用户名> -p < Project/MusicWeb/sql/database.sql
+```
+
+再使用PySpark ETL脚本将CSV数据导入MySQL（229万首歌曲元数据 + 热度统计）：
+
+```bash
+python Project/MusicMode/scripts/spark_etl_songs.py
+```
+
+### 第三步：创建隐私配置文件（必须）
+
+复制模板文件并填写配置：
 
 ```bash
 cp secrets.txt.example secrets.txt
@@ -151,12 +179,12 @@ cp secrets.txt.example secrets.txt
 | `MAIL_USERNAME` / `MAIL_PASSWORD` / `MAIL_FROM` | 163 邮箱账号及授权码（申诉邮件通知用）     |
 | `LASTFM_API_KEY` / `LASTFM_SHARED_SECRET`         | Last.fm API 凭证（歌曲元数据补全用，可选） |
 
-### 第三步：配置 Cookie（用于播放网易云/QQ 音乐 VIP 歌曲）
+### 第四步：配置Cookie（用于播放网易云/QQ音乐VIP歌曲）
 
-复制模板文件：
+从模板目录复制凭证文件到运行位置：
 
 ```bash
-cp Project/MusicWeb/src/main/webapp/MusicServer/Cookie/api_credentials.json.example \
+cp Project/MusicWeb/template/api_credentials.json.example \
    Project/MusicWeb/src/main/webapp/MusicServer/Cookie/api_credentials.json
 ```
 
@@ -169,7 +197,13 @@ cp Project/MusicWeb/src/main/webapp/MusicServer/Cookie/api_credentials.json.exam
 
 > 不配置此文件时，普通免费歌曲仍可正常播放，VIP 解灰功能不可用。
 
-### 第五步：一键启动所有服务（推荐）
+### 第五步：安装Python依赖
+
+```bash
+pip install -r Project/MusicMode/scripts/requirements.txt
+```
+
+### 第六步：一键启动所有服务（推荐）
 
 ```bash
 Project/MusicWeb/scripts/run_services.bat
@@ -187,7 +221,7 @@ Project/MusicWeb/scripts/run_services.bat
 
 停止所有服务：`Project/MusicWeb/scripts/stop_services.bat`
 
-### 第六步：访问
+### 第七步：访问
 
 | 页面 | 地址                                                            |
 | ---- | --------------------------------------------------------------- |
@@ -315,41 +349,41 @@ Project/MusicWeb/scripts/run_services.bat
 
 ```bash
 # Step 1：数据清洗与负采样
-python -X utf8 Project/MusicMode/Project/data_cleaning.py
+python -X utf8 Project/MusicMode/Project/data_cleaning/data_cleaning.py
 
 # Step 2：特征工程，生成 66 维（14稀疏+52稠密）7.37M 样本
-python -X utf8 Project/MusicMode/Project/prepare_features_v3.py
+python -X utf8 Project/MusicMode/Project/feature_engineering/prepare_features_v3.py
 
 # Step 3：LightGBM 精排训练
-python -X utf8 Project/MusicMode/Project/train_lgbm.py
+python -X utf8 Project/MusicMode/Project/fine_rank/train_lgbm.py
 
 # Step 4：DeepFM 精排训练
-python -X utf8 Project/MusicMode/Project/train_deepfm_v3.py
+python -X utf8 Project/MusicMode/Project/fine_rank/train_deepfm_v3.py
 
 # Step 5：BST 序列粗排训练
-python -X utf8 Project/MusicMode/Project/train_bst.py
+python -X utf8 Project/MusicMode/Project/coarse_rank/train_bst.py
 
 # Step 6：Meta-LR OOF Stacking 集成训练
-python -X utf8 Project/MusicMode/Project/build_ensemble.py
+python -X utf8 Project/MusicMode/Project/fine_rank/build_ensemble.py
 
 # Step 7：FAISS 160 维向量索引构建
-python -X utf8 Project/MusicMode/Project/build_faiss_index.py
+python -X utf8 Project/MusicMode/Project/recall/build_faiss_index.py
 
 # Step 8：ALS 协同过滤召回训练
-python -X utf8 Project/MusicMode/Project/train_als.py
+python -X utf8 Project/MusicMode/Project/recall/train_als.py
 
 # Step 9：推荐生成与写库（每日定时执行）
-python -X utf8 Project/MusicMode/Project/sync_recs_v3.py
+python -X utf8 Project/MusicMode/Project/serving/sync_recs_v3.py
 
 # ── 辅助脚本 ──
 # 刷新歌曲滚动统计（热度召回数据源，建议每日执行）
-python -X utf8 Project/MusicMode/Project/refresh_song_stats.py
+python -X utf8 Project/MusicMode/Project/serving/refresh_song_stats.py
 
 # 离线评估（KKBox 验证集评估指标）
-python -X utf8 Project/MusicMode/Project/evaluate_offline.py
+python -X utf8 Project/MusicMode/Project/evaluation/evaluate_offline.py
 
 # 真实用户推荐记录评估（CTR/完播率）
-python -X utf8 Project/MusicMode/Project/evaluate_recs.py
+python -X utf8 Project/MusicMode/Project/evaluation/evaluate_recs.py
 ```
 
 **Python 依赖安装：**
@@ -545,14 +579,18 @@ Python 引擎计算后写入，前端实时读取展示。
 ```
 Graduation-project-design/
 ├── README.md                              # 本文档
-├── CHANGELOG.md                           # 项目更新日志
 ├── LICENSE                                # MIT 许可证
 ├── secrets.txt.example                    # 隐私配置模板
+├── Data/                                  # 数据集目录
+│   └── kkbox-music-recommendation-challenge.zip  # KKBOX数据集（Git LFS）
 ├── Project/
 │   ├── MusicWeb/                          # Java Web 前端服务
 │   │   ├── pom.xml                        # Maven 项目配置
 │   │   ├── Document/                      # 项目文档
-│   │   │   ├── CHANGELOG.md               # MusicWeb 更新日志
+│   │   │   └── CHANGELOG.md               # MusicWeb 更新日志
+│   │   ├── template/                      # 配置模板目录
+│   │   │   ├── api_credentials.json.example  # Cookie 配置模板
+│   │   │   └── qq_credential.json.example    # QQ音乐凭证模板
 │   │   ├── sql/
 │   │   │   └── database.sql               # 数据库初始化脚本
 │   │   ├── scripts/                       # 自动化运维脚本
@@ -599,8 +637,7 @@ Graduation-project-design/
 │   │       └── webapp/
 │   │           ├── WEB-INF/web.xml        # Web 应用部署描述
 │   │           ├── MusicServer/           # 独立音乐 API 服务目录
-│   │           │   ├── Cookie/
-│   │           │   │   └── api_credentials.json.example  # Cookie 配置模板
+│   │           │   ├── Cookie/            # 运行时凭证目录（gitignore）
 │   │           │   ├── node_modules/      # Node.js 依赖库
 │   │           │   ├── qq_api/            # Python QQ 音乐 FastAPI 服务
 │   │           │   │   ├── app.py                        # FastAPI 入口
@@ -655,25 +692,33 @@ Graduation-project-design/
 │       ├── Document/
 │       │   ├── CHANGELOG.md               # MusicMode 更新日志
 │       │   └── Data_Description.md        # KKBOX 数据集说明
+│       ├── template/                      # 配置模板目录
 │       ├── scripts/
+│       │   ├── config_loader.py           # 统一配置加载器（读取 secrets.txt）
 │       │   ├── spark_etl_songs.py         # KKBOX 229 万歌曲全量导入
 │       │   ├── start_daily_recommend.bat  # 每日推荐定时任务
-│       │   └── requirements.txt    #依赖安装
-│       ├── Project/                       # 算法核心源码
-│       │   ├── data_cleaning.py           # 数据清洗与负采样
-│       │   ├── prepare_features_v3.py     # 特征工程 v3
-│       │   ├── train_lgbm.py              # LightGBM 粗排训练
-│       │   ├── train_deepfm_v3.py         # DeepFM 精排训练
-│       │   ├── train_bst.py               # BST 序列精排训练
-│       │   ├── build_ensemble.py          # Meta-LR OOF Stacking 集成训练
-│       │   ├── build_faiss_index.py       # FAISS 向量索引构建
-│       │   ├── train_als.py               # ALS 协同过滤召回
-│       │   ├── sync_recs_v3.py            # 推荐主程序（三通道召回 + 四层漏斗）
-│       │   ├── refresh_song_stats.py      # 歌曲滚动统计刷新
-│       │   ├── evaluate_offline.py        # 离线评估
-│       │   ├── evaluate_recs.py           # 在线评估
-│       │   └── evaluation/                # 消融与对比实验目录
-│       │       └── eval_experiment.py     # 消融实验与模型对比实验脚本
+│       │   └── requirements.txt           # 依赖安装
+│       └── Project/                       # 算法核心源码
+│           ├── data_cleaning/
+│           │   └── data_cleaning.py       # 数据清洗与负采样
+│           ├── feature_engineering/
+│           │   └── prepare_features_v3.py # 特征工程 v3
+│           ├── coarse_rank/
+│           │   └── train_bst.py           # BST 序列粗排训练
+│           ├── fine_rank/
+│           │   ├── train_lgbm.py          # LightGBM 精排训练
+│           │   ├── train_deepfm_v3.py     # DeepFM 精排训练
+│           │   └── build_ensemble.py      # Meta-LR OOF Stacking 集成训练
+│           ├── recall/
+│           │   ├── build_faiss_index.py   # FAISS 向量索引构建
+│           │   └── train_als.py           # ALS 协同过滤召回
+│           ├── serving/
+│           │   ├── sync_recs_v3.py        # 推荐主程序（三通道召回 + 四层漏斗）
+│           │   └── refresh_song_stats.py  # 歌曲滚动统计刷新
+│           └── evaluation/
+│               ├── evaluate_offline.py    # 离线评估
+│               ├── evaluate_recs.py       # 在线评估
+│               └── eval_experiment.py     # 消融实验与模型对比实验脚本
 ```
 
 ## 安全设计 (Security)
@@ -701,6 +746,6 @@ Graduation-project-design/
 
 <div align="center">
 
-*本文档最后更新时间：2026年04月17日*
+*本文档最后更新时间：2026年05月13日*
 
 </div>

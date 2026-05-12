@@ -21,6 +21,10 @@ import numpy as np
 import warnings
 warnings.filterwarnings('ignore')
 
+# MySQL 连接配置（从 secrets.txt 读取）
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+from config_loader import get_mysql_url
+
 # ============================================================
 # 配置
 # ============================================================
@@ -211,10 +215,7 @@ def extract_embeddings(model, features):
 
     # ── 加载全量歌曲（含冷门歌曲）──────────────────────────────
     print("\n   📥 加载全量歌曲元数据（含冷门）...")
-    engine = create_engine(
-        "mysql+pymysql://root:JF123456@localhost:3306/musicweb?charset=utf8mb4",
-        pool_pre_ping=True
-    )
+    engine = create_engine(get_mysql_url(), pool_pre_ping=True)
     all_songs_df = pd.read_sql(
         "SELECT id, genre, language, artist, origin_country FROM songs ORDER BY id",
         engine
