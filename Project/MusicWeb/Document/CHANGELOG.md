@@ -2,6 +2,19 @@
 
 本文档记录了 MusicWeb 项目的所有更新历史。
 
+## v4.3.1 (2026-05-20) - Docker 外部 MySQL 运行路径补充
+
+### 🚀 新增功能
+
+- 新增 `docker-compose.release.external-mysql.yml`，支持用户先手动导入 `musicweb.sql` 到本机 MySQL，再通过 Docker Compose 启动 Web、Redis、音乐 API、QQ API、解灰服务与推荐容器。
+- 更新 GitHub 版 `Readme.md`，将命令行标准版作为推荐启动路径，并补充外部 MySQL 手动导入路径，便于用户根据数据库初始化耗时选择运行方式。
+
+### 📝 拟解决方案
+
+- 后续可继续精简发布版 SQL 或拆分初始化数据，降低首次启动时 MySQL 导入耗时。
+
+---
+
 ## v4.3.0 (2026-05-20) - Docker 完整运行包支持
 
 ### 🚀 新增功能

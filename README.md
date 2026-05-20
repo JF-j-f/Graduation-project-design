@@ -119,19 +119,13 @@ MusicWeb 是一个**双模块全栈音乐平台**，由 Java Web 前端服务与
 
 ### Docker Hub 完整运行包
 
-项目提供 Docker Hub 运行方式，用于在全新 Windows + Docker Desktop 电脑上复现当前系统效果。用户不需要复制源码、SQL 或模型文件，但必须在运行前准备完整 Cookie、邮箱授权码与 API Key。
+项目提供 Docker Hub 运行方式，用于在全新 Windows + Docker Desktop 电脑上复现当前系统效果。用户不需要复制源码或模型文件，但必须在运行前准备完整 Cookie、邮箱授权码与 API Key。
 
-Docker Desktop GUI 方式：
+推荐使用命令行标准版。该方案由 Docker Compose 拉取各服务镜像，并由 MySQL 容器自动导入内置 SQL。首次启动需要等待数据库初始化完成，后续重启会复用 Docker 卷内的数据。
 
-1. 在 Docker Desktop 的 `Images` 页面搜索并拉取 `junfu26/musicweb-all-in-one`。
-2. 点击 `Run`。
-3. 设置端口 `8082:8082`。
-4. 在 Environment variables 中填写 `DB_PASSWORD`、`MYSQL_ROOT_PASSWORD`、`MAIL_USERNAME`、`MAIL_PASSWORD`、`MAIL_FROM`、`LASTFM_API_KEY`、`LASTFM_SHARED_SECRET`、`NETEASE_COOKIE`、`QQ_MUSIC_COOKIE`。
-5. 访问 `http://localhost:8082/musicweb/`。
+#### 方案B：命令行标准版（推荐）
 
-命令行标准版：
-
-推荐直接在 PowerShell 执行下面这一段命令。它会自动创建 `musicweb-docker` 目录，下载发布版 Compose 文件和 `.env` 配置模板，打开记事本让你填写 Cookie、密钥和邮箱授权码，然后启动容器。
+在 PowerShell 执行下面这一段命令。它会自动创建 `musicweb-docker` 目录，下载发布版 Compose 文件和 `.env` 配置模板，打开记事本让你填写 Cookie、密钥和邮箱授权码，然后启动容器。
 
 ```powershell
 Invoke-WebRequest `
@@ -148,11 +142,11 @@ mkdir musicweb-docker
 cd musicweb-docker
 
 Invoke-WebRequest `
-  -Uri "https://raw.githubusercontent.com/<你的GitHub用户>/<仓库名>/main/docker-compose.release.yml" `
+  -Uri "https://raw.githubusercontent.com/JF-j-f/Graduation-project-design/main/docker-compose.release.yml" `
   -OutFile "docker-compose.release.yml"
 
 Invoke-WebRequest `
-  -Uri "https://raw.githubusercontent.com/<你的GitHub用户>/<仓库名>/main/docker/.env.release.example" `
+  -Uri "https://raw.githubusercontent.com/JF-j-f/Graduation-project-design/main/docker/.env.release.example" `
   -OutFile ".env"
 
 notepad .env
@@ -165,11 +159,81 @@ docker compose --env-file .env -f docker-compose.release.yml up -d
 http://localhost:8082/musicweb/
 ```
 
+#### 方案C：手动MySQL导入（高级用户可选）
+
+该方案适合已经安装 MySQL 8.4 的用户。用户先从 `junfu26/musicweb-data` 镜像导出发布版 SQL，再手动导入自己的 MySQL。随后使用外部 MySQL 专用 Compose 文件启动业务服务。
+
+```powershell
+mkdir musicweb-docker
+cd musicweb-docker
+
+docker pull junfu26/musicweb-data:latest
+docker create --name musicweb-data-export junfu26/musicweb-data:latest
+docker cp musicweb-data-export:/payload/sql/musicweb.sql .\musicweb.sql
+docker rm musicweb-data-export
+```
+
+在本机 MySQL 中创建数据库和用户。下面示例会创建 `musicweb` 数据库与 `musicweb` 用户，请先确定一个数据库密码，并在后续 `.env` 的 `DB_PASSWORD` 中使用同一个值。
+
+```powershell
+mysql -uroot -p -e "CREATE DATABASE IF NOT EXISTS musicweb DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+mysql -uroot -p -e "CREATE USER IF NOT EXISTS 'musicweb'@'%' IDENTIFIED BY '你的数据库密码'; GRANT ALL PRIVILEGES ON musicweb.* TO 'musicweb'@'%'; FLUSH PRIVILEGES;"
+mysql --default-character-set=utf8mb4 -uroot -p musicweb < .\musicweb.sql
+```
+
+本机 MySQL 需要允许 Docker 容器通过 `host.docker.internal:3306` 访问。如果连接失败，请检查 MySQL 是否监听 3306 端口，以及 Windows 防火墙是否允许本机 MySQL 接收连接。
+
+导入完成后，下载外部 MySQL 专用 Compose 文件和配置模板：
+
+```powershell
+Invoke-WebRequest `
+  -Uri "https://raw.githubusercontent.com/JF-j-f/Graduation-project-design/main/docker-compose.release.external-mysql.yml" `
+  -OutFile "docker-compose.release.external-mysql.yml"
+
+Invoke-WebRequest `
+  -Uri "https://raw.githubusercontent.com/JF-j-f/Graduation-project-design/main/docker/.env.release.example" `
+  -OutFile ".env"
+
+notepad .env
+```
+
+`.env` 中至少需要确认这些数据库配置：
+
+```env
+DB_HOST=host.docker.internal
+DB_PORT=3306
+DB_NAME=musicweb
+DB_USER=musicweb
+DB_PASSWORD=你的数据库密码
+MYSQL_ROOT_PASSWORD=你的MySQL root密码
+```
+
+保存 `.env` 后启动服务：
+
+```powershell
+docker compose --env-file .env -f docker-compose.release.external-mysql.yml up -d
+```
+
+启动后访问：
+
+```text
+http://localhost:8082/musicweb/
+```
+
+Docker Desktop GUI 单镜像方式仍然可用，但首次启动会在单个容器内部导入 SQL。若数据库初始化耗时较长，优先使用方案B或方案C。
+
 > 公开运行包不会内置邮箱授权码、Last.fm Key、网易云 Cookie 或 QQ 音乐 Cookie。缺少任一必填配置时，发布版容器会拒绝启动并输出缺失项。
 >
 > 风险提示：当前完整 SQL 为项目运行结果数据，离线打包脚本仅清理 `appeals.contact_email` 字段。若公开发布该 SQL，`users` 表、播放历史和推荐反馈等业务数据会一并分发。请在发布说明中明确标注该风险。
 
-更详细的 Docker 运行与离线打包说明见 `docker/README_DOCKER.md`。
+Docker Desktop GUI 单镜像方式：
+
+1. 在 Docker Desktop 的 `Images` 页面搜索并拉取 `junfu26/musicweb-all-in-one`。
+2. 点击 `Run`。
+3. 设置端口 `8082:8082`。
+4. 在 Environment variables 中填写 `DB_PASSWORD`、`MYSQL_ROOT_PASSWORD`、`MAIL_USERNAME`、`MAIL_PASSWORD`、`MAIL_FROM`、`LASTFM_API_KEY`、`LASTFM_SHARED_SECRET`、`NETEASE_COOKIE`、`QQ_MUSIC_COOKIE`。
+5. 访问 `http://localhost:8082/musicweb/`。
+
 
 ### 环境要求
 
@@ -800,6 +864,6 @@ Graduation-project-design/
 
 <div align="center">
 
-*本文档最后更新时间：2026年05月13日*
+*本文档最后更新时间：2026年05月20日*
 
 </div>
