@@ -102,6 +102,9 @@ if (-not (Test-RequiredEnv -EnvPath $envPath)) {
 }
 
 docker compose --env-file $envPath -f $composePath up -d
+if ($LASTEXITCODE -ne 0) {
+    throw "Docker Compose startup failed with exit code $LASTEXITCODE. Check Docker Desktop, network access, and image pull errors, then run this script again."
+}
 
 Write-Host ""
 Write-Host "MusicWeb startup was submitted. First image pull and database initialization can take several minutes."
