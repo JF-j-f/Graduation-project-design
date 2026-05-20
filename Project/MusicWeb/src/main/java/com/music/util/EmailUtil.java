@@ -57,7 +57,7 @@ public class EmailUtil {
         if (value != null && value.startsWith("${") && value.endsWith("}")) {
             String key = value.substring(2, value.length() - 1);
             // 从 System.properties 取值（由 SecretsLoader 在启动时注入）
-            String resolved = System.getProperty(key);
+            String resolved = ServiceConfig.get(key, "");
             return (resolved != null) ? resolved : value;
         }
         return value;

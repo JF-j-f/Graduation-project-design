@@ -2,6 +2,34 @@
 
 本文档记录了 MusicWeb 项目的所有更新历史。
 
+## v4.3.0 (2026-05-20) - Docker 完整运行包支持
+
+### 🚀 新增功能
+
+- 新增 Docker Compose 编排，拆分 `mysql`、`redis`、`musicweb`、`music-api`、`qq-api` 与 `unblock` 服务，支持在 Windows Docker Desktop 中按服务名互联。
+- 新增 Docker 运行脚本 `docker/scripts/start.ps1` 与 `docker/scripts/stop.ps1`，统一生成 `secrets.txt` 并挂载 Cookie 模板，降低跨电脑部署成本。
+- 新增离线包构建脚本 `docker/scripts/build-offline.ps1`，支持导出镜像、复制 SQL 数据文件，并仅清理 `appeals.contact_email` 字段。
+- 新增 Docker Hub 发布版 `docker-compose.release.yml` 与 `junfu26/musicweb-all-in-one` 规划，支持电脑2不复制项目文件，通过 Docker Desktop GUI 或命令行标准版拉取镜像运行。
+- 新增发布版一键安装脚本 `docker/scripts/install-release.ps1`，支持用户从 GitHub 下载脚本后自动拉取 Compose 文件和 `.env` 模板，并在配置完整后启动标准版容器。
+- 新增发布版配置校验脚本，缺少数据库密码、邮箱授权码、Last.fm Key、网易云 Cookie 或 QQ 音乐 Cookie 时直接终止启动并输出缺失项。
+
+### 🐛 Bug 修复
+
+- 修复容器部署时 Java Web、Node API 与 QQ API 仍访问 `localhost` 的问题，改为通过环境变量读取 `MUSIC_API_URL`、`QQ_API_URL` 与 `UNBLOCK_API_URL`。
+- 修复 Java Web 在容器内无法访问 MySQL 与 Redis 的问题，新增 `ServiceConfig` 统一读取 `DB_HOST`、`DB_PORT`、`REDIS_HOST` 与 `REDIS_PORT`。
+- 修复发布版中 Java 邮件配置和数据库账号只能依赖 `secrets.txt` 的问题，改为支持从容器环境变量读取。
+
+### 🚧 待解决问题
+
+- 公开运行包沿用当前完整 SQL，仅清理申诉联系邮箱；`users` 表弱口令示例和用户行为数据仍会随 SQL 分发，公开发布前需要在 Release 说明中显式提示风险。
+- `junfu26/musicweb-all-in-one` 为多进程单容器形态，主要服务 Docker Desktop 图形界面演示；长期推荐路径仍是标准 Compose 多容器版。
+
+### 📝 拟解决方案
+
+- 后续可增加全量脱敏 SQL 生成脚本，将公开演示账号、邮箱、手机号与密码字段统一改写为安全占位值。
+
+---
+
 ## v4.2.0 (2026-03-12) - 个性化推荐反馈链路修复与口味反馈
 
 ### 🚀 新增功能

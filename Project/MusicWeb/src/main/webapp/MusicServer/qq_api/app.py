@@ -57,6 +57,23 @@ qr_codes: Dict[str, Any] = {}
 # 用于保持登录过程中的 Session 状态 (如手机验证码流程)
 login_sessions: Dict[str, Session] = {}
 
+# 凭证目录在 Docker 中挂载为持久化目录，避免容器重建后登录态丢失。
+CREDENTIAL_DIR = os.environ.get("QQ_CREDENTIAL_DIR", os.getcwd())
+
+
+def credential_path(userid: str) -> str:
+    """
+    生成 QQ 音乐用户凭证文件路径。
+
+    Args:
+        userid: 业务侧传入的用户标识
+
+    Returns:
+        str: 凭证 JSON 文件的绝对路径
+    """
+    safe_userid = "".join(ch for ch in userid if ch.isalnum() or ch in ("_", "-")) or "guest"
+    return os.path.join(CREDENTIAL_DIR, f"qq_credential_{safe_userid}.json")
+
 
 # ============================================
 #    FastAPI 应用初始化
@@ -75,13 +92,15 @@ async def load_all_credentials():
     """扫描并加载所有用户的凭证"""
     import glob
     try:
-        files = glob.glob("qq_credential_*.json")
+        os.makedirs(CREDENTIAL_DIR, exist_ok=True)
+        files = glob.glob(os.path.join(CREDENTIAL_DIR, "qq_credential_*.json"))
         for filename in files:
             try:
                 # filename format: qq_credential_{userid}.json
                 # Extract userid. Note: userid might contain special chars? Assuming safe for now.
                 # But safer to just load content.
-                userid = filename[14:-5] # remove 'qq_credential_' and '.json'
+                basename = os.path.basename(filename)
+                userid = basename[14:-5] # remove 'qq_credential_' and '.json'
                 if not userid: continue
                 
                 await load_credential(userid)
@@ -92,7 +111,7 @@ async def load_all_credentials():
 
 async def load_credential(userid: str):
     """加载指定用户的凭证"""
-    filename = f"qq_credential_{userid}.json"
+    filename = credential_path(userid)
     try:
         if os.path.exists(filename):
             import json
@@ -130,11 +149,12 @@ def save_credential(userid: str, credential: Credential):
     try:
         import json
         if credential:
+            os.makedirs(CREDENTIAL_DIR, exist_ok=True)
             data = credential.as_dict()
             if hasattr(credential, "extra_fields"):
                 data.update(credential.extra_fields)
             
-            filename = f"qq_credential_{userid}.json"
+            filename = credential_path(userid)
             with open(filename, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             
@@ -352,7 +372,7 @@ async def get_song_url(
                         if userid in credentials:
                             del credentials[userid]
                         # 尝试删除文件
-                        filename = f"qq_credential_{userid}.json"
+                        filename = credential_path(userid)
                         if os.path.exists(filename):
                             os.remove(filename)
                     else:
@@ -666,7 +686,7 @@ async def logout(
         del qr_codes[userid]
         
     # 文件清除
-    filename = f"qq_credential_{userid}.json"
+    filename = credential_path(userid)
     if os.path.exists(filename):
         try:
             os.remove(filename)

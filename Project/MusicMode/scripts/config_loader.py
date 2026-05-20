@@ -21,6 +21,12 @@ def _find_secrets_file():
     Returns:
         Path: secrets.txt 的路径，未找到时返回 None
     """
+    env_path = os.environ.get("SECRETS_FILE")
+    if env_path:
+        candidate = Path(env_path)
+        if candidate.exists():
+            return candidate
+
     current = Path(__file__).resolve().parent
     for _ in range(12):
         candidate = current / "secrets.txt"

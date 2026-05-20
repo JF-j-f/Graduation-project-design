@@ -117,6 +117,60 @@ MusicWeb 是一个**双模块全栈音乐平台**，由 Java Web 前端服务与
 
 ## 快速开始 (Getting Started)
 
+### Docker Hub 完整运行包
+
+项目提供 Docker Hub 运行方式，用于在全新 Windows + Docker Desktop 电脑上复现当前系统效果。用户不需要复制源码、SQL 或模型文件，但必须在运行前准备完整 Cookie、邮箱授权码与 API Key。
+
+Docker Desktop GUI 方式：
+
+1. 在 Docker Desktop 的 `Images` 页面搜索并拉取 `junfu26/musicweb-all-in-one`。
+2. 点击 `Run`。
+3. 设置端口 `8082:8082`。
+4. 在 Environment variables 中填写 `DB_PASSWORD`、`MYSQL_ROOT_PASSWORD`、`MAIL_USERNAME`、`MAIL_PASSWORD`、`MAIL_FROM`、`LASTFM_API_KEY`、`LASTFM_SHARED_SECRET`、`NETEASE_COOKIE`、`QQ_MUSIC_COOKIE`。
+5. 访问 `http://localhost:8082/musicweb/`。
+
+命令行标准版：
+
+推荐直接在 PowerShell 执行下面这一段命令。它会自动创建 `musicweb-docker` 目录，下载发布版 Compose 文件和 `.env` 配置模板，打开记事本让你填写 Cookie、密钥和邮箱授权码，然后启动容器。
+
+```powershell
+Invoke-WebRequest `
+  -Uri "https://raw.githubusercontent.com/JF-j-f/Graduation-project-design/main/docker/scripts/install-release.ps1" `
+  -OutFile "$env:TEMP\musicweb-install.ps1"
+
+powershell -ExecutionPolicy Bypass -File "$env:TEMP\musicweb-install.ps1"
+```
+
+如果需要手动下载文件，也可以执行：
+
+```powershell
+mkdir musicweb-docker
+cd musicweb-docker
+
+Invoke-WebRequest `
+  -Uri "https://raw.githubusercontent.com/<你的GitHub用户>/<仓库名>/main/docker-compose.release.yml" `
+  -OutFile "docker-compose.release.yml"
+
+Invoke-WebRequest `
+  -Uri "https://raw.githubusercontent.com/<你的GitHub用户>/<仓库名>/main/docker/.env.release.example" `
+  -OutFile ".env"
+
+notepad .env
+docker compose --env-file .env -f docker-compose.release.yml up -d
+```
+
+启动后访问：
+
+```text
+http://localhost:8082/musicweb/
+```
+
+> 公开运行包不会内置邮箱授权码、Last.fm Key、网易云 Cookie 或 QQ 音乐 Cookie。缺少任一必填配置时，发布版容器会拒绝启动并输出缺失项。
+>
+> 风险提示：当前完整 SQL 为项目运行结果数据，离线打包脚本仅清理 `appeals.contact_email` 字段。若公开发布该 SQL，`users` 表、播放历史和推荐反馈等业务数据会一并分发。请在发布说明中明确标注该风险。
+
+更详细的 Docker 运行与离线打包说明见 `docker/README_DOCKER.md`。
+
 ### 环境要求
 
 | 依赖    | 版本 | 备注                    |

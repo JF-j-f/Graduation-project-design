@@ -3,6 +3,7 @@ package com.music.javabean;
 import java.sql.*;
 import javax.sql.DataSource;
 import com.mchange.v2.c3p0.ComboPooledDataSource;
+import com.music.util.ServiceConfig;
 
 public class DBUtil {
     private static DataSource dataSource;
@@ -13,14 +14,15 @@ public class DBUtil {
             ComboPooledDataSource cpds = new ComboPooledDataSource("musicweb");
             // 数据库用户名/密码由 SecretsLoader 启动时注入到 System.properties，此处编程式覆盖
             // 这样做的原因：c3p0 XML 不支持 ${...} 占位符，只能通过 API 设置
-            String dbUser = System.getProperty("DB_USER");
-            String dbPassword = System.getProperty("DB_PASSWORD");
+            String dbUser = ServiceConfig.get("DB_USER", "");
+            String dbPassword = ServiceConfig.get("DB_PASSWORD", "");
             if (dbUser != null && !dbUser.isEmpty()) {
                 cpds.setUser(dbUser);
             }
             if (dbPassword != null && !dbPassword.isEmpty()) {
                 cpds.setPassword(dbPassword);
             }
+            cpds.setJdbcUrl(ServiceConfig.getJdbcUrl());
             dataSource = cpds;
             System.out.println("✅ C3P0连接池初始化成功");
         } catch (Exception e) {

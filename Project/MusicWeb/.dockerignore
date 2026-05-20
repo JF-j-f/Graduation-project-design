@@ -1,0 +1,8 @@
+target
+src/main/webapp/log
+src/main/webapp/MusicServer/node_modules
+src/main/webapp/MusicServer/server.log
+src/main/webapp/MusicServer/Cookie/api_credentials.json
+src/main/webapp/MusicServer/Cookie/qq_credential_*.json
+src/main/webapp/MusicServer/qq_api/qq_credential_*.json
+src/main/webapp/MusicServer/unblock/node_modules

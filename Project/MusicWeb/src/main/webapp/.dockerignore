@@ -1,0 +1,6 @@
+MusicServer/node_modules
+MusicServer/server.log
+MusicServer/Cookie/api_credentials.json
+MusicServer/Cookie/qq_credential_*.json
+MusicServer/qq_api/qq_credential_*.json
+MusicServer/unblock/node_modules

@@ -5,6 +5,7 @@ import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.JedisPoolConfig;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
+import com.music.util.ServiceConfig;
 import java.lang.reflect.Type;
 import java.util.List;
 
@@ -21,8 +22,8 @@ import java.util.List;
 public class RedisUtil {
 
     // Redis 配置
-    private static final String REDIS_HOST = "localhost";
-    private static final int REDIS_PORT = 6379;
+    private static final String REDIS_HOST = ServiceConfig.getRedisHost();
+    private static final int REDIS_PORT = ServiceConfig.getRedisPort();
     private static final int REDIS_TIMEOUT = 3000; // 连接超时 3 秒
 
     // 默认过期时间（秒）

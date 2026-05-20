@@ -22,7 +22,10 @@ from qqmusic_api.utils.session import Session, set_session
 # ============================================
 
 # 隐私配置文件路径（项目根目录 secrets.txt，不提交到 Git）
-_SECRETS_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", "..", "..", "secrets.txt")
+_SECRETS_PATH = os.environ.get(
+    "SECRETS_FILE",
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", "..", "..", "secrets.txt"),
+)
 
 
 def _load_secret(key: str) -> str:
@@ -60,12 +63,15 @@ def _load_secret(key: str) -> str:
 # ============================================
 
 # API 凭据文件路径
-CREDENTIALS_PATH = os.path.join(os.path.dirname(__file__), "..", "Cookie", "api_credentials.json")
+CREDENTIALS_PATH = os.environ.get(
+    "API_CREDENTIALS_FILE",
+    os.path.join(os.path.dirname(__file__), "..", "Cookie", "api_credentials.json"),
+)
 # QQ 音乐映射表路径
 QQ_MAPPING_PATH = os.path.join(os.path.dirname(__file__), "qq_music_mapping.json")
 
-# 网易云 Node.js API 地址 (本地服务)
-NETEASE_API_URL = "http://127.0.0.1:3000"
+# 网易云 Node.js API 地址（Docker 部署时通过服务名访问）
+NETEASE_API_URL = os.environ.get("NETEASE_API_URL", "http://127.0.0.1:3000")
 
 # Last.fm API 配置
 LASTFM_API_URL = "https://ws.audioscrobbler.com/2.0/"

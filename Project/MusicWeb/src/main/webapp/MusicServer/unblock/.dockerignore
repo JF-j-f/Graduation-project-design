@@ -9,10 +9,8 @@ LICENSE
 node_modules
 npm-debug.log
 
-Dockerfile*
 *.yml
 
 src/browser/
-ca.*
 *.worker.js
 .env

@@ -1,0 +1,193 @@
+name: musicweb-release
+
+x-runtime-env: &runtime-env
+  DB_NAME: ${DB_NAME:-musicweb}
+  DB_USER: ${DB_USER:-musicweb}
+  DB_PASSWORD: ${DB_PASSWORD:-}
+  MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-}
+  MAIL_USERNAME: ${MAIL_USERNAME:-}
+  MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+  MAIL_FROM: ${MAIL_FROM:-}
+  LASTFM_API_KEY: ${LASTFM_API_KEY:-}
+  LASTFM_SHARED_SECRET: ${LASTFM_SHARED_SECRET:-}
+  NETEASE_COOKIE: ${NETEASE_COOKIE:-}
+  QQ_MUSIC_COOKIE: ${QQ_MUSIC_COOKIE:-}
+  SOURCE_WEBAPP_PATH: ${SOURCE_WEBAPP_PATH:-}
+
+services:
+  config-init:
+    image: junfu26/musicweb-data:latest
+    container_name: musicweb-release-config-init
+    environment:
+      <<: *runtime-env
+      CONFIG_OUTPUT_DIR: /config
+    volumes:
+      - config_data:/config
+    command: ["python", "/opt/musicweb/validate_and_generate_config.py"]
+    restart: "no"
+
+  data-init:
+    image: junfu26/musicweb-data:latest
+    container_name: musicweb-release-data-init
+    volumes:
+      - sql_data:/release-sql
+      - model_data:/release-models
+    command:
+      - /bin/sh
+      - -c
+      - >
+        set -e;
+        mkdir -p /release-sql /release-models;
+        cp -f /payload/sql/musicweb.sql /release-sql/01-musicweb.sql;
+        rm -rf /release-models/Mode;
+        cp -a /payload/models/Mode /release-models/Mode;
+        echo "musicweb release data prepared";
+    restart: "no"
+
+  mysql:
+    image: mysql:8.4
+    container_name: musicweb-release-mysql
+    environment:
+      MYSQL_DATABASE: ${DB_NAME:-musicweb}
+      MYSQL_USER: ${DB_USER:-musicweb}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+08:00
+      - --max-allowed-packet=512M
+    ports:
+      - "${MYSQL_PUBLIC_PORT:-3307}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - sql_data:/docker-entrypoint-initdb.d:ro
+    depends_on:
+      config-init:
+        condition: service_completed_successfully
+      data-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    container_name: musicweb-release-redis
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "${REDIS_PUBLIC_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  qq-api:
+    image: junfu26/musicweb-qq-api:latest
+    container_name: musicweb-release-qq-api
+    environment:
+      SECRETS_FILE: /run/musicweb-config/secrets.txt
+      API_CREDENTIALS_FILE: /run/musicweb-config/api_credentials.json
+      QQ_CREDENTIAL_DIR: /app/credentials
+      NETEASE_API_URL: http://music-api:3000
+    ports:
+      - "${QQ_API_PUBLIC_PORT:-8000}:8000"
+    volumes:
+      - config_data:/run/musicweb-config:ro
+      - qq_credentials:/app/credentials
+    depends_on:
+      config-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()\""]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  unblock:
+    image: junfu26/musicweb-unblock:latest
+    container_name: musicweb-release-unblock
+    command: ["-p", "8081"]
+    ports:
+      - "${UNBLOCK_PUBLIC_PORT:-8081}:8081"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:8081', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  music-api:
+    image: junfu26/musicweb-music-api:latest
+    container_name: musicweb-release-music-api
+    environment:
+      QQ_API_URL: http://qq-api:8000
+      UNBLOCK_API_URL: http://unblock:8081
+      MUSIC_API_COOKIE_FILE: /run/musicweb-config/api_credentials.json
+    ports:
+      - "${MUSIC_API_PUBLIC_PORT:-3000}:3000"
+    volumes:
+      - config_data:/run/musicweb-config:ro
+    depends_on:
+      qq-api:
+        condition: service_healthy
+      unblock:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:3000/health', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  musicweb:
+    image: junfu26/musicweb-web:latest
+    container_name: musicweb-release-web
+    environment:
+      <<: *runtime-env
+      DB_HOST: mysql
+      DB_PORT: 3306
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      MUSIC_API_URL: http://music-api:3000
+      QQ_API_URL: http://qq-api:8000
+      TZ: Asia/Shanghai
+    ports:
+      - "${MUSICWEB_PUBLIC_PORT:-8082}:8082"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      music-api:
+        condition: service_healthy
+
+  recommender:
+    image: junfu26/musicweb-recommender:latest
+    container_name: musicweb-release-recommender
+    environment:
+      <<: *runtime-env
+      DB_HOST: mysql
+      DB_PORT: 3306
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      SECRETS_FILE: /run/musicweb-config/secrets.txt
+      PYTHONIOENCODING: utf-8
+      TZ: Asia/Shanghai
+    volumes:
+      - config_data:/run/musicweb-config:ro
+      - model_data:/app/MusicMode/Mode:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  config_data:
+  sql_data:
+  model_data:
+  mysql_data:
+  qq_credentials:

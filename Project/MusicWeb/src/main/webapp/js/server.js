@@ -30,14 +30,15 @@ const PORT = process.env.PORT || 3000;
 //    全局配置
 // ============================================
 
-// Python QQ 音乐 API 地址
-const PY_API_BASE = 'http://127.0.0.1:8000';
+// Python QQ 音乐 API 地址；Docker 部署时通过服务名访问，避免容器内 localhost 指向自身
+const PY_API_BASE = process.env.QQ_API_URL || 'http://127.0.0.1:8000';
 
-// Unblock 解灰服务地址 (本地部署)
-const UNBLOCK_API_BASE = 'http://127.0.0.1:8081';
+// Unblock 解灰服务地址；本地开发保持默认值，Docker 部署由环境变量覆盖
+const UNBLOCK_API_BASE = process.env.UNBLOCK_API_URL || 'http://127.0.0.1:8081';
 
 // Cookie 文件路径
-const COOKIE_FILE = path.join(__dirname, '../MusicServer/Cookie/api_credentials.json');
+const COOKIE_FILE = process.env.MUSIC_API_COOKIE_FILE
+    || path.join(__dirname, '../MusicServer/Cookie/api_credentials.json');
 
 // 全局 Cookie 变量
 let NETEASE_COOKIE = '';

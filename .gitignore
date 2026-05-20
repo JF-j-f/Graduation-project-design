@@ -51,6 +51,9 @@ Project/MusicWeb/scripts/null
 
 # 隐私配置文件（含数据库密码、邮件密码、API Key，禁止上传）
 secrets.txt
+docker/private/*
+!docker/private/.gitkeep
+docker/dist/
 
 # 音乐平台 Cookie 凭证（运行时动态维护，禁止上传）
 **/Cookie/api_credentials.json

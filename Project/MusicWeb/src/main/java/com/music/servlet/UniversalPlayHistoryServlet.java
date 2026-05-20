@@ -4,6 +4,7 @@ import com.music.dao.SongDAO;
 import com.music.dao.PlayHistoryDAO;
 import com.music.javabean.User;
 import com.music.util.CoverDownloadUtil;
+import com.music.util.ServiceConfig;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -46,6 +47,8 @@ import java.io.PrintWriter;
 public class UniversalPlayHistoryServlet extends HttpServlet {
 
     private static final Gson gson = new Gson();
+    private static final String MUSIC_API_BASE_URL = ServiceConfig.getMusicApiUrl();
+    private static final String QQ_API_BASE_URL = ServiceConfig.getQqApiUrl();
 
     @Override
     protected void doPost(HttpServletRequest request, HttpServletResponse response)
@@ -287,9 +290,9 @@ public class UniversalPlayHistoryServlet extends HttpServlet {
         try {
             String apiUrl;
             if ("netease".equals(source)) {
-                apiUrl = "http://localhost:3000/netease/song/detail/full?id=" + externalId;
+                apiUrl = MUSIC_API_BASE_URL + "/netease/song/detail/full?id=" + externalId;
             } else if ("qq".equals(source)) {
-                apiUrl = "http://localhost:3000/qq/song/detail?mid=" + externalId;
+                apiUrl = MUSIC_API_BASE_URL + "/qq/song/detail?mid=" + externalId;
             } else {
                 return null;
             }
@@ -365,7 +368,7 @@ public class UniversalPlayHistoryServlet extends HttpServlet {
             String encodedTitle = java.net.URLEncoder.encode(title, "UTF-8");
             String encodedArtist = java.net.URLEncoder.encode(artist, "UTF-8");
 
-            String apiUrl = "http://127.0.0.1:8000/song/metadata?title=" + encodedTitle + "&artist=" + encodedArtist;
+            String apiUrl = QQ_API_BASE_URL + "/song/metadata?title=" + encodedTitle + "&artist=" + encodedArtist;
             // 如果有网易云 ID，传递给 Python 服务优先查询百科
             if (neteaseId != null && !neteaseId.isEmpty() && !"0".equals(neteaseId)) {
                 apiUrl += "&netease_id=" + java.net.URLEncoder.encode(neteaseId, "UTF-8");

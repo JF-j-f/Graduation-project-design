@@ -7,6 +7,7 @@ import jakarta.servlet.http.*;
 import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
+import com.music.util.ServiceConfig;
 
 import com.google.gson.*;
 
@@ -20,7 +21,7 @@ public class AudioServlet extends HttpServlet {
     private static final long serialVersionUID = 1L;
 
     // Node.js API 服务地址
-    private static final String API_BASE_URL = "http://localhost:3000";
+    private static final String API_BASE_URL = ServiceConfig.getMusicApiUrl();
 
     // HTTP 请求超时时间
     private static final int CONNECT_TIMEOUT = 5000;

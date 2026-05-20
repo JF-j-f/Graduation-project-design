@@ -28,6 +28,7 @@ import math
 import time
 import subprocess
 from datetime import date, timedelta
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -51,8 +52,8 @@ MYSQL_DB       = _db_cfg["db"]
 MYSQL_USER     = _db_cfg["user"]
 MYSQL_PASSWORD = _db_cfg["password"]
 
-REDIS_HOST = "localhost"
-REDIS_PORT = 6379
+REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.environ.get("REDIS_PORT", "6379"))
 REDIS_DB   = 0
 REDIS_TTL        = 90000   # 单位秒，约 25 小时（保证每天定时刷新一次时，旧数据不会过期）
 MYSQL_BATCH_SIZE = 5000    # MySQL executemany 每批行数

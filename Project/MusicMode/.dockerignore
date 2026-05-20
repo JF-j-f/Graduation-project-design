@@ -1,0 +1,6 @@
+Document
+Mode
+__pycache__
+*.pyc
+*.pyo
+*.log.tmp

@@ -107,8 +107,8 @@ WEIGHTS = {
 }
 
 # Redis 配置（歌曲缓存层）
-REDIS_HOST = "localhost"
-REDIS_PORT = 6379
+REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.environ.get("REDIS_PORT", "6379"))
 REDIS_DB   = 0
 
 # FAISS 向量缓存 TTL（秒）：30 分钟；新播放产生时由 PlayHistoryServlet 主动失效

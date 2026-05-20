@@ -2,6 +2,30 @@
 
 本文档记录 MusicMode 项目的所有更新历史。
 
+## v2.9.0 (2026-05-20) - 推荐容器与 Docker 部署适配
+
+### 🚀 新增功能
+
+- 新增 `Project/MusicMode/Dockerfile`，将推荐刷新运行环境和 `Mode` 模型产物纳入 Docker 运行包，支持跨电脑复现日常推荐刷新。
+- 新增 Docker 运行文档，说明 `refresh_song_stats.py` 与 `sync_recs_v3.py` 在 `recommender` 容器中的执行方式。
+- 新增 `junfu26/musicweb-data` 数据模型镜像规划，将清理后的 `musicweb.sql` 与 `Mode` 模型产物作为发布版标准数据源，供电脑2零文件运行时初始化数据卷。
+
+### 🐛 Bug 修复
+
+- 修复推荐刷新脚本在容器内仍访问本机 Redis 的问题，`sync_recs_v3.py` 与 `refresh_song_stats.py` 改为读取 `REDIS_HOST` 和 `REDIS_PORT` 环境变量。
+- 修复 `refresh_song_stats.py` 缺失 `Path` 导入导致容器运行时无法解析脚本路径的问题。
+- 修复推荐脚本只能从逐级目录查找 `secrets.txt` 的限制，新增 `SECRETS_FILE` 环境变量入口以适配发布版配置卷。
+
+### 🚧 待解决问题
+
+- 推荐容器使用 CPU 版 PyTorch，适合跨电脑运行验证；完整 GPU 训练镜像尚未纳入本次 Docker 运行包。
+
+### 📝 拟解决方案
+
+- 后续如需公开完整训练链路，可新增独立 GPU 训练镜像，并将 CUDA、PyTorch 与模型训练脚本拆分为可选 profile。
+
+---
+
 ## v2.8.1 (2026-04-17) - 消融实验框架重设计与评估指标规范化
 
 ### 🚀 新增功能

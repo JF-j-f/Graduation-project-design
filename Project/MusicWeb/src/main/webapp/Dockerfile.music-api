@@ -1,0 +1,15 @@
+FROM node:20-bookworm-slim
+
+ENV NODE_ENV=production
+
+WORKDIR /app/src/main/webapp/MusicServer
+
+COPY MusicServer/package*.json ./
+RUN npm ci --omit=dev
+
+COPY MusicServer ./
+COPY js ../js
+
+EXPOSE 3000
+
+CMD ["node", "../js/server.js"]
