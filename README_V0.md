@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🎵 MusicWeb
+# 🎵 MusicWeb（开发人员版本）
 
 **基于大数据技术的个性化在线音乐推荐平台**
 
@@ -25,9 +25,9 @@ MusicWeb 是一个**双模块全栈音乐平台**，由 Java Web 前端服务与
 
 **核心亮点：**
 
-- **四层漏斗推荐**：三通道并行召回（~600首）→ LightGBM 粗排（→300）→ DeepFM + BST 集成精排（→150）→ MMR 多样性重排（→50），每日为用户生成专属推荐
+- **四层漏斗推荐**：三通道并行召回（~600首）→ BST粗排（→300）→ DeepFM + LightGBM 集成精排（→150）→ MMR 多样性重排（→50），每日为用户生成专属推荐
 - **三层用户分层路由**：新用户冷启动、有行为用户实时内容召回、老用户协同过滤，不同阶段用不同策略
-- **多模型集成**：LightGBM + DeepFM + BST，OOF Stacking + Meta-LR 融合，集成 AUC **0.8304**
+- **多模型集成**：BST + DeepFM + LightBGM，OOF Stacking + Meta-LR 融合，集成 AUC **0.8304**
 - **多源音乐接入**：同时接入网易云音乐和 QQ 音乐，播放外部歌曲时自动入库并补全元数据
 
 > **数据规模**：KKBOX 数据集 229 万首歌曲，7.37M 训练样本，28,172 名用户离线评估，HR@5 = **0.9877**，NDCG@5 = **0.8392**
@@ -35,17 +35,13 @@ MusicWeb 是一个**双模块全栈音乐平台**，由 Java Web 前端服务与
 ---
 
 ## 效果展示 (Screenshots)
-
 ### 首页
-
 ![index](image/README/index.png)
 
 ### 用户端界面
-
 ![users](image/README/users.png)
 
 ### 管理员后台
-
 ![admin](image/README/admin.png)
 
 ---
@@ -117,13 +113,23 @@ MusicWeb 是一个**双模块全栈音乐平台**，由 Java Web 前端服务与
 
 ## 快速开始 (Getting Started)
 
-### Docker 一键部署（推荐）
+### Docker Hub 发布版部署
 
-该方式适用于全新 Windows + Docker Desktop 电脑。用户不需要复制源码、SQL 或模型文件，只需要安装并启动 Docker Desktop，然后在 PowerShell 执行一键部署命令。
+内部维护时需要区分两条部署路径：默认发布路径面向普通用户，使用 `docker-compose.release.yml` 和 `junfu26/musicweb-mysql-fast` 预初始化数据库镜像；外部 MySQL 路径面向开发者或高级用户，使用 `docker-compose.release.external-mysql.yml` 连接用户自行维护的 MySQL 8.4 实例。
 
-#### 1. 执行一键部署命令
+#### 默认发布路径
 
-打开 PowerShell，粘贴并执行：
+适用场景：目标电脑只安装 Docker Desktop，不复制源码、SQL 或模型文件。
+
+入口文件：
+
+| 文件 | 作用 |
+| ---- | ---- |
+| `docker/scripts/install-release.ps1` | 一键下载发布版 Compose 和 `.env` 模板 |
+| `docker-compose.release.yml` | 标准多容器编排文件 |
+| `docker/.env.release.example` | 发布版环境变量模板 |
+
+一键启动命令：
 
 ```powershell
 Invoke-WebRequest `
@@ -133,25 +139,30 @@ Invoke-WebRequest `
 powershell -ExecutionPolicy Bypass -File "$env:TEMP\musicweb-install.ps1"
 ```
 
-脚本会在当前目录创建 `musicweb-docker` 文件夹，下载 `docker-compose.release.yml` 和 `.env` 配置模板，并自动打开 `.env`。
+脚本行为：
 
-#### 2. 填写 `.env`
+- 创建 `musicweb-docker` 部署目录。
+- 下载 `docker-compose.release.yml`。
+- 首次运行时下载 `.env` 模板。
+- 打开记事本，等待用户填写配置。
+- 校验必填项。
+- 执行 `docker compose --env-file .env -f docker-compose.release.yml up -d`。
 
-在打开的记事本中填写以下必填项，保存并关闭：
+必填配置：
 
 ```env
-DB_PASSWORD=自定义数据库用户密码
-MYSQL_ROOT_PASSWORD=自定义MySQL root密码
-MAIL_USERNAME=邮箱账号
-MAIL_PASSWORD=邮箱授权码
-MAIL_FROM=发件邮箱
-LASTFM_API_KEY=Last.fm API Key
-LASTFM_SHARED_SECRET=Last.fm Shared Secret
-NETEASE_COOKIE=网易云音乐Cookie
-QQ_MUSIC_COOKIE=QQ音乐Cookie
+DB_PASSWORD=
+MYSQL_ROOT_PASSWORD=
+MAIL_USERNAME=
+MAIL_PASSWORD=
+MAIL_FROM=
+LASTFM_API_KEY=
+LASTFM_SHARED_SECRET=
+NETEASE_COOKIE=
+QQ_MUSIC_COOKIE=
 ```
 
-端口配置可以保持默认：
+默认端口：
 
 ```env
 MUSICWEB_PUBLIC_PORT=8082
@@ -162,45 +173,102 @@ QQ_API_PUBLIC_PORT=8000
 UNBLOCK_PUBLIC_PORT=8081
 ```
 
-#### 3. 访问系统
+发布版核心镜像：
 
-脚本会在配置完整后自动启动容器。首次运行需要下载镜像并初始化 Docker 数据卷，等待容器启动完成后访问：
+| 镜像 | 作用 |
+| ---- | ---- |
+| `junfu26/musicweb-web:latest` | Java Web 服务 |
+| `junfu26/musicweb-music-api:latest` | 网易云音乐 API 服务 |
+| `junfu26/musicweb-qq-api:latest` | QQ 音乐 API 服务 |
+| `junfu26/musicweb-unblock:latest` | 解灰服务 |
+| `junfu26/musicweb-recommender:latest` | 推荐刷新运行环境 |
+| `junfu26/musicweb-data:latest` | 配置生成脚本与 `Mode` 模型产物 |
+| `junfu26/musicweb-mysql-fast:latest` | 预初始化 MySQL 数据种子 |
+
+访问地址：
 
 ```text
 http://localhost:8082/musicweb/
 ```
 
-#### 4. 常用命令
-
-进入部署目录：
+常用维护命令：
 
 ```powershell
 cd .\musicweb-docker
-```
-
-查看容器状态：
-
-```powershell
+docker compose --env-file .env -f docker-compose.release.yml up -d
 docker compose --env-file .env -f docker-compose.release.yml ps
-```
-
-停止服务：
-
-```powershell
+docker compose --env-file .env -f docker-compose.release.yml logs -f
 docker compose --env-file .env -f docker-compose.release.yml stop
 ```
 
-重新启动：
+#### 外部 MySQL 路径
+
+适用场景：目标电脑已经安装 MySQL 8.4，且用户希望自行管理数据库实例。
+
+导出发布版 SQL：
 
 ```powershell
-docker compose --env-file .env -f docker-compose.release.yml up -d
+mkdir musicweb-docker
+cd musicweb-docker
+
+docker pull junfu26/musicweb-data:latest
+docker create --name musicweb-data-export junfu26/musicweb-data:latest
+docker cp musicweb-data-export:/payload/sql/musicweb.sql .\musicweb.sql
+docker rm musicweb-data-export
 ```
 
-> Docker运行包不会内置邮箱授权码、Last.fm Key、网易云Cookie或QQ音乐Cookie。缺少任一必填项时，容器会拒绝启动并输出缺失配置名。
+导入本机 MySQL：
 
-### 本地源码部署（可选）
+```powershell
+mysql --default-character-set=utf8mb4 -uroot -p musicweb < .\musicweb.sql
+```
 
-该方式适合希望查看源码、二次开发或自行维护数据库的用户。与Docker一键部署不同，本地源码部署需要手动安装运行环境、初始化数据库并填写配置文件。
+下载外部 MySQL 编排文件：
+
+```powershell
+Invoke-WebRequest `
+  -Uri "https://raw.githubusercontent.com/JF-j-f/Graduation-project-design/main/docker-compose.release.external-mysql.yml" `
+  -OutFile "docker-compose.release.external-mysql.yml"
+
+Invoke-WebRequest `
+  -Uri "https://raw.githubusercontent.com/JF-j-f/Graduation-project-design/main/docker/.env.release.example" `
+  -OutFile ".env"
+```
+
+`.env` 中需要明确填写外部 MySQL 连接参数。`DB_PORT` 不会自动探测，必须填写实际端口：
+
+```env
+DB_HOST=host.docker.internal
+DB_PORT=3306
+DB_NAME=musicweb
+DB_USER=musicweb
+DB_PASSWORD=数据库用户密码
+MYSQL_ROOT_PASSWORD=MySQL root密码
+```
+
+启动外部 MySQL 版：
+
+```powershell
+docker compose --env-file .env -f docker-compose.release.external-mysql.yml up -d
+```
+
+#### 推荐刷新命令
+
+发布版推荐容器从 `model_data` 卷读取 `Mode` 模型产物。需要手动刷新推荐时执行：
+
+```powershell
+docker compose --env-file .env -f docker-compose.release.yml exec recommender `
+  python Project/serving/refresh_song_stats.py
+
+docker compose --env-file .env -f docker-compose.release.yml exec recommender `
+  python Project/serving/sync_recs_v3.py
+```
+
+外部 MySQL 路径执行推荐刷新时，将 Compose 文件名替换为 `docker-compose.release.external-mysql.yml`。
+
+### 本地源码部署（内部开发）
+
+该方式用于本机开发、调试和模型刷新验证。与Docker发布版不同，本地源码部署直接读取工作区源码、`secrets.txt`、Cookie配置和本机MySQL/Redis。
 
 #### 1. 安装运行环境
 
@@ -210,6 +278,7 @@ docker compose --env-file .env -f docker-compose.release.yml up -d
 | Maven | 3.x | Java项目构建 |
 | MySQL | 8.4 | 主数据库 |
 | Redis | 5.0+ | 缓存服务 |
+| Tomcat | 10.x | Web容器 |
 | Node.js | 18+ | 网易云音乐API服务 |
 | Python | 3.12 | 推荐引擎与QQ音乐API |
 
@@ -219,26 +288,30 @@ docker compose --env-file .env -f docker-compose.release.yml up -d
 
 `Data/kkbox-music-recommendation-challenge.zip`通过Git LFS管理，clone仓库时自动获取。解压后得到以下CSV文件：
 
-| 文件                    | 说明                                      |
-| ----------------------- | ----------------------------------------- |
-| `songs.csv`           | 229万首歌曲元数据（歌名、艺术家、流派等） |
-| `train.csv`           | 用户-歌曲交互训练集（播放/跳过行为）      |
-| `members.csv`         | 用户人口统计特征（城市、年龄、性别等）    |
-| `song_extra_info.csv` | 歌曲附加信息（ISRC编码等）                |
+| 文件 | 说明 |
+|------|------|
+| `songs.csv` | 229万首歌曲元数据（歌名、艺术家、流派等） |
+| `train.csv` | 用户-歌曲交互训练集（播放/跳过行为） |
+| `members.csv` | 用户人口统计特征（城市、年龄、性别等） |
+| `song_extra_info.csv` | 歌曲附加信息（ISRC编码等） |
 
 ```bash
 cd Data
 unzip kkbox-music-recommendation-challenge.zip
 ```
 
-如需获取完整数据库数据，请发送邮件到 `jun_fu2025@163.com` 联系我获取。
+此外，`Data/musicweb.sql`是完整数据库导出（约1.3GB），包含KKBox原始数据 + 2万条网易云爬取数据。可直接导入以跳过第二步的CSV导入流程：
+
+```bash
+mysql -u root -pJF123456 musicweb < Data/musicweb.sql
+```
 
 #### 3. 初始化数据库
 
 先执行SQL脚本创建表结构：
 
 ```bash
-mysql -u <用户名> -p < Project/MusicWeb/sql/database.sql
+mysql -u root -p < Project/MusicWeb/sql/database.sql
 ```
 
 再使用PySpark ETL脚本将CSV数据导入MySQL（229万首歌曲元数据 + 热度统计）：
@@ -247,15 +320,9 @@ mysql -u <用户名> -p < Project/MusicWeb/sql/database.sql
 python Project/MusicMode/scripts/spark_etl_songs.py
 ```
 
-如果使用完整SQL，则执行：
-
-```bash
-mysql --default-character-set=utf8mb4 -u <用户名> -p musicweb < Data/musicweb.sql
-```
-
 #### 4. 填写隐私配置
 
-复制模板文件并填写配置：
+复制模板文件并重命名：
 
 ```bash
 cp secrets.txt.example secrets.txt
@@ -282,6 +349,8 @@ cp Project/MusicWeb/template/api_credentials.json.example \
 | ------------------ | ------------------------------------------------------------------------------------- |
 | `netease_cookie` | 登录网易云音乐网页版，从浏览器开发者工具 → Network → Cookie 中提取 `MUSIC_U` 字段 |
 | `qq_cookie`      | 登录 QQ 音乐网页版，提取完整 Cookie 串（含 `qqmusic_key` 等字段）                   |
+
+> 不配置此文件时，普通免费歌曲仍可正常播放，VIP 解灰功能不可用。
 
 #### 5. 安装Python依赖
 
@@ -401,10 +470,9 @@ Project/MusicWeb/scripts/run_services.bat
 | 通道 C | ALS 协同过滤 / 实时内容召回 / 注册偏好（按用户层级切换）       | ~200   |
 
 ### 模型架构
+**BST（Behavior Sequence Transformer）**：用户历史行为序列 → Transformer 编码 → 与候选歌曲特征融合 → MLP 四层输出
 
 **DeepFM**：稀疏特征 Embedding + FM 二阶交叉 + DNN 高阶交叉并联，embedding_dim=32，GPU AMP 加速
-
-**BST（Behavior Sequence Transformer）**：用户历史行为序列 → Transformer 编码 → 与候选歌曲特征融合 → MLP 四层输出
 
 **集成策略**：DeepFM 与 BST 在 5 折 OOF 框架下分别生成元特征，由 Meta-LR（LogisticRegression 元学习器）拟合融合权重，避免训练集标签泄漏
 
@@ -412,21 +480,21 @@ Project/MusicWeb/scripts/run_services.bat
 
 #### 模型 AUC 对比
 
-| 模型                   | Train AUC | Val AUC          |
-| ---------------------- | --------- | ---------------- |
-| LightGBM               | 0.8480    | 0.8226           |
-| DeepFM                 | 0.8227    | 0.8202           |
-| BST                    | —        | 0.7886           |
+| 模型                    | Train AUC | Val AUC          |
+| ----------------------- | --------- | ---------------- |
+| LightGBM                | 0.8480    | 0.8226           |
+| DeepFM                  | 0.8227    | 0.8202           |
+| BST                     | —        | 0.7886           |
 | **Meta-LR 集成** | —        | **0.8304** |
 
 #### 离线评估（KKBox 验证集，28,172 用户，726,047 样本，消融实验 A4 全链路配置）
 
-| 指标                           |       @K=5       |
-| ------------------------------ | :--------------: |
-| **HR（命中率）**         | **0.9877** |
-| **Precision（精确率）**  | **0.7273** |
-| **NDCG**                 | **0.8392** |
-| **MRR**                  | **0.9010** |
+| 指标                        | @K=5               |
+| --------------------------- | :----------------: |
+| **HR（命中率）**      | **0.9877**   |
+| **Precision（精确率）** | **0.7273**   |
+| **NDCG**              | **0.8392**   |
+| **MRR**               | **0.9010**   |
 | **Shannon 熵（多样性）** | **1.2230** |
 
 ### 推荐流水线执行指南 (Pipeline)
@@ -470,6 +538,9 @@ python -X utf8 Project/MusicMode/Project/evaluation/evaluate_offline.py
 
 # 真实用户推荐记录评估（CTR/完播率）
 python -X utf8 Project/MusicMode/Project/evaluation/evaluate_recs.py
+
+# 消融实验与模型对比实验（@K=5，报告输出至 Mode/evaluation/）
+python -X utf8 Project/MusicMode/Project/evaluation/eval_experiment.py
 ```
 
 **Python 依赖安装：**
@@ -664,11 +735,35 @@ Python 引擎计算后写入，前端实时读取展示。
 
 ```
 Graduation-project-design/
-├── README.md                              # 本文档
+├── Readme.md                              # 公开版项目文档
+├── README_V0.md                           # 本文档（开发人员版本）
+├── CLAUDE.md                              # Claude Code 项目指令
+├── AGENTS.md                              # 多智能体协作配置
 ├── LICENSE                                # MIT 许可证
+├── secrets.txt                            # 隐私配置（gitignore）
 ├── secrets.txt.example                    # 隐私配置模板
+├── .python-version                        # Python 版本锁定（3.12）
+├── .gitattributes                         # Git LFS 追踪规则
+├── .gitignore                             # Git 忽略规则
+├── .agents/                               # 工作流指令目录
+│   └── workflows/
+│       ├── musicweb.md                    # 代码开发规范
+│       ├── update-markdown.md             # 文档更新规范
+│       ├── thesis-writer.md               # 论文写作规范
+│       ├── defense-judge.md               # 答辩模拟规范
+│       └── ppt.md                         # PPT 制作规范
+├── Document/                              # 毕业论文文档目录
+│   └── 修复记录.md                        # 问题修复记录
 ├── Data/                                  # 数据集目录
-│   └── kkbox-music-recommendation-challenge.zip  # KKBOX数据集（Git LFS）
+│   ├── kkbox-music-recommendation-challenge.zip  # KKBOX数据集（Git LFS）
+│   └── musicweb.sql                       # 完整数据库导出（约1.3GB，gitignore）
+├── image/                                 # README 截图资源
+│   └── README/
+│       ├── index.png                      # 首页截图
+│       ├── users.png                      # 用户端截图
+│       ├── admin.png                      # 管理后台截图
+│       ├── topology.png                   # 系统拓扑图
+│       └── funnel.png                     # 推荐漏斗图
 ├── Project/
 │   ├── MusicWeb/                          # Java Web 前端服务
 │   │   ├── pom.xml                        # Maven 项目配置
@@ -778,33 +873,47 @@ Graduation-project-design/
 │       ├── Document/
 │       │   ├── CHANGELOG.md               # MusicMode 更新日志
 │       │   └── Data_Description.md        # KKBOX 数据集说明
-│       ├── template/                      # 配置模板目录
 │       ├── scripts/
 │       │   ├── config_loader.py           # 统一配置加载器（读取 secrets.txt）
 │       │   ├── spark_etl_songs.py         # KKBOX 229 万歌曲全量导入
+│       │   ├── update_song_metadata.py    # 歌曲元数据更新工具
+│       │   ├── run_pipeline.py            # 流水线批量执行工具
 │       │   ├── start_daily_recommend.bat  # 每日推荐定时任务
-│       │   └── requirements.txt           # 依赖安装
-│       └── Project/                       # 算法核心源码
-│           ├── data_cleaning/
-│           │   └── data_cleaning.py       # 数据清洗与负采样
-│           ├── feature_engineering/
-│           │   └── prepare_features_v3.py # 特征工程 v3
+│       │   ├── requirements.txt           # 训练依赖
+│       │   └── requirements_server.txt    # 服务端依赖
+│       ├── Project/                       # 算法核心源码
+│       │   ├── data_cleaning/
+│       │   │   └── data_cleaning.py       # 数据清洗与负采样
+│       │   ├── feature_engineering/
+│       │   │   └── prepare_features_v3.py # 特征工程 v3
+│       │   ├── coarse_rank/
+│       │   │   └── train_bst.py           # BST 序列粗排训练
+│       │   ├── fine_rank/
+│       │   │   ├── train_lgbm.py          # LightGBM 精排训练
+│       │   │   ├── train_deepfm_v3.py     # DeepFM 精排训练
+│       │   │   └── build_ensemble.py      # Meta-LR OOF Stacking 集成训练
+│       │   ├── recall/
+│       │   │   ├── build_faiss_index.py   # FAISS 向量索引构建
+│       │   │   └── train_als.py           # ALS 协同过滤召回
+│       │   ├── serving/
+│       │   │   ├── sync_recs_v3.py        # 推荐主程序（三通道召回 + 四层漏斗）
+│       │   │   └── refresh_song_stats.py  # 歌曲滚动统计刷新
+│       │   └── evaluation/
+│       │       ├── evaluate_offline.py    # 离线评估
+│       │       ├── evaluate_recs.py       # 在线评估
+│       │       ├── eval_experiment.py     # 消融实验与模型对比实验脚本
+│       │       ├── eval_recall_baseline.py # 召回基线评估
+│       │       └── generate_auc_chart.py  # AUC 图表生成
+│       └── Mode/                          # 模型产物目录
+│           ├── feature_engineering/       # 特征工程产物（pkl/npz）
 │           ├── coarse_rank/
-│           │   └── train_bst.py           # BST 序列粗排训练
+│           │   └── bst/                   # BST 模型产物
 │           ├── fine_rank/
-│           │   ├── train_lgbm.py          # LightGBM 精排训练
-│           │   ├── train_deepfm_v3.py     # DeepFM 精排训练
-│           │   └── build_ensemble.py      # Meta-LR OOF Stacking 集成训练
-│           ├── recall/
-│           │   ├── build_faiss_index.py   # FAISS 向量索引构建
-│           │   └── train_als.py           # ALS 协同过滤召回
-│           ├── serving/
-│           │   ├── sync_recs_v3.py        # 推荐主程序（三通道召回 + 四层漏斗）
-│           │   └── refresh_song_stats.py  # 歌曲滚动统计刷新
-│           └── evaluation/
-│               ├── evaluate_offline.py    # 离线评估
-│               ├── evaluate_recs.py       # 在线评估
-│               └── eval_experiment.py     # 消融实验与模型对比实验脚本
+│           │   ├── lgbm/                  # LightGBM 模型产物
+│           │   ├── deepfm/                # DeepFM 模型产物
+│           │   └── ensemble/              # 集成模型产物
+│           ├── recall/                    # 召回模型产物（ALS/FAISS）
+│           └── evaluation/                # 实验报告输出目录
 ```
 
 ## 安全设计 (Security)

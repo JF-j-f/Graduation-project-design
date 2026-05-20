@@ -2,42 +2,7 @@
 
 本文档记录了 MusicWeb 项目的所有更新历史。
 
-## v4.3.2 (2026-05-20) - Docker 快速数据库发布版
-
-### 🚀 新增功能
-
-- 新增 `junfu26/musicweb-mysql-fast` 发布镜像规划，将已导入完成的 MySQL 8.4 数据目录作为发布种子，标准 Compose 启动时直接复制数据文件到 Docker 卷，避免在用户电脑上执行千万级 SQL 导入。
-- 更新 `docker-compose.release.yml`，将默认数据库服务切换为快速 MySQL 镜像，并将原 `data-init` 调整为仅负责模型卷初始化的 `model-init`。
-
-### 🐛 Bug 修复
-
-- 修复电脑2首次启动时 MySQL 容器长时间停留在 `/docker-entrypoint-initdb.d/01-musicweb.sql` 的发布体验问题，移除旧 SQL 自动导入路径，避免标准发布版继续触发 14 小时级别的初始化等待。
-
-### 📝 拟解决方案
-
-- 后续可继续评估数据体积精简策略，但默认发布路径应保持预初始化数据库文件方式，避免再次回退到逐条 SQL 自动导入。
-
----
-
-## v4.3.1 (2026-05-20) - Docker 外部 MySQL 运行路径补充
-
-### 🚀 新增功能
-
-- 新增 `docker-compose.release.external-mysql.yml`，支持用户先手动导入 `musicweb.sql` 到本机 MySQL，再通过 Docker Compose 启动 Web、Redis、音乐 API、QQ API、解灰服务与推荐容器。
-- 更新 GitHub 版 `Readme.md`，将命令行标准版作为推荐启动路径，并补充外部 MySQL 手动导入路径，便于用户根据数据库初始化耗时选择运行方式。
-
-### 🐛 Bug 修复
-
-- 修复 `install-release.ps1` 未检查 `docker compose up -d` 退出码的问题，避免镜像拉取或容器启动失败后仍提示“启动已提交”。
-- 修复 Docker 发布版 `musicweb-qq-api` 镜像因 `qqmusic-api-python` 自动升级至不兼容版本导致容器启动即退出的问题，锁定兼容版本以恢复 QQ API 服务启动。
-
-### 📝 拟解决方案
-
-- 已通过快速 MySQL 镜像替代标准发布版 SQL 自动导入；外部 MySQL 方案仍保留手动导入路径供高级用户选择。
-
----
-
-## v4.3.0 (2026-05-20) - Docker 完整运行包支持
+## v4.3.0 (2026-05-20) - Docker 发布版运行链路
 
 ### 🚀 新增功能
 
@@ -47,12 +12,19 @@
 - 新增 Docker Hub 发布版 `docker-compose.release.yml` 规划，支持电脑2不复制项目文件，通过命令行标准版拉取镜像运行。
 - 新增发布版一键安装脚本 `docker/scripts/install-release.ps1`，支持用户从 GitHub 下载脚本后自动拉取 Compose 文件和 `.env` 模板，并在配置完整后启动标准版容器。
 - 新增发布版配置校验脚本，缺少数据库密码、邮箱授权码、Last.fm Key、网易云 Cookie 或 QQ 音乐 Cookie 时直接终止启动并输出缺失项。
+- 新增 `docker-compose.release.external-mysql.yml`，支持用户先手动导入 `musicweb.sql` 到本机 MySQL，再通过 Docker Compose 启动 Web、Redis、音乐 API、QQ API、解灰服务与推荐容器。
+- 新增 `junfu26/musicweb-mysql-fast` 发布镜像规划，将已导入完成的 MySQL 8.4 数据目录作为发布种子，标准 Compose 启动时直接复制数据文件到 Docker 卷，避免在用户电脑上执行千万级 SQL 导入。
+- 更新 GitHub 版 `Readme.md`，将命令行标准版作为推荐启动路径，并补充外部 MySQL 手动导入路径，便于用户根据数据库初始化耗时选择运行方式。
+- 更新 `docker-compose.release.yml`，将默认数据库服务切换为快速 MySQL 镜像，并将原 `data-init` 调整为仅负责模型卷初始化的 `model-init`。
 
 ### 🐛 Bug 修复
 
 - 修复容器部署时 Java Web、Node API 与 QQ API 仍访问 `localhost` 的问题，改为通过环境变量读取 `MUSIC_API_URL`、`QQ_API_URL` 与 `UNBLOCK_API_URL`。
 - 修复 Java Web 在容器内无法访问 MySQL 与 Redis 的问题，新增 `ServiceConfig` 统一读取 `DB_HOST`、`DB_PORT`、`REDIS_HOST` 与 `REDIS_PORT`。
 - 修复发布版中 Java 邮件配置和数据库账号只能依赖 `secrets.txt` 的问题，改为支持从容器环境变量读取。
+- 修复 `install-release.ps1` 未检查 `docker compose up -d` 退出码的问题，避免镜像拉取或容器启动失败后仍提示“启动已提交”。
+- 修复 Docker 发布版 `musicweb-qq-api` 镜像因 `qqmusic-api-python` 自动升级至不兼容版本导致容器启动即退出的问题，锁定兼容版本以恢复 QQ API 服务启动。
+- 修复电脑2首次启动时 MySQL 容器长时间停留在 `/docker-entrypoint-initdb.d/01-musicweb.sql` 的发布体验问题，移除旧 SQL 自动导入路径，避免标准发布版继续触发 14 小时级别的初始化等待。
 
 ### 🚧 待解决问题
 
@@ -62,6 +34,7 @@
 ### 📝 拟解决方案
 
 - 后续可增加全量脱敏 SQL 生成脚本，将公开演示账号、邮箱、手机号与密码字段统一改写为安全占位值。
+- 后续可继续评估数据体积精简策略，但默认发布路径应保持预初始化数据库文件方式，避免再次回退到逐条 SQL 自动导入。
 
 ---
 
