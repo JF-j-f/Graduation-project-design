@@ -117,15 +117,13 @@ MusicWeb 是一个**双模块全栈音乐平台**，由 Java Web 前端服务与
 
 ## 快速开始 (Getting Started)
 
-### Docker Hub 完整运行包
+### Docker 一键部署（推荐）
 
-项目提供 Docker Hub 运行方式，用于在全新 Windows + Docker Desktop 电脑上复现当前系统效果。用户不需要复制源码或模型文件，但必须在运行前准备完整 Cookie、邮箱授权码与 API Key。
+该方式适用于全新 Windows + Docker Desktop 电脑。用户不需要复制源码、SQL 或模型文件，只需要安装并启动 Docker Desktop，然后在 PowerShell 执行一键部署命令。
 
-推荐使用命令行标准版。该方案由 Docker Compose 拉取各服务镜像，并使用 `junfu26/musicweb-mysql-fast` 提供的预初始化 MySQL 数据种子启动数据库，避免在用户电脑上执行千万级 SQL 导入。首次启动主要耗时来自镜像下载和数据卷复制，后续重启会复用 Docker 卷内的数据。
+#### 1. 执行一键部署命令
 
-#### 方案A：命令行标准版（推荐）
-
-在 PowerShell 执行下面这一段命令。它会自动创建 `musicweb-docker` 目录，下载发布版 Compose 文件和 `.env` 配置模板，打开记事本让你填写 Cookie、密钥和邮箱授权码，然后启动容器。
+打开 PowerShell，粘贴并执行：
 
 ```powershell
 Invoke-WebRequest `
@@ -135,122 +133,87 @@ Invoke-WebRequest `
 powershell -ExecutionPolicy Bypass -File "$env:TEMP\musicweb-install.ps1"
 ```
 
-如果需要手动下载文件，也可以执行：
+脚本会在当前目录创建 `musicweb-docker` 文件夹，下载 `docker-compose.release.yml` 和 `.env` 配置模板，并自动打开 `.env`。
+
+#### 2. 填写 `.env`
+
+在打开的记事本中填写以下必填项，保存并关闭：
+
+```env
+DB_PASSWORD=自定义数据库用户密码
+MYSQL_ROOT_PASSWORD=自定义MySQL root密码
+MAIL_USERNAME=邮箱账号
+MAIL_PASSWORD=邮箱授权码
+MAIL_FROM=发件邮箱
+LASTFM_API_KEY=Last.fm API Key
+LASTFM_SHARED_SECRET=Last.fm Shared Secret
+NETEASE_COOKIE=网易云音乐Cookie
+QQ_MUSIC_COOKIE=QQ音乐Cookie
+```
+
+端口配置可以保持默认：
+
+```env
+MUSICWEB_PUBLIC_PORT=8082
+MYSQL_PUBLIC_PORT=3307
+REDIS_PUBLIC_PORT=6379
+MUSIC_API_PUBLIC_PORT=3000
+QQ_API_PUBLIC_PORT=8000
+UNBLOCK_PUBLIC_PORT=8081
+```
+
+#### 3. 访问系统
+
+脚本会在配置完整后自动启动容器。首次运行需要下载镜像并初始化 Docker 数据卷，等待容器启动完成后访问：
+
+```text
+http://localhost:8082/musicweb/
+```
+
+#### 4. 常用命令
+
+进入部署目录：
 
 ```powershell
-mkdir musicweb-docker
-cd musicweb-docker
+cd .\musicweb-docker
+```
 
-Invoke-WebRequest `
-  -Uri "https://raw.githubusercontent.com/JF-j-f/Graduation-project-design/main/docker-compose.release.yml" `
-  -OutFile "docker-compose.release.yml"
+查看容器状态：
 
-Invoke-WebRequest `
-  -Uri "https://raw.githubusercontent.com/JF-j-f/Graduation-project-design/main/docker/.env.release.example" `
-  -OutFile ".env"
+```powershell
+docker compose --env-file .env -f docker-compose.release.yml ps
+```
 
-notepad .env
+停止服务：
+
+```powershell
+docker compose --env-file .env -f docker-compose.release.yml stop
+```
+
+重新启动：
+
+```powershell
 docker compose --env-file .env -f docker-compose.release.yml up -d
 ```
 
-启动后访问：
+> Docker运行包不会内置邮箱授权码、Last.fm Key、网易云Cookie或QQ音乐Cookie。缺少任一必填项时，容器会拒绝启动并输出缺失配置名。
 
-```text
-http://localhost:8082/musicweb/
-```
+### 本地源码部署（可选）
 
-#### 方案B：手动MySQL导入（高级用户可选）
+该方式适合希望查看源码、二次开发或自行维护数据库的用户。与Docker一键部署不同，本地源码部署需要手动安装运行环境、初始化数据库并填写配置文件。
 
-该方案适合已经安装 MySQL 8.4 的用户。用户先从 `junfu26/musicweb-data` 镜像导出发布版 SQL，再手动导入自己的 MySQL。随后使用外部 MySQL 专用 Compose 文件启动业务服务。
+#### 1. 安装运行环境
 
-```powershell
-mkdir musicweb-docker
-cd musicweb-docker
+| 依赖 | 版本 | 用途 |
+| ---- | ---- | ---- |
+| JDK | 23+ | Java Web运行环境 |
+| Maven | 3.x | Java项目构建 |
+| MySQL | 8.4 | 主数据库 |
+| Redis | 5.0+ | 缓存服务 |
+| Node.js | 18+ | 网易云音乐API服务 |
+| Python | 3.12 | 推荐引擎与QQ音乐API |
 
-docker pull junfu26/musicweb-data:latest
-docker create --name musicweb-data-export junfu26/musicweb-data:latest
-docker cp musicweb-data-export:/payload/sql/musicweb.sql .\musicweb.sql
-docker rm musicweb-data-export
-```
-
-在本机 MySQL 中创建数据库和用户。下面示例会创建 `musicweb` 数据库与 `musicweb` 用户，请先确定一个数据库密码，并在后续 `.env` 的 `DB_PASSWORD` 中使用同一个值。
-
-```powershell
-mysql -uroot -p -e "CREATE DATABASE IF NOT EXISTS musicweb DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-mysql -uroot -p -e "CREATE USER IF NOT EXISTS 'musicweb'@'%' IDENTIFIED BY '你的数据库密码'; GRANT ALL PRIVILEGES ON musicweb.* TO 'musicweb'@'%'; FLUSH PRIVILEGES;"
-mysql --default-character-set=utf8mb4 -uroot -p musicweb < .\musicweb.sql
-```
-
-本机 MySQL 需要允许 Docker 容器通过 `host.docker.internal` 访问。`DB_PORT` 不会自动探测，若你的 MySQL 不是 3306 端口，必须在 `.env` 中手动填写实际端口。如果连接失败，请检查 MySQL 监听端口，以及 Windows 防火墙是否允许本机 MySQL 接收连接。
-
-导入完成后，下载外部 MySQL 专用 Compose 文件和配置模板：
-
-```powershell
-Invoke-WebRequest `
-  -Uri "https://raw.githubusercontent.com/JF-j-f/Graduation-project-design/main/docker-compose.release.external-mysql.yml" `
-  -OutFile "docker-compose.release.external-mysql.yml"
-
-Invoke-WebRequest `
-  -Uri "https://raw.githubusercontent.com/JF-j-f/Graduation-project-design/main/docker/.env.release.example" `
-  -OutFile ".env"
-
-notepad .env
-```
-
-`.env` 中至少需要确认这些数据库配置：
-
-```env
-DB_HOST=host.docker.internal
-DB_PORT=3306
-DB_NAME=musicweb
-DB_USER=musicweb
-DB_PASSWORD=你的数据库密码
-MYSQL_ROOT_PASSWORD=你的MySQL root密码
-```
-
-保存 `.env` 后启动服务：
-
-```powershell
-docker compose --env-file .env -f docker-compose.release.external-mysql.yml up -d
-```
-
-启动后访问：
-
-```text
-http://localhost:8082/musicweb/
-```
-
-旧的 Docker Desktop GUI 单镜像方式不再作为发布版推荐路径。该路径会在单个容器内部导入完整 SQL，首次初始化耗时不可控。全新电脑请优先使用方案A；已经有本机 MySQL 的用户可使用方案B。
-
-> 公开运行包不会内置邮箱授权码、Last.fm Key、网易云 Cookie 或 QQ 音乐 Cookie。缺少任一必填配置时，发布版容器会拒绝启动并输出缺失项。
->
-> 风险提示：当前完整 SQL 为项目运行结果数据，离线打包脚本仅清理 `appeals.contact_email` 字段。若公开发布该 SQL，`users` 表、播放历史和推荐反馈等业务数据会一并分发。请在发布说明中明确标注该风险。
-
-从旧慢速导入切换到快速版：
-
-如果电脑上已经运行过旧发布版，并且 MySQL 容器长时间停留在 `running /docker-entrypoint-initdb.d/01-musicweb.sql`，先停止当前 Compose 项目。确认这是测试环境且不需要保留旧 Docker 卷中的数据后，再删除旧的半初始化卷，重新执行方案A的一键安装命令。
-
-```powershell
-cd C:\Users\Administrator\musicweb-docker
-docker compose --env-file .env -f docker-compose.release.yml stop
-docker compose --env-file .env -f docker-compose.release.yml down -v
-```
-
-> `down -v` 会删除该 Compose 项目的 Docker 卷，包括旧 MySQL 数据卷。只应在确认旧数据不需要保留时执行。
-
-### 环境要求
-
-| 依赖    | 版本 | 备注                    |
-| ------- | ---- | ----------------------- |
-| JDK     | 23+  | Java Web 运行环境       |
-| Maven   | 3.x  | 项目构建                |
-| MySQL   | 8.4  | 主数据库                |
-| Redis   | 5.0+ | 缓存数据库              |
-| Tomcat  | 10.x | Web 服务器              |
-| Node.js | 18+  | 网易云 API 服务         |
-| Python  | 3.12 | 推荐引擎 · QQ 音乐 API |
-
-### 第一步：获取数据集
+#### 2. 准备数据
 
 项目使用[KKBOX音乐推荐挑战赛](https://www.kaggle.com/c/kkbox-music-recommendation-challenge)数据集作为训练数据。
 
@@ -268,9 +231,9 @@ cd Data
 unzip kkbox-music-recommendation-challenge.zip
 ```
 
-> 完整数据库导出（含2万条网易云爬取数据）因体积过大未上传。如需获取，请联系：jun_fu2025@163.com
+如需获取完整数据库数据，请发送邮件到 `jun_fu2025@163.com` 联系我获取。
 
-### 第二步：数据库初始化
+#### 3. 初始化数据库
 
 先执行SQL脚本创建表结构：
 
@@ -284,7 +247,13 @@ mysql -u <用户名> -p < Project/MusicWeb/sql/database.sql
 python Project/MusicMode/scripts/spark_etl_songs.py
 ```
 
-### 第三步：创建隐私配置文件（必须）
+如果使用完整SQL，则执行：
+
+```bash
+mysql --default-character-set=utf8mb4 -u <用户名> -p musicweb < Data/musicweb.sql
+```
+
+#### 4. 填写隐私配置
 
 复制模板文件并填写配置：
 
@@ -300,8 +269,6 @@ cp secrets.txt.example secrets.txt
 | `MAIL_USERNAME` / `MAIL_PASSWORD` / `MAIL_FROM` | 163 邮箱账号及授权码（申诉邮件通知用）     |
 | `LASTFM_API_KEY` / `LASTFM_SHARED_SECRET`         | Last.fm API 凭证（歌曲元数据补全用，可选） |
 
-### 第四步：配置Cookie（用于播放网易云/QQ音乐VIP歌曲）
-
 从模板目录复制凭证文件到运行位置：
 
 ```bash
@@ -316,15 +283,13 @@ cp Project/MusicWeb/template/api_credentials.json.example \
 | `netease_cookie` | 登录网易云音乐网页版，从浏览器开发者工具 → Network → Cookie 中提取 `MUSIC_U` 字段 |
 | `qq_cookie`      | 登录 QQ 音乐网页版，提取完整 Cookie 串（含 `qqmusic_key` 等字段）                   |
 
-> 不配置此文件时，普通免费歌曲仍可正常播放，VIP 解灰功能不可用。
-
-### 第五步：安装Python依赖
+#### 5. 安装Python依赖
 
 ```bash
 pip install -r Project/MusicMode/scripts/requirements.txt
 ```
 
-### 第六步：一键启动所有服务（推荐）
+#### 6. 启动本地服务
 
 ```bash
 Project/MusicWeb/scripts/run_services.bat
@@ -342,7 +307,7 @@ Project/MusicWeb/scripts/run_services.bat
 
 停止所有服务：`Project/MusicWeb/scripts/stop_services.bat`
 
-### 第七步：访问
+#### 7. 访问系统
 
 | 页面 | 地址                                                            |
 | ---- | --------------------------------------------------------------- |
@@ -867,6 +832,6 @@ Graduation-project-design/
 
 <div align="center">
 
-*本文档最后更新时间：2026年05月20日*
+*本文档最后更新时间：2026年05月21日*
 
 </div>

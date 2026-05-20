@@ -2,37 +2,15 @@
 
 本文档记录 MusicMode 项目的所有更新历史。
 
-## v2.9.2 (2026-05-20) - 推荐模型卷初始化职责收敛
-
-### 🚀 新增功能
-
-- 发布版标准 Compose 将原数据初始化职责收敛为 `model-init`，仅从 `junfu26/musicweb-data` 初始化 `Mode` 模型卷；数据库初始化改由 `junfu26/musicweb-mysql-fast` 承担，推荐容器继续读取同一模型卷运行。
-
-### 📝 拟解决方案
-
-- 后续若继续精简发布包体积，可在不改变推荐脚本入口的前提下拆分模型资源镜像。
-
----
-
-## v2.9.1 (2026-05-20) - 外部 MySQL 发布路径适配
-
-### 🚀 新增功能
-
-- 新增外部 MySQL 发布路径说明，推荐容器继续从 `junfu26/musicweb-data` 初始化 `Mode` 模型卷，但数据库连接改由 `DB_HOST` 与 `DB_PORT` 指向用户手动导入后的 MySQL。
-
-### 📝 拟解决方案
-
-- 后续可为公开发布版进一步拆分模型包，减少首次拉取和模型卷初始化的等待时间。
-
----
-
-## v2.9.0 (2026-05-20) - 推荐容器与 Docker 部署适配
+## v2.9.0 (2026-05-20) - 推荐容器与 Docker 发布适配
 
 ### 🚀 新增功能
 
 - 新增 `Project/MusicMode/Dockerfile`，将推荐刷新运行环境和 `Mode` 模型产物纳入 Docker 运行包，支持跨电脑复现日常推荐刷新。
 - 新增 Docker 运行文档，说明 `refresh_song_stats.py` 与 `sync_recs_v3.py` 在 `recommender` 容器中的执行方式。
 - 新增 `junfu26/musicweb-data` 数据模型镜像规划，将清理后的 `musicweb.sql` 与 `Mode` 模型产物作为发布版标准数据源，供电脑2零文件运行时初始化数据卷。
+- 新增外部 MySQL 发布路径说明，推荐容器继续从 `junfu26/musicweb-data` 初始化 `Mode` 模型卷，但数据库连接改由 `DB_HOST` 与 `DB_PORT` 指向用户手动导入后的 MySQL。
+- 发布版标准 Compose 将原数据初始化职责收敛为 `model-init`，仅从 `junfu26/musicweb-data` 初始化 `Mode` 模型卷；数据库初始化改由 `junfu26/musicweb-mysql-fast` 承担，推荐容器继续读取同一模型卷运行。
 
 ### 🐛 Bug 修复
 
@@ -46,6 +24,8 @@
 
 ### 📝 拟解决方案
 
+- 后续若继续精简发布包体积，可在不改变推荐脚本入口的前提下拆分模型资源镜像。
+- 后续可为公开发布版进一步拆分模型包，减少首次拉取和模型卷初始化的等待时间。
 - 后续如需公开完整训练链路，可新增独立 GPU 训练镜像，并将 CUDA、PyTorch 与模型训练脚本拆分为可选 profile。
 
 ---
