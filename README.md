@@ -123,7 +123,7 @@ MusicWeb 是一个**双模块全栈音乐平台**，由 Java Web 前端服务与
 
 推荐使用命令行标准版。该方案由 Docker Compose 拉取各服务镜像，并由 MySQL 容器自动导入内置 SQL。首次启动需要等待数据库初始化完成，后续重启会复用 Docker 卷内的数据。
 
-#### 方案B：命令行标准版（推荐）
+#### 方案A：命令行标准版（推荐）
 
 在 PowerShell 执行下面这一段命令。它会自动创建 `musicweb-docker` 目录，下载发布版 Compose 文件和 `.env` 配置模板，打开记事本让你填写 Cookie、密钥和邮箱授权码，然后启动容器。
 
@@ -159,7 +159,7 @@ docker compose --env-file .env -f docker-compose.release.yml up -d
 http://localhost:8082/musicweb/
 ```
 
-#### 方案C：手动MySQL导入（高级用户可选）
+#### 方案B：手动MySQL导入（高级用户可选）
 
 该方案适合已经安装 MySQL 8.4 的用户。用户先从 `junfu26/musicweb-data` 镜像导出发布版 SQL，再手动导入自己的 MySQL。随后使用外部 MySQL 专用 Compose 文件启动业务服务。
 
@@ -234,7 +234,6 @@ Docker Desktop GUI 单镜像方式：
 4. 在 Environment variables 中填写 `DB_PASSWORD`、`MYSQL_ROOT_PASSWORD`、`MAIL_USERNAME`、`MAIL_PASSWORD`、`MAIL_FROM`、`LASTFM_API_KEY`、`LASTFM_SHARED_SECRET`、`NETEASE_COOKIE`、`QQ_MUSIC_COOKIE`。
 5. 访问 `http://localhost:8082/musicweb/`。
 
-
 ### 环境要求
 
 | 依赖    | 版本 | 备注                    |
@@ -253,12 +252,12 @@ Docker Desktop GUI 单镜像方式：
 
 `Data/kkbox-music-recommendation-challenge.zip`通过Git LFS管理，clone仓库时自动获取。解压后得到以下CSV文件：
 
-| 文件 | 说明 |
-|------|------|
-| `songs.csv` | 229万首歌曲元数据（歌名、艺术家、流派等） |
-| `train.csv` | 用户-歌曲交互训练集（播放/跳过行为） |
-| `members.csv` | 用户人口统计特征（城市、年龄、性别等） |
-| `song_extra_info.csv` | 歌曲附加信息（ISRC编码等） |
+| 文件                    | 说明                                      |
+| ----------------------- | ----------------------------------------- |
+| `songs.csv`           | 229万首歌曲元数据（歌名、艺术家、流派等） |
+| `train.csv`           | 用户-歌曲交互训练集（播放/跳过行为）      |
+| `members.csv`         | 用户人口统计特征（城市、年龄、性别等）    |
+| `song_extra_info.csv` | 歌曲附加信息（ISRC编码等）                |
 
 ```bash
 cd Data
@@ -444,21 +443,21 @@ Project/MusicWeb/scripts/run_services.bat
 
 #### 模型 AUC 对比
 
-| 模型                    | Train AUC | Val AUC          |
-| ----------------------- | --------- | ---------------- |
-| LightGBM                | 0.8480    | 0.8226           |
-| DeepFM                  | 0.8227    | 0.8202           |
-| BST                     | —        | 0.7886           |
+| 模型                   | Train AUC | Val AUC          |
+| ---------------------- | --------- | ---------------- |
+| LightGBM               | 0.8480    | 0.8226           |
+| DeepFM                 | 0.8227    | 0.8202           |
+| BST                    | —        | 0.7886           |
 | **Meta-LR 集成** | —        | **0.8304** |
 
 #### 离线评估（KKBox 验证集，28,172 用户，726,047 样本，消融实验 A4 全链路配置）
 
-| 指标                        | @K=5               |
-| --------------------------- | :----------------: |
-| **HR（命中率）**      | **0.9877**   |
-| **Precision（精确率）** | **0.7273**   |
-| **NDCG**              | **0.8392**   |
-| **MRR**               | **0.9010**   |
+| 指标                           |       @K=5       |
+| ------------------------------ | :--------------: |
+| **HR（命中率）**         | **0.9877** |
+| **Precision（精确率）**  | **0.7273** |
+| **NDCG**                 | **0.8392** |
+| **MRR**                  | **0.9010** |
 | **Shannon 熵（多样性）** | **1.2230** |
 
 ### 推荐流水线执行指南 (Pipeline)
