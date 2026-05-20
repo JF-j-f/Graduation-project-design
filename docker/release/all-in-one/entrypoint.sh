@@ -18,7 +18,7 @@ mkdir -p /opt/musicweb/runtime-config/qq_credentials
 mkdir -p /run/mysqld
 chown -R mysql:mysql /run/mysqld /var/lib/mysql
 
-service mariadb start
+service mysql start
 
 for _ in $(seq 1 60); do
     if mysqladmin ping -h 127.0.0.1 --silent; then
