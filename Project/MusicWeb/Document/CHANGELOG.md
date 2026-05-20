@@ -2,6 +2,23 @@
 
 本文档记录了 MusicWeb 项目的所有更新历史。
 
+## v4.3.2 (2026-05-20) - Docker 快速数据库发布版
+
+### 🚀 新增功能
+
+- 新增 `junfu26/musicweb-mysql-fast` 发布镜像规划，将已导入完成的 MySQL 8.4 数据目录作为发布种子，标准 Compose 启动时直接复制数据文件到 Docker 卷，避免在用户电脑上执行千万级 SQL 导入。
+- 更新 `docker-compose.release.yml`，将默认数据库服务切换为快速 MySQL 镜像，并将原 `data-init` 调整为仅负责模型卷初始化的 `model-init`。
+
+### 🐛 Bug 修复
+
+- 修复电脑2首次启动时 MySQL 容器长时间停留在 `/docker-entrypoint-initdb.d/01-musicweb.sql` 的发布体验问题，移除旧 SQL 自动导入路径，避免标准发布版继续触发 14 小时级别的初始化等待。
+
+### 📝 拟解决方案
+
+- 后续可继续评估数据体积精简策略，但默认发布路径应保持预初始化数据库文件方式，避免再次回退到逐条 SQL 自动导入。
+
+---
+
 ## v4.3.1 (2026-05-20) - Docker 外部 MySQL 运行路径补充
 
 ### 🚀 新增功能
@@ -16,7 +33,7 @@
 
 ### 📝 拟解决方案
 
-- 后续可继续精简发布版 SQL 或拆分初始化数据，降低首次启动时 MySQL 导入耗时。
+- 已通过快速 MySQL 镜像替代标准发布版 SQL 自动导入；外部 MySQL 方案仍保留手动导入路径供高级用户选择。
 
 ---
 
@@ -27,7 +44,7 @@
 - 新增 Docker Compose 编排，拆分 `mysql`、`redis`、`musicweb`、`music-api`、`qq-api` 与 `unblock` 服务，支持在 Windows Docker Desktop 中按服务名互联。
 - 新增 Docker 运行脚本 `docker/scripts/start.ps1` 与 `docker/scripts/stop.ps1`，统一生成 `secrets.txt` 并挂载 Cookie 模板，降低跨电脑部署成本。
 - 新增离线包构建脚本 `docker/scripts/build-offline.ps1`，支持导出镜像、复制 SQL 数据文件，并仅清理 `appeals.contact_email` 字段。
-- 新增 Docker Hub 发布版 `docker-compose.release.yml` 与 `junfu26/musicweb-all-in-one` 规划，支持电脑2不复制项目文件，通过 Docker Desktop GUI 或命令行标准版拉取镜像运行。
+- 新增 Docker Hub 发布版 `docker-compose.release.yml` 规划，支持电脑2不复制项目文件，通过命令行标准版拉取镜像运行。
 - 新增发布版一键安装脚本 `docker/scripts/install-release.ps1`，支持用户从 GitHub 下载脚本后自动拉取 Compose 文件和 `.env` 模板，并在配置完整后启动标准版容器。
 - 新增发布版配置校验脚本，缺少数据库密码、邮箱授权码、Last.fm Key、网易云 Cookie 或 QQ 音乐 Cookie 时直接终止启动并输出缺失项。
 
@@ -40,7 +57,7 @@
 ### 🚧 待解决问题
 
 - 公开运行包沿用当前完整 SQL，仅清理申诉联系邮箱；`users` 表弱口令示例和用户行为数据仍会随 SQL 分发，公开发布前需要在 Release 说明中显式提示风险。
-- `junfu26/musicweb-all-in-one` 为多进程单容器形态，主要服务 Docker Desktop 图形界面演示；长期推荐路径仍是标准 Compose 多容器版。
+- Docker Desktop GUI 单镜像路径因需要在单容器内导入完整 SQL，首次初始化耗时不可控；长期推荐路径仍是标准 Compose 多容器版。
 
 ### 📝 拟解决方案
 

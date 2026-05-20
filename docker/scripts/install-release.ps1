@@ -107,5 +107,5 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host ""
-Write-Host "MusicWeb startup was submitted. First image pull and database initialization can take several minutes."
+Write-Host "MusicWeb startup was submitted. First image pull and database seed initialization can take several minutes."
 Write-Host "Open: http://localhost:8082/musicweb/"

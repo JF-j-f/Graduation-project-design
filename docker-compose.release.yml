@@ -26,26 +26,24 @@ services:
     command: ["python", "/opt/musicweb/validate_and_generate_config.py"]
     restart: "no"
 
-  data-init:
+  model-init:
     image: junfu26/musicweb-data:latest
-    container_name: musicweb-release-data-init
+    container_name: musicweb-release-model-init
     volumes:
-      - sql_data:/release-sql
       - model_data:/release-models
     command:
       - /bin/sh
       - -c
       - >
         set -e;
-        mkdir -p /release-sql /release-models;
-        cp -f /payload/sql/musicweb.sql /release-sql/01-musicweb.sql;
+        mkdir -p /release-models;
         rm -rf /release-models/Mode;
         cp -a /payload/models/Mode /release-models/Mode;
-        echo "musicweb release data prepared";
+        echo "musicweb release model prepared";
     restart: "no"
 
   mysql:
-    image: mysql:8.4
+    image: junfu26/musicweb-mysql-fast:latest
     container_name: musicweb-release-mysql
     environment:
       MYSQL_DATABASE: ${DB_NAME:-musicweb}
@@ -62,11 +60,8 @@ services:
       - "${MYSQL_PUBLIC_PORT:-3307}:3306"
     volumes:
       - mysql_data:/var/lib/mysql
-      - sql_data:/docker-entrypoint-initdb.d:ro
     depends_on:
       config-init:
-        condition: service_completed_successfully
-      data-init:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
@@ -180,6 +175,8 @@ services:
       - config_data:/run/musicweb-config:ro
       - model_data:/app/MusicMode/Mode:ro
     depends_on:
+      model-init:
+        condition: service_completed_successfully
       mysql:
         condition: service_healthy
       redis:
@@ -187,7 +184,6 @@ services:
 
 volumes:
   config_data:
-  sql_data:
   model_data:
   mysql_data:
   qq_credentials:

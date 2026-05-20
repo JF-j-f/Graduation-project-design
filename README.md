@@ -121,7 +121,7 @@ MusicWeb 是一个**双模块全栈音乐平台**，由 Java Web 前端服务与
 
 项目提供 Docker Hub 运行方式，用于在全新 Windows + Docker Desktop 电脑上复现当前系统效果。用户不需要复制源码或模型文件，但必须在运行前准备完整 Cookie、邮箱授权码与 API Key。
 
-推荐使用命令行标准版。该方案由 Docker Compose 拉取各服务镜像，并由 MySQL 容器自动导入内置 SQL。首次启动需要等待数据库初始化完成，后续重启会复用 Docker 卷内的数据。
+推荐使用命令行标准版。该方案由 Docker Compose 拉取各服务镜像，并使用 `junfu26/musicweb-mysql-fast` 提供的预初始化 MySQL 数据种子启动数据库，避免在用户电脑上执行千万级 SQL 导入。首次启动主要耗时来自镜像下载和数据卷复制，后续重启会复用 Docker 卷内的数据。
 
 #### 方案A：命令行标准版（推荐）
 
@@ -181,7 +181,7 @@ mysql -uroot -p -e "CREATE USER IF NOT EXISTS 'musicweb'@'%' IDENTIFIED BY '你�
 mysql --default-character-set=utf8mb4 -uroot -p musicweb < .\musicweb.sql
 ```
 
-本机 MySQL 需要允许 Docker 容器通过 `host.docker.internal:3306` 访问。如果连接失败，请检查 MySQL 是否监听 3306 端口，以及 Windows 防火墙是否允许本机 MySQL 接收连接。
+本机 MySQL 需要允许 Docker 容器通过 `host.docker.internal` 访问。`DB_PORT` 不会自动探测，若你的 MySQL 不是 3306 端口，必须在 `.env` 中手动填写实际端口。如果连接失败，请检查 MySQL 监听端口，以及 Windows 防火墙是否允许本机 MySQL 接收连接。
 
 导入完成后，下载外部 MySQL 专用 Compose 文件和配置模板：
 
@@ -220,19 +220,23 @@ docker compose --env-file .env -f docker-compose.release.external-mysql.yml up -
 http://localhost:8082/musicweb/
 ```
 
-Docker Desktop GUI 单镜像方式仍然可用，但首次启动会在单个容器内部导入 SQL。若数据库初始化耗时较长，优先使用方案B或方案C。
+旧的 Docker Desktop GUI 单镜像方式不再作为发布版推荐路径。该路径会在单个容器内部导入完整 SQL，首次初始化耗时不可控。全新电脑请优先使用方案A；已经有本机 MySQL 的用户可使用方案B。
 
 > 公开运行包不会内置邮箱授权码、Last.fm Key、网易云 Cookie 或 QQ 音乐 Cookie。缺少任一必填配置时，发布版容器会拒绝启动并输出缺失项。
 >
 > 风险提示：当前完整 SQL 为项目运行结果数据，离线打包脚本仅清理 `appeals.contact_email` 字段。若公开发布该 SQL，`users` 表、播放历史和推荐反馈等业务数据会一并分发。请在发布说明中明确标注该风险。
 
-Docker Desktop GUI 单镜像方式：
+从旧慢速导入切换到快速版：
 
-1. 在 Docker Desktop 的 `Images` 页面搜索并拉取 `junfu26/musicweb-all-in-one`。
-2. 点击 `Run`。
-3. 设置端口 `8082:8082`。
-4. 在 Environment variables 中填写 `DB_PASSWORD`、`MYSQL_ROOT_PASSWORD`、`MAIL_USERNAME`、`MAIL_PASSWORD`、`MAIL_FROM`、`LASTFM_API_KEY`、`LASTFM_SHARED_SECRET`、`NETEASE_COOKIE`、`QQ_MUSIC_COOKIE`。
-5. 访问 `http://localhost:8082/musicweb/`。
+如果电脑上已经运行过旧发布版，并且 MySQL 容器长时间停留在 `running /docker-entrypoint-initdb.d/01-musicweb.sql`，先停止当前 Compose 项目。确认这是测试环境且不需要保留旧 Docker 卷中的数据后，再删除旧的半初始化卷，重新执行方案A的一键安装命令。
+
+```powershell
+cd C:\Users\Administrator\musicweb-docker
+docker compose --env-file .env -f docker-compose.release.yml stop
+docker compose --env-file .env -f docker-compose.release.yml down -v
+```
+
+> `down -v` 会删除该 Compose 项目的 Docker 卷，包括旧 MySQL 数据卷。只应在确认旧数据不需要保留时执行。
 
 ### 环境要求
 

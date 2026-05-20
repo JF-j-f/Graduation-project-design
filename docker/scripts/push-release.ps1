@@ -12,7 +12,7 @@ $Images = @(
     "musicweb-unblock",
     "musicweb-recommender",
     "musicweb-data",
-    "musicweb-all-in-one"
+    "musicweb-mysql-fast"
 )
 
 foreach ($Image in $Images) {
