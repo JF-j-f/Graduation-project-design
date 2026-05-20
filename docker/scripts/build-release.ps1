@@ -396,7 +396,7 @@ function New-MysqlFastBuildContext {
         $EscapedTableFile = Escape-MysqlStringLiteral $TableName
         [void]$LoadSqlBuilder.AppendLine("LOAD DATA LOCAL INFILE '/tmp/musicweb-export/$EscapedTableFile.txt' INTO TABLE ``$EscapedTable`` CHARACTER SET utf8mb4 FIELDS TERMINATED BY '\t' ESCAPED BY '\\' LINES TERMINATED BY '\n';")
     }
-    [void]$LoadSqlBuilder.AppendLine("UPDATE ``appeals`` SET ``contact_email`` = 'public-placeholder@example.com' WHERE ``contact_email`` IS NOT NULL AND ``contact_email`` <> '';")
+    [void]$LoadSqlBuilder.AppendLine("UPDATE ``appeals`` SET ``contact_email`` = '' WHERE ``contact_email`` IS NOT NULL AND ``contact_email`` <> '';")
     [void]$LoadSqlBuilder.AppendLine("SET SESSION UNIQUE_CHECKS = 1;")
     [void]$LoadSqlBuilder.AppendLine("SET SESSION FOREIGN_KEY_CHECKS = 1;")
     [System.IO.File]::WriteAllText($LoadDataSqlPath, $LoadSqlBuilder.ToString(), [System.Text.UTF8Encoding]::new($false))
@@ -527,7 +527,7 @@ $Writer = New-Object System.IO.StreamWriter($SanitizedSql, $false, [System.Text.
 try {
     while (($Line = $Reader.ReadLine()) -ne $null) {
         if ($Line.StartsWith("INSERT INTO ``appeals`` VALUES")) {
-            $Line = [regex]::Replace($Line, $EmailPattern, "public-placeholder@example.com")
+            $Line = [regex]::Replace($Line, $EmailPattern, "")
         }
         $Writer.WriteLine($Line)
     }

@@ -29,7 +29,7 @@ $Writer = New-Object System.IO.StreamWriter($SanitizedSql, $false, [System.Text.
 try {
     while (($Line = $Reader.ReadLine()) -ne $null) {
         if ($Line.StartsWith("INSERT INTO ``appeals`` VALUES")) {
-            $Line = [regex]::Replace($Line, $EmailPattern, "public-placeholder@example.com")
+            $Line = [regex]::Replace($Line, $EmailPattern, "")
         }
         $Writer.WriteLine($Line)
     }
