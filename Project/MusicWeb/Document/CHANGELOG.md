@@ -12,6 +12,7 @@
 ### 🐛 Bug 修复
 
 - 修复 `install-release.ps1` 未检查 `docker compose up -d` 退出码的问题，避免镜像拉取或容器启动失败后仍提示“启动已提交”。
+- 修复 Docker 发布版 `musicweb-qq-api` 镜像因 `qqmusic-api-python` 自动升级至不兼容版本导致容器启动即退出的问题，锁定兼容版本以恢复 QQ API 服务启动。
 
 ### 📝 拟解决方案
 

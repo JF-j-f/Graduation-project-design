@@ -1,7 +1,7 @@
 # QQ Music API Python 服务依赖
 # 用于 L-1124/QQMusicApi 封装
 
-qqmusic-api-python>=0.4.1
+qqmusic-api-python==0.4.1
 fastapi>=0.109.0
 uvicorn>=0.27.0
 httpx>=0.25.0
